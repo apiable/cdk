@@ -1,0 +1,348 @@
+{
+ "Description": "Cognito Pool for Apiable dev Portal",
+ "Resources": {
+  "devsmsRoleCEBD85BE": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Condition": {
+        "StringEquals": {
+         "sts:ExternalId": "CognitodevCB98A083"
+        }
+       },
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "cognito-idp.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Policies": [
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": "sns:Publish",
+         "Effect": "Allow",
+         "Resource": "*"
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "sns-publish"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/smsRole/Resource"
+   }
+  },
+  "devF7B884FF": {
+   "Type": "AWS::Cognito::UserPool",
+   "Properties": {
+    "AccountRecoverySetting": {
+     "RecoveryMechanisms": [
+      {
+       "Name": "verified_email",
+       "Priority": 1
+      }
+     ]
+    },
+    "AdminCreateUserConfig": {
+     "AllowAdminCreateUserOnly": false
+    },
+    "AutoVerifiedAttributes": [
+     "email"
+    ],
+    "DeletionProtection": "INACTIVE",
+    "EmailConfiguration": {
+     "EmailSendingAccount": "DEVELOPER",
+     "From": "no-reply@apiable.io",
+     "ReplyToEmailAddress": "no-reply@apiable.io",
+     "SourceArn": "arn:aws:ses:eu-central-1:034444869755:identity/no-reply@apiable.io"
+    },
+    "EmailVerificationMessage": "The verification code to your new account is {####}",
+    "EmailVerificationSubject": "Verify your new account",
+    "EnabledMfas": [
+     "SMS_MFA"
+    ],
+    "MfaConfiguration": "OPTIONAL",
+    "Schema": [
+     {
+      "Mutable": true,
+      "Name": "family_name",
+      "Required": true
+     },
+     {
+      "Mutable": true,
+      "Name": "given_name",
+      "Required": true
+     },
+     {
+      "Mutable": true,
+      "Name": "email",
+      "Required": true
+     }
+    ],
+    "SmsConfiguration": {
+     "ExternalId": "CognitodevCB98A083",
+     "SnsCallerArn": {
+      "Fn::GetAtt": [
+       "devsmsRoleCEBD85BE",
+       "Arn"
+      ]
+     }
+    },
+    "SmsVerificationMessage": "The verification code to your new account is {####}",
+    "UserPoolName": "portal-dev",
+    "UsernameAttributes": [
+     "email"
+    ],
+    "UsernameConfiguration": {
+     "CaseSensitive": false
+    },
+    "VerificationMessageTemplate": {
+     "DefaultEmailOption": "CONFIRM_WITH_CODE",
+     "EmailMessage": "The verification code to your new account is {####}",
+     "EmailSubject": "Verify your new account",
+     "SmsMessage": "The verification code to your new account is {####}"
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/Resource"
+   }
+  },
+  "devlogin37D16DBE": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AllowedOAuthFlows": [
+     "implicit",
+     "code"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     "openid",
+     "email",
+     "phone"
+    ],
+    "CallbackURLs": [
+     "http://localhost:3000",
+     "https://dev.apiable.io"
+    ],
+    "ClientName": "login",
+    "LogoutURLs": [
+     "http://localhost:3000",
+     "https://dev.apiable.io"
+    ],
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "UserPoolId": {
+     "Ref": "devF7B884FF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/login/Resource"
+   }
+  },
+  "devResourceServer577B65E1": {
+   "Type": "AWS::Cognito::UserPoolResourceServer",
+   "Properties": {
+    "Identifier": "apiable",
+    "Name": "apiable",
+    "Scopes": [
+     {
+      "ScopeDescription": "Full Access to the Apiable APIs",
+      "ScopeName": "admin"
+     },
+     {
+      "ScopeDescription": "CICD Access to the Apiable APIs",
+      "ScopeName": "cicd"
+     },
+     {
+      "ScopeDescription": "Scope for Subscription keys generated through Portal.",
+      "ScopeName": "subscription"
+     }
+    ],
+    "UserPoolId": {
+     "Ref": "devF7B884FF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/ResourceServer/Resource"
+   }
+  },
+  "devCognitoDomain6CA2C3DF": {
+   "Type": "AWS::Cognito::UserPoolDomain",
+   "Properties": {
+    "Domain": "apiable-dev",
+    "UserPoolId": {
+     "Ref": "devF7B884FF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/CognitoDomain/Resource"
+   }
+  },
+  "devapiE544E142": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AllowedOAuthFlows": [
+     "client_credentials"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "devResourceServer577B65E1"
+        },
+        "/admin"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "devResourceServer577B65E1"
+        },
+        "/cicd"
+       ]
+      ]
+     },
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "devResourceServer577B65E1"
+        },
+        "/subscription"
+       ]
+      ]
+     }
+    ],
+    "ClientName": "api",
+    "GenerateSecret": true,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "UserPoolId": {
+     "Ref": "devF7B884FF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/api/Resource"
+   }
+  },
+  "ApiableCognitoFF9B0A5A": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": "arn:aws:iam::034444869755:root"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, invite users, etc.) and Portal (Auth/Authz) for userpool: portal-dev",
+    "RoleName": "ApiableCognito-portal-dev"
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/ApiableCognito/Resource"
+   }
+  },
+  "ApiableCognitoDefaultPolicyA1FC30D2": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "cognito-idp:*",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:cognito-idp:eu-central-1:034444869755:userpool/",
+          {
+           "Ref": "devF7B884FF"
+          }
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ApiableCognitoDefaultPolicyA1FC30D2",
+    "Roles": [
+     {
+      "Ref": "ApiableCognitoFF9B0A5A"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/ApiableCognito/DefaultPolicy/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/12Myw6CMBBFv4V9qYIL3eMHEIhrU8toBkonaQvGNP13edUQk0nuuY9MzrPTmR8T8bapbLpU4YP72gnZsSm6e0kvjY64v1kwJZFixVP/OEKhELTbV1sSbQWWBiOhBjOC2Q//mhhfqReo98M1CQxFz31FCuZy0ZIUys9sVwqBxa/LZuPANDXAW3sYswufLk9ai5iaQTvsgVerfgGsBiLgEgEAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/CDKMetadata/Default"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

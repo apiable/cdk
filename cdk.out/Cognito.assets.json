@@ -1,0 +1,20 @@
+{
+  "version": "36.0.0",
+  "files": {
+    "3b8084984104fc412b16eac0db3070d67b2736e47440e86e0fb63af670623504": {
+      "source": {
+        "path": "Cognito.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "034444869755-eu-central-1": {
+          "bucketName": "cdk-hnb659fds-assets-034444869755-eu-central-1",
+          "objectKey": "3b8084984104fc412b16eac0db3070d67b2736e47440e86e0fb63af670623504.json",
+          "region": "eu-central-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::034444869755:role/cdk-hnb659fds-file-publishing-role-034444869755-eu-central-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}
