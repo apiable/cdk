@@ -26,16 +26,16 @@ import { Cognito } from '../lib/cognito'
 const app = new cdk.App()
 // eslint-disable-next-line no-new
 new Cognito(app, "Cognito", {
-    stackName: "auth-portal-$STACKNAME",
-    description: "Cognito Pool for Apiable $STACKNAME Portal",
+    stackName: "auth-portal-$POOLNAME",
+    description: "Cognito Pool for Apiable $POOLNAME Portal",
     env: {
         account: "$AWS_ACCOUNTID",
         region: "$AWS_REGION"
     }
 })
 EOT
-CONTEXT_OPTS="--context stackname=$STACKNAME --context from-email=$FROM_EMAIL --context ses-verified-domain=$SES_VERIFIED_DOMAIN --require-approval never --outputs-file ./cdk-outputs.json"
+CONTEXT_OPTS="--context stackname=$POOLNAME --context from-email=$FROM_EMAIL --context ses-verified-domain=$SES_VERIFIED_DOMAIN --require-approval never --outputs-file ./cdk-outputs.json"
 echo $CONTEXT_OPTS
-#cdk synth -q $CONTEXT_OPTS
-#cdk deploy $CONTEXT_OPTS
+cdk synth -q $CONTEXT_OPTS
+cdk deploy $CONTEXT_OPTS
 
