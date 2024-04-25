@@ -9,7 +9,7 @@ checkMandatoryParameter () {
   fi
 }
 
-EXAMPLE="./deploy-cognito.sh 034444869755 eu-central-1 staging no-reply@apiable.io apiable.io"
+EXAMPLE="./deploy-cognito.sh 034444869755 eu-central-1 dev no-reply@apiable.io apiable.io"
 checkMandatoryParameter "$1" "$AWS_ACCOUNTID" "aws-accountid must be passed as a first parameter or exported through environment variable 'export AWS_ACCOUNTID=1234'" && AWS_ACCOUNTID=$1
 checkMandatoryParameter "$2" "$AWS_REGION" "aws-region must be passed as a second parameter or exported through environment variable 'export AWS_REGION=eu-central-1'" && AWS_REGION=$2
 checkMandatoryParameter "$3" "$POOLNAME" "poolname must be passed as a third parameter or exported through environment variable 'export POOLNAME=staging'" && POOLNAME=$3
@@ -36,6 +36,7 @@ new Cognito(app, "Cognito", {
 EOT
 CONTEXT_OPTS="--context stackname=$POOLNAME --context from-email=$FROM_EMAIL --context ses-verified-domain=$SES_VERIFIED_DOMAIN --require-approval never --outputs-file ./cdk-outputs.json"
 echo $CONTEXT_OPTS
+cdk diff $CONTEXT_OPTS
 cdk synth -q $CONTEXT_OPTS
 cdk deploy $CONTEXT_OPTS
 

@@ -1,12 +1,13 @@
 import * as cdk from 'aws-cdk-lib'
-import { Stack } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as cognito from 'aws-cdk-lib/aws-cognito'
+import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import { fromContextOrDefault, fromContextOrError } from './utils'
+import * as path from 'path'
 
 
-export class Cognito extends Stack {
+export class Cognito extends cdk.Stack {
 
   constructor(scope: Construct, id: string, props: cdk.StackProps) {
 
@@ -22,8 +23,20 @@ export class Cognito extends Stack {
     console.log("Creating Cognito Pool for stack: ", stackname)
     console.log("User Pool Name is: ", userPoolName)
     const sesConfig: cognito.UserPoolSESOptions = sesVerifiedDomain ?{ fromEmail, replyTo }:{ fromEmail, replyTo, sesVerifiedDomain }
+    const callbackUrls = ['http://localhost:3000', `https://${domain}/api/oauth2/oauth-token` ]
+    const logoutUrls = callbackUrls
 
-    const pool = new cognito.UserPool(this, stackname, {
+/*
+
+ █████╗ ██╗   ██╗████████╗██╗  ██╗███╗   ██╗    ██╗   ██╗███████╗███████╗██████╗     ██████╗  ██████╗  ██████╗ ██╗
+██╔══██╗██║   ██║╚══██╔══╝██║  ██║████╗  ██║    ██║   ██║██╔════╝██╔════╝██╔══██╗    ██╔══██╗██╔═══██╗██╔═══██╗██║
+███████║██║   ██║   ██║   ███████║██╔██╗ ██║    ██║   ██║███████╗█████╗  ██████╔╝    ██████╔╝██║   ██║██║   ██║██║
+██╔══██║██║   ██║   ██║   ██╔══██║██║╚██╗██║    ██║   ██║╚════██║██╔══╝  ██╔══██╗    ██╔═══╝ ██║   ██║██║   ██║██║
+██║  ██║╚██████╔╝   ██║   ██║  ██║██║ ╚████║    ╚██████╔╝███████║███████╗██║  ██║    ██║     ╚██████╔╝╚██████╔╝███████╗
+╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝     ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝    ╚═╝      ╚═════╝  ╚═════╝ ╚══════╝
+
+ */
+    const poolAuthN = new cognito.UserPool(this, stackname, {
       deletionProtection: false,
       userPoolName,
       email: cognito.UserPoolEmail.withSES(sesConfig),
@@ -53,15 +66,6 @@ export class Cognito extends Stack {
       }
     })
 
-    pool.addClient('login', {
-      userPoolClientName: 'login',
-      oAuth: {
-        scopes: [ cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PHONE ],
-        callbackUrls: [ 'http://localhost:3000', `https://${domain}` ],
-        logoutUrls: [ 'http://localhost:3000', `https://${domain}` ],
-      },
-    })
-
     const adminScope = new cognito.ResourceServerScope({
         scopeName: 'admin',
         scopeDescription: 'Full Access to the Apiable APIs',
@@ -74,21 +78,27 @@ export class Cognito extends Stack {
       }
     )
 
-    const subscriptionScope = new cognito.ResourceServerScope({
-        scopeName: 'subscription',
-        scopeDescription: 'Scope for Subscription keys generated through Portal.',
-      }
-    )
-
-    const resourceServer = pool.addResourceServer('ResourceServer', {
+    const resourceServerAuthN = poolAuthN.addResourceServer('ResourceServer', {
       userPoolResourceServerName: 'apiable',
       identifier: 'apiable',
-      scopes: [adminScope, cicdScope, subscriptionScope],
+      scopes: [adminScope, cicdScope],
     })
 
-    pool.addDomain('CognitoDomain', {cognitoDomain:{ domainPrefix: `apiable-${stackname}`}})
+    const domainPrefix = stackname === 'aws' ? 'apiable-aw-s' : `apiable-${stackname}`
+    poolAuthN.addDomain('CognitoDomain', {cognitoDomain:{ domainPrefix}})
 
-    pool.addClient('api', {
+    poolAuthN.addClient('login', {
+      userPoolClientName: 'login',
+      preventUserExistenceErrors: true,
+      authFlows: { userPassword: stackname === 'dev', userSrp: true, custom: true },
+      oAuth: {
+        scopes: [ cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PHONE ],
+        callbackUrls,
+        logoutUrls,
+      },
+    })
+
+    poolAuthN.addClient('api', {
       userPoolClientName: 'api',
       generateSecret: true,
       oAuth: {
@@ -96,23 +106,93 @@ export class Cognito extends Stack {
           clientCredentials: true
         },
         scopes: [
-          cognito.OAuthScope.resourceServer(resourceServer, adminScope),
-          cognito.OAuthScope.resourceServer(resourceServer, cicdScope),
-          cognito.OAuthScope.resourceServer(resourceServer, subscriptionScope)
+          cognito.OAuthScope.resourceServer(resourceServerAuthN, adminScope)
         ]
       },
     })
 
-    const apiableCognitoServiceRole = new iam.Role(this, 'ApiableCognito', {
-      assumedBy: new iam.AccountPrincipal('034444869755'),
-      roleName: `ApiableCognito-${userPoolName}`,
-      description: `Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, invite users, etc.) and Portal (Auth/Authz) for userpool: ${userPoolName}`,
+    poolAuthN.addClient('cicd', {
+      userPoolClientName: 'cicd',
+      generateSecret: true,
+      oAuth: {
+        flows: {
+          clientCredentials: true
+        },
+        scopes: [
+          cognito.OAuthScope.resourceServer(resourceServerAuthN, cicdScope)
+        ]
+      },
     })
 
-    apiableCognitoServiceRole.addToPolicy(
+    const apiableCognitoServiceRoleAuthN = new iam.Role(this, 'ApiableCognitoAuthN', {
+      assumedBy: new iam.AccountPrincipal('034444869755'),
+      roleName: `ApiableCognitoAuthN-${userPoolName}`,
+      description: `Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, invite users, etc.) and Portal AuthN for userpool: ${userPoolName}`,
+    })
+
+    apiableCognitoServiceRoleAuthN.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        resources: [`arn:aws:cognito-idp:${region}:034444869755:userpool/${pool.userPoolId}`],
+        resources: [`arn:aws:cognito-idp:${region}:034444869755:userpool/${poolAuthN.userPoolId}`],
+        actions: [
+          'cognito-idp:*'
+        ]
+      })
+    )
+
+    /*
+     █████╗ ██╗   ██╗████████╗██╗  ██╗███████╗    ██╗   ██╗███████╗███████╗██████╗     ██████╗  ██████╗  ██████╗ ██╗
+    ██╔══██╗██║   ██║╚══██╔══╝██║  ██║╚══███╔╝    ██║   ██║██╔════╝██╔════╝██╔══██╗    ██╔══██╗██╔═══██╗██╔═══██╗██║
+    ███████║██║   ██║   ██║   ███████║  ███╔╝     ██║   ██║███████╗█████╗  ██████╔╝    ██████╔╝██║   ██║██║   ██║██║
+    ██╔══██║██║   ██║   ██║   ██╔══██║ ███╔╝      ██║   ██║╚════██║██╔══╝  ██╔══██╗    ██╔═══╝ ██║   ██║██║   ██║██║
+    ██║  ██║╚██████╔╝   ██║   ██║  ██║███████╗    ╚██████╔╝███████║███████╗██║  ██║    ██║     ╚██████╔╝╚██████╔╝███████╗
+    ╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝╚══════╝     ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝    ╚═╝      ╚═════╝  ╚═════╝ ╚══════╝
+    */
+    const poolAuthZ = new cognito.UserPool(this, `${stackname}-authz`, {
+      deletionProtection: false,
+      userPoolName: `${userPoolName}-authz`,
+      mfa: cognito.Mfa.OFF,
+      signInCaseSensitive: false,
+      signInAliases: {
+        username: true
+      },
+      accountRecovery: cognito.AccountRecovery.NONE,
+      selfSignUpEnabled: false
+    })
+
+    const l = new lambda.Function(this, 'Function', {
+      functionName: `${userPoolName}-auth`,
+      runtime: lambda.Runtime.NODEJS_18_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/pre-token-generation-authz')),
+    })
+    poolAuthZ.addTrigger(cognito.UserPoolOperation.PRE_TOKEN_GENERATION_CONFIG, l, cognito.LambdaVersion.V1_0)
+
+    poolAuthZ.addClient('authz', {
+      userPoolClientName: 'authz',
+      generateSecret: true,
+      authFlows: { userPassword: true },
+      idTokenValidity: cdk.Duration.days(1),
+      refreshTokenValidity: cdk.Duration.days(60),
+      oAuth: {
+        flows: {
+          implicitCodeGrant: true,
+          authorizationCodeGrant: true
+        },
+        callbackUrls
+      },
+    })
+
+    const apiableCognitoServiceRoleAuthZ = new iam.Role(this, 'ApiableCognitoAuthZ', {
+      assumedBy: new iam.AccountPrincipal('034444869755'),
+      roleName: `ApiableCognitoAuthZ-${userPoolName}`,
+      description: `Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, tokens, etc.) and Portal AuthZ for userpool: ${userPoolName}`,
+    })
+
+    apiableCognitoServiceRoleAuthZ.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        resources: [`arn:aws:cognito-idp:${region}:034444869755:userpool/${poolAuthZ.userPoolId}`],
         actions: [
           'cognito-idp:*'
         ]

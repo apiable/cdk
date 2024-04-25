@@ -118,39 +118,6 @@
     "aws:cdk:path": "Cognito/dev/Resource"
    }
   },
-  "devlogin37D16DBE": {
-   "Type": "AWS::Cognito::UserPoolClient",
-   "Properties": {
-    "AllowedOAuthFlows": [
-     "implicit",
-     "code"
-    ],
-    "AllowedOAuthFlowsUserPoolClient": true,
-    "AllowedOAuthScopes": [
-     "openid",
-     "email",
-     "phone"
-    ],
-    "CallbackURLs": [
-     "http://localhost:3000",
-     "https://dev.apiable.io"
-    ],
-    "ClientName": "login",
-    "LogoutURLs": [
-     "http://localhost:3000",
-     "https://dev.apiable.io"
-    ],
-    "SupportedIdentityProviders": [
-     "COGNITO"
-    ],
-    "UserPoolId": {
-     "Ref": "devF7B884FF"
-    }
-   },
-   "Metadata": {
-    "aws:cdk:path": "Cognito/dev/login/Resource"
-   }
-  },
   "devResourceServer577B65E1": {
    "Type": "AWS::Cognito::UserPoolResourceServer",
    "Properties": {
@@ -164,10 +131,6 @@
      {
       "ScopeDescription": "CICD Access to the Apiable APIs",
       "ScopeName": "cicd"
-     },
-     {
-      "ScopeDescription": "Scope for Subscription keys generated through Portal.",
-      "ScopeName": "subscription"
      }
     ],
     "UserPoolId": {
@@ -190,6 +153,46 @@
     "aws:cdk:path": "Cognito/dev/CognitoDomain/Resource"
    }
   },
+  "devlogin37D16DBE": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AllowedOAuthFlows": [
+     "implicit",
+     "code"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     "openid",
+     "email",
+     "phone"
+    ],
+    "CallbackURLs": [
+     "http://localhost:3000",
+     "https://dev.apiable.io/api/oauth2/oauth-token"
+    ],
+    "ClientName": "login",
+    "ExplicitAuthFlows": [
+     "ALLOW_USER_PASSWORD_AUTH",
+     "ALLOW_CUSTOM_AUTH",
+     "ALLOW_USER_SRP_AUTH",
+     "ALLOW_REFRESH_TOKEN_AUTH"
+    ],
+    "LogoutURLs": [
+     "http://localhost:3000",
+     "https://dev.apiable.io/api/oauth2/oauth-token"
+    ],
+    "PreventUserExistenceErrors": "ENABLED",
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "UserPoolId": {
+     "Ref": "devF7B884FF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/login/Resource"
+   }
+  },
   "devapiE544E142": {
    "Type": "AWS::Cognito::UserPoolClient",
    "Properties": {
@@ -208,28 +211,6 @@
         "/admin"
        ]
       ]
-     },
-     {
-      "Fn::Join": [
-       "",
-       [
-        {
-         "Ref": "devResourceServer577B65E1"
-        },
-        "/cicd"
-       ]
-      ]
-     },
-     {
-      "Fn::Join": [
-       "",
-       [
-        {
-         "Ref": "devResourceServer577B65E1"
-        },
-        "/subscription"
-       ]
-      ]
      }
     ],
     "ClientName": "api",
@@ -245,7 +226,40 @@
     "aws:cdk:path": "Cognito/dev/api/Resource"
    }
   },
-  "ApiableCognitoFF9B0A5A": {
+  "devcicd883F7A24": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AllowedOAuthFlows": [
+     "client_credentials"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        {
+         "Ref": "devResourceServer577B65E1"
+        },
+        "/cicd"
+       ]
+      ]
+     }
+    ],
+    "ClientName": "cicd",
+    "GenerateSecret": true,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "UserPoolId": {
+     "Ref": "devF7B884FF"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev/cicd/Resource"
+   }
+  },
+  "ApiableCognitoAuthN7C7669ED": {
    "Type": "AWS::IAM::Role",
    "Properties": {
     "AssumeRolePolicyDocument": {
@@ -260,14 +274,14 @@
      ],
      "Version": "2012-10-17"
     },
-    "Description": "Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, invite users, etc.) and Portal (Auth/Authz) for userpool: portal-dev",
-    "RoleName": "ApiableCognito-portal-dev"
+    "Description": "Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, invite users, etc.) and Portal AuthN for userpool: portal-dev",
+    "RoleName": "ApiableCognitoAuthN-portal-dev"
    },
    "Metadata": {
-    "aws:cdk:path": "Cognito/ApiableCognito/Resource"
+    "aws:cdk:path": "Cognito/ApiableCognitoAuthN/Resource"
    }
   },
-  "ApiableCognitoDefaultPolicyA1FC30D2": {
+  "ApiableCognitoAuthNDefaultPolicy9A7A451D": {
    "Type": "AWS::IAM::Policy",
    "Properties": {
     "PolicyDocument": {
@@ -290,21 +304,249 @@
      ],
      "Version": "2012-10-17"
     },
-    "PolicyName": "ApiableCognitoDefaultPolicyA1FC30D2",
+    "PolicyName": "ApiableCognitoAuthNDefaultPolicy9A7A451D",
     "Roles": [
      {
-      "Ref": "ApiableCognitoFF9B0A5A"
+      "Ref": "ApiableCognitoAuthN7C7669ED"
      }
     ]
    },
    "Metadata": {
-    "aws:cdk:path": "Cognito/ApiableCognito/DefaultPolicy/Resource"
+    "aws:cdk:path": "Cognito/ApiableCognitoAuthN/DefaultPolicy/Resource"
+   }
+  },
+  "devauthz1411D236": {
+   "Type": "AWS::Cognito::UserPool",
+   "Properties": {
+    "AccountRecoverySetting": {
+     "RecoveryMechanisms": [
+      {
+       "Name": "admin_only",
+       "Priority": 1
+      }
+     ]
+    },
+    "AdminCreateUserConfig": {
+     "AllowAdminCreateUserOnly": true
+    },
+    "DeletionProtection": "INACTIVE",
+    "EmailVerificationMessage": "The verification code to your new account is {####}",
+    "EmailVerificationSubject": "Verify your new account",
+    "LambdaConfig": {
+     "PreTokenGenerationConfig": {
+      "LambdaArn": {
+       "Fn::GetAtt": [
+        "Function76856677",
+        "Arn"
+       ]
+      },
+      "LambdaVersion": "V1_0"
+     }
+    },
+    "MfaConfiguration": "OFF",
+    "SmsVerificationMessage": "The verification code to your new account is {####}",
+    "UserPoolName": "portal-dev-authz",
+    "UsernameConfiguration": {
+     "CaseSensitive": false
+    },
+    "VerificationMessageTemplate": {
+     "DefaultEmailOption": "CONFIRM_WITH_CODE",
+     "EmailMessage": "The verification code to your new account is {####}",
+     "EmailSubject": "Verify your new account",
+     "SmsMessage": "The verification code to your new account is {####}"
+    }
+   },
+   "UpdateReplacePolicy": "Retain",
+   "DeletionPolicy": "Retain",
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev-authz/Resource"
+   }
+  },
+  "devauthzPreTokenGenerationConfigCognito7294C91C": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "Function76856677",
+      "Arn"
+     ]
+    },
+    "Principal": "cognito-idp.amazonaws.com",
+    "SourceArn": {
+     "Fn::GetAtt": [
+      "devauthz1411D236",
+      "Arn"
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev-authz/PreTokenGenerationConfigCognito"
+   }
+  },
+  "devauthz48804203": {
+   "Type": "AWS::Cognito::UserPoolClient",
+   "Properties": {
+    "AllowedOAuthFlows": [
+     "implicit",
+     "code"
+    ],
+    "AllowedOAuthFlowsUserPoolClient": true,
+    "AllowedOAuthScopes": [
+     "profile",
+     "phone",
+     "email",
+     "openid",
+     "aws.cognito.signin.user.admin"
+    ],
+    "CallbackURLs": [
+     "http://localhost:3000",
+     "https://dev.apiable.io/api/oauth2/oauth-token"
+    ],
+    "ClientName": "authz",
+    "ExplicitAuthFlows": [
+     "ALLOW_USER_PASSWORD_AUTH",
+     "ALLOW_REFRESH_TOKEN_AUTH"
+    ],
+    "GenerateSecret": true,
+    "IdTokenValidity": 1440,
+    "RefreshTokenValidity": 86400,
+    "SupportedIdentityProviders": [
+     "COGNITO"
+    ],
+    "TokenValidityUnits": {
+     "IdToken": "minutes",
+     "RefreshToken": "minutes"
+    },
+    "UserPoolId": {
+     "Ref": "devauthz1411D236"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/dev-authz/authz/Resource"
+   }
+  },
+  "FunctionServiceRole675BB04A": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/Function/ServiceRole/Resource"
+   }
+  },
+  "Function76856677": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-034444869755-eu-central-1",
+     "S3Key": "11f98527d46b47af38f9392c8e56f90be318481457f91e33035459537b3c6595.zip"
+    },
+    "FunctionName": "portal-dev-auth",
+    "Handler": "index.handler",
+    "Role": {
+     "Fn::GetAtt": [
+      "FunctionServiceRole675BB04A",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs18.x"
+   },
+   "DependsOn": [
+    "FunctionServiceRole675BB04A"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "Cognito/Function/Resource",
+    "aws:asset:path": "asset.11f98527d46b47af38f9392c8e56f90be318481457f91e33035459537b3c6595",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "ApiableCognitoAuthZ1C7F51C3": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "AWS": "arn:aws:iam::034444869755:root"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Description": "Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, tokens, etc.) and Portal AuthZ for userpool: portal-dev",
+    "RoleName": "ApiableCognitoAuthZ-portal-dev"
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/ApiableCognitoAuthZ/Resource"
+   }
+  },
+  "ApiableCognitoAuthZDefaultPolicyF4E5F4E1": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": "cognito-idp:*",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:cognito-idp:eu-central-1:034444869755:userpool/",
+          {
+           "Ref": "devauthz1411D236"
+          }
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ApiableCognitoAuthZDefaultPolicyF4E5F4E1",
+    "Roles": [
+     {
+      "Ref": "ApiableCognitoAuthZ1C7F51C3"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "Cognito/ApiableCognitoAuthZ/DefaultPolicy/Resource"
    }
   },
   "CDKMetadata": {
    "Type": "AWS::CDK::Metadata",
    "Properties": {
-    "Analytics": "v2:deflate64:H4sIAAAAAAAA/12Myw6CMBBFv4V9qYIL3eMHEIhrU8toBkonaQvGNP13edUQk0nuuY9MzrPTmR8T8bapbLpU4YP72gnZsSm6e0kvjY64v1kwJZFixVP/OEKhELTbV1sSbQWWBiOhBjOC2Q//mhhfqReo98M1CQxFz31FCuZy0ZIUys9sVwqBxa/LZuPANDXAW3sYswufLk9ai5iaQTvsgVerfgGsBiLgEgEAAA=="
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/12QwWrDMBBEvyV3edskh/bapPQcHHoOirw1G0ta0MopRejfa9lRMQXBzLwZENIOtvsXeN7ob2lMNzSWrpDOUZtBTeiSDPeeIkP6FAwnZquOX/7PV9Oi8BgMnjHcMawn/5qK39lp8uvhg9R4tIQ+rgcLyYq0g9SyxVLOemJL5qfExWVltbt2GlJBGByJEHv1MXoTi5lw9VnJ/qJFMAq8FZkyHEYzYDxowazqA9TcTj/Tk+/nqx9FVp47hJs83bevMJ3d5iZETRh9JIfQLvoLEv39F2kBAAA="
    },
    "Metadata": {
     "aws:cdk:path": "Cognito/CDKMetadata/Default"

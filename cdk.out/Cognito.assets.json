@@ -1,7 +1,21 @@
 {
   "version": "36.0.0",
   "files": {
-    "3b8084984104fc412b16eac0db3070d67b2736e47440e86e0fb63af670623504": {
+    "11f98527d46b47af38f9392c8e56f90be318481457f91e33035459537b3c6595": {
+      "source": {
+        "path": "asset.11f98527d46b47af38f9392c8e56f90be318481457f91e33035459537b3c6595",
+        "packaging": "zip"
+      },
+      "destinations": {
+        "034444869755-eu-central-1": {
+          "bucketName": "cdk-hnb659fds-assets-034444869755-eu-central-1",
+          "objectKey": "11f98527d46b47af38f9392c8e56f90be318481457f91e33035459537b3c6595.zip",
+          "region": "eu-central-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::034444869755:role/cdk-hnb659fds-file-publishing-role-034444869755-eu-central-1"
+        }
+      }
+    },
+    "8ea036a3f1e63d08034d4de5cb2fdc9520c79fa5a8f4c2ca4541e3bcf89d88ce": {
       "source": {
         "path": "Cognito.template.json",
         "packaging": "file"
@@ -9,7 +23,7 @@
       "destinations": {
         "034444869755-eu-central-1": {
           "bucketName": "cdk-hnb659fds-assets-034444869755-eu-central-1",
-          "objectKey": "3b8084984104fc412b16eac0db3070d67b2736e47440e86e0fb63af670623504.json",
+          "objectKey": "8ea036a3f1e63d08034d4de5cb2fdc9520c79fa5a8f4c2ca4541e3bcf89d88ce.json",
           "region": "eu-central-1",
           "assumeRoleArn": "arn:${AWS::Partition}:iam::034444869755:role/cdk-hnb659fds-file-publishing-role-034444869755-eu-central-1"
         }

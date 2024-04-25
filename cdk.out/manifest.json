@@ -18,7 +18,7 @@
         "validateOnSynth": false,
         "assumeRoleArn": "arn:${AWS::Partition}:iam::034444869755:role/cdk-hnb659fds-deploy-role-034444869755-eu-central-1",
         "cloudFormationExecutionRoleArn": "arn:${AWS::Partition}:iam::034444869755:role/cdk-hnb659fds-cfn-exec-role-034444869755-eu-central-1",
-        "stackTemplateAssetObjectUrl": "s3://cdk-hnb659fds-assets-034444869755-eu-central-1/3b8084984104fc412b16eac0db3070d67b2736e47440e86e0fb63af670623504.json",
+        "stackTemplateAssetObjectUrl": "s3://cdk-hnb659fds-assets-034444869755-eu-central-1/8ea036a3f1e63d08034d4de5cb2fdc9520c79fa5a8f4c2ca4541e3bcf89d88ce.json",
         "requiresBootstrapStackVersion": 6,
         "bootstrapStackVersionSsmParameter": "/cdk-bootstrap/hnb659fds/version",
         "additionalDependencies": [
@@ -47,12 +47,6 @@
             "data": "devF7B884FF"
           }
         ],
-        "/Cognito/dev/login/Resource": [
-          {
-            "type": "aws:cdk:logicalId",
-            "data": "devlogin37D16DBE"
-          }
-        ],
         "/Cognito/dev/ResourceServer/Resource": [
           {
             "type": "aws:cdk:logicalId",
@@ -65,22 +59,76 @@
             "data": "devCognitoDomain6CA2C3DF"
           }
         ],
+        "/Cognito/dev/login/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "devlogin37D16DBE"
+          }
+        ],
         "/Cognito/dev/api/Resource": [
           {
             "type": "aws:cdk:logicalId",
             "data": "devapiE544E142"
           }
         ],
-        "/Cognito/ApiableCognito/Resource": [
+        "/Cognito/dev/cicd/Resource": [
           {
             "type": "aws:cdk:logicalId",
-            "data": "ApiableCognitoFF9B0A5A"
+            "data": "devcicd883F7A24"
           }
         ],
-        "/Cognito/ApiableCognito/DefaultPolicy/Resource": [
+        "/Cognito/ApiableCognitoAuthN/Resource": [
           {
             "type": "aws:cdk:logicalId",
-            "data": "ApiableCognitoDefaultPolicyA1FC30D2"
+            "data": "ApiableCognitoAuthN7C7669ED"
+          }
+        ],
+        "/Cognito/ApiableCognitoAuthN/DefaultPolicy/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "ApiableCognitoAuthNDefaultPolicy9A7A451D"
+          }
+        ],
+        "/Cognito/dev-authz/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "devauthz1411D236"
+          }
+        ],
+        "/Cognito/dev-authz/PreTokenGenerationConfigCognito": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "devauthzPreTokenGenerationConfigCognito7294C91C"
+          }
+        ],
+        "/Cognito/dev-authz/authz/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "devauthz48804203"
+          }
+        ],
+        "/Cognito/Function/ServiceRole/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "FunctionServiceRole675BB04A"
+          }
+        ],
+        "/Cognito/Function/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "Function76856677"
+          }
+        ],
+        "/Cognito/ApiableCognitoAuthZ/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "ApiableCognitoAuthZ1C7F51C3"
+          }
+        ],
+        "/Cognito/ApiableCognitoAuthZ/DefaultPolicy/Resource": [
+          {
+            "type": "aws:cdk:logicalId",
+            "data": "ApiableCognitoAuthZDefaultPolicyF4E5F4E1"
           }
         ],
         "/Cognito/CDKMetadata/Default": [
