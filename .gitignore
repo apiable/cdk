@@ -1,5 +1,6 @@
 # CDK assets
 cdk.*.json
+cdk.out/
 
 ### frontend
 node_modules/
