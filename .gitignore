@@ -4,6 +4,7 @@ cdk.out/
 
 ### frontend
 node_modules/
+!lib/assets/lambdas/node_modules/
 .env
 deploy-all.sh
 

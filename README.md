@@ -16,3 +16,15 @@ export SES_VERIFIED_DOMAIN=<your_ses_verified_domain>
 ```bash
 ./deploy-cognito.sh
 ```
+
+## AuthZ Gateway Authorizer installation
+### Export the paramaters
+```bash
+export AWS_ACCOUNT_ID=<your_account_id>
+export AWS_REGION=<your_region>
+export STACKNAME=<your_pool_name>
+```
+### Deploy the stack
+```bash
+./deploy-cognito.sh
+```
