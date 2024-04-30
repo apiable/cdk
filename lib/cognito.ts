@@ -13,6 +13,7 @@ export class Cognito extends cdk.Stack {
 
     super(scope, id, props)
     const region = props.env?.region || 'undefined'
+    const account = props.env?.account || 'undefined'
     const stackname = fromContextOrError(this.node, 'stackname')
     const domain = fromContextOrDefault(this.node, 'domain', `${stackname}.apiable.io`)
     const fromEmail = fromContextOrDefault(this.node, 'from-email', 'info@apiable.io')
@@ -133,7 +134,7 @@ export class Cognito extends cdk.Stack {
     apiableCognitoServiceRoleAuthN.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        resources: [`arn:aws:cognito-idp:${region}:034444869755:userpool/${poolAuthN.userPoolId}`],
+        resources: [`arn:aws:cognito-idp:${region}:${account}:userpool/${poolAuthN.userPoolId}`],
         actions: [
           'cognito-idp:*'
         ]
@@ -192,7 +193,7 @@ export class Cognito extends cdk.Stack {
     apiableCognitoServiceRoleAuthZ.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        resources: [`arn:aws:cognito-idp:${region}:034444869755:userpool/${poolAuthZ.userPoolId}`],
+        resources: [`arn:aws:cognito-idp:${region}:${account}:userpool/${poolAuthZ.userPoolId}`],
         actions: [
           'cognito-idp:*'
         ]
