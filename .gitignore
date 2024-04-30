@@ -4,7 +4,6 @@ cdk.out/
 
 ### frontend
 node_modules/
-!lib/assets/lambdas/node_modules/
 .env
 deploy-all.sh
 
@@ -42,3 +41,4 @@ out/
 /exportsapiable2.json
 /cdk-outputs.json
 /deploy-all.sh
+!/lib/assets/lambdas/authorization/node_modules/
