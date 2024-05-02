@@ -26,5 +26,5 @@ export STACKNAME=<your_pool_name>
 ```
 ### Deploy the stack
 ```bash
-./deploy-cognito.sh
+./deploy-authz.sh
 ```

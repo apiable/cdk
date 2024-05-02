@@ -1,11 +1,11 @@
 import * as cdk from 'aws-cdk-lib'
-import { AuthZ } from '../lib/authz'
+import { Cognito } from '../lib/cognito'
 
 const app = new cdk.App()
 // eslint-disable-next-line no-new
-new AuthZ(app, "AuthZ", {
-    stackName: "auth-portal-authz-dev",
-    description: "AuthZ Lambda for Apiable Gateway Authorization dev",
+new Cognito(app, "Cognito", {
+    stackName: "auth-portal-versedai",
+    description: "Cognito Pool for Apiable versedai Portal",
     env: {
         account: "034444869755",
         region: "eu-central-1"
