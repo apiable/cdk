@@ -28,13 +28,6 @@ export STACKNAME=<your_pool_name>
 This file will be git ignored, so you can add your secrets here.
 
 ```
-HOST=auth.apiable.io
-INTROSPECTION_PATH=/$PORTAL/oauth/v2/oauth-introspect
-PORT=443
-SCOPE=api
-CLIENT_ID=$PORTAL-phantom-token
-CLIENT_SECRET=YOUR_SECRET
-
 COGNITO_USER_POOL_ID=YOUR_AUTHZ_USERPOOL_ID
 ```
 
