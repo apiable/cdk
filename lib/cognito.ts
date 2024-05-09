@@ -88,7 +88,7 @@ export class Cognito extends cdk.Stack {
     const resourceServerAuthN = poolAuthN.addResourceServer('ResourceServer', {
       userPoolResourceServerName: 'apiable',
       identifier: 'apiable',
-      scopes: [adminScope, cicdScope],
+      scopes: [adminScope, readScope, cicdScope],
     })
 
     const domainPrefix = stackname === 'aws' ? 'apiable-aw-s' : `apiable-${stackname}`
