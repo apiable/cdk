@@ -42,6 +42,8 @@ jobs:
         working-directory: cdk
         run: |
           cd lib/assets/lambdas/authorization
+          echo VERSION=${{github.run_number}} >> .env.template
+          echo COGNITO_USER_POOL_ID=\$AUTHZ_COGNITO_USERPOOL_ID >> .env.template
           npm install
           zip -r authorization.zip .
           aws s3 cp authorization.zip s3://apiable/public/_lambdas/authorization-${{github.run_number}}.zip

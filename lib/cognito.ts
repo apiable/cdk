@@ -73,6 +73,12 @@ export class Cognito extends cdk.Stack {
       }
     )
 
+    const readScope = new cognito.ResourceServerScope({
+        scopeName: 'read',
+        scopeDescription: 'Read Access to the Apiable APIs',
+      }
+    )
+
     const cicdScope = new cognito.ResourceServerScope({
         scopeName: 'cicd',
         scopeDescription: 'CICD Access to the Apiable APIs',
@@ -107,7 +113,8 @@ export class Cognito extends cdk.Stack {
           clientCredentials: true
         },
         scopes: [
-          cognito.OAuthScope.resourceServer(resourceServerAuthN, adminScope)
+          cognito.OAuthScope.resourceServer(resourceServerAuthN, adminScope),
+          cognito.OAuthScope.resourceServer(resourceServerAuthN, readScope)
         ]
       },
     })
