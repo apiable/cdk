@@ -93,7 +93,6 @@ export class Cognito extends cdk.Stack {
 
     let domainPrefix = `apiable-${stackname}`
     if (stackname === 'aws') domainPrefix = 'apiable-aw-s' // aws is reserver on aws and cannot be used
-    if (stackname === 'ixordocs') domainPrefix = 'apiable-apbl-ixordocs' // ixordocs is used by ixordocs
     poolAuthN.addDomain('CognitoDomain', {cognitoDomain:{ domainPrefix}})
 
     poolAuthN.addClient('login', {
