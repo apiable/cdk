@@ -10,7 +10,7 @@ checkMandatoryParameter () {
 }
 
 EXAMPLE="./deploy-cognito.sh 034444869755 eu-central-1 dev no-reply@apiable.io apiable.io"
-checkMandatoryParameter "$1" "$AWS_ACCOUNTID" "aws-accountid must be passed as a first parameter or exported through environment variable 'export AWS_ACCOUNTID=1234'" && AWS_ACCOUNTID=$1
+checkMandatoryParameter "$1" "$AWS_ACCOUNT_ID" "aws-account-id must be passed as a first parameter or exported through environment variable 'export AWS_ACCOUNT_ID=1234'" && AWS_ACCOUNT_ID=$1
 checkMandatoryParameter "$2" "$AWS_REGION" "aws-region must be passed as a second parameter or exported through environment variable 'export AWS_REGION=eu-central-1'" && AWS_REGION=$2
 checkMandatoryParameter "$3" "$POOLNAME" "poolname must be passed as a third parameter or exported through environment variable 'export POOLNAME=staging'" && POOLNAME=$3
 checkMandatoryParameter "$4" "$FROM_EMAIL" "from email must be passed as a fourth parameter or exported through environment variable 'export FROM_EMAIL=no-reply@apiable.io'" && FROM_EMAIL=$4
@@ -29,7 +29,7 @@ new Cognito(app, "Cognito", {
     stackName: "auth-portal-$POOLNAME",
     description: "Cognito Pool for Apiable $POOLNAME Portal",
     env: {
-        account: "$AWS_ACCOUNTID",
+        account: "$AWS_ACCOUNT_ID",
         region: "$AWS_REGION"
     }
 })
