@@ -12,7 +12,6 @@ on:
     paths-ignore:
       - '*.md'
 
-
 env:
   NODE_VERSION: lts/iron
   AWS_REGION: eu-central-1
