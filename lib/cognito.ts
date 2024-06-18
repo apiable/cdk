@@ -5,6 +5,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import { fromContextOrDefault, fromContextOrError } from './utils'
 import * as path from 'path'
+import {CfnOutput} from "aws-cdk-lib";
 
 
 export class Cognito extends cdk.Stack {
@@ -95,7 +96,8 @@ export class Cognito extends cdk.Stack {
     if (stackname === 'aws') domainPrefix = 'apiable-aw-s' // aws is reserver on aws and cannot be used
     poolAuthN.addDomain('CognitoDomain', {cognitoDomain:{ domainPrefix}})
 
-    poolAuthN.addClient('login', {
+    const loginClient = new cognito.UserPoolClient(this, 'login', {
+      userPool: poolAuthN,
       userPoolClientName: 'login',
       preventUserExistenceErrors: true,
       authFlows: { userPassword: stackname === 'dev', userSrp: true, custom: true },
@@ -106,7 +108,8 @@ export class Cognito extends cdk.Stack {
       },
     })
 
-    poolAuthN.addClient('api', {
+    const apiClient = new cognito.UserPoolClient(this, 'api', {
+      userPool: poolAuthN,
       userPoolClientName: 'api',
       generateSecret: true,
       oAuth: {
@@ -120,7 +123,8 @@ export class Cognito extends cdk.Stack {
       },
     })
 
-    poolAuthN.addClient('cicd', {
+    const cicdClient = new cognito.UserPoolClient(this, 'cicd', {
+      userPool: poolAuthN,
       userPoolClientName: 'cicd',
       generateSecret: true,
       oAuth: {
@@ -177,7 +181,8 @@ export class Cognito extends cdk.Stack {
     })
     poolAuthZ.addTrigger(cognito.UserPoolOperation.PRE_TOKEN_GENERATION_CONFIG, l, cognito.LambdaVersion.V1_0)
 
-    poolAuthZ.addClient('authz', {
+    const authzClient = new cognito.UserPoolClient(this, 'authz', {
+      userPool: poolAuthZ,
       userPoolClientName: 'authz',
       generateSecret: true,
       authFlows: { userPassword: true },
@@ -207,6 +212,109 @@ export class Cognito extends cdk.Stack {
         ]
       })
     )
+/*
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_ROLE_ARN = \"arn:aws:iam::034444869755:role/ApiableCognitoAuthN-portal-$PORTAL\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_REGION = \"$REGION\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_USERPOOLID = \"$APIABLE_AWS_AUTHN_USERPOOLID\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_ISSUER_URI = \"$APIABLE_AWS_AUTHN_ISSUER_URI\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_DOMAIN = \"$APIABLE_AWS_AUTHN_DOMAIN\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_CLIENTS_LOGIN_ID = \"$APIABLE_AWS_AUTHN_CLIENTS_LOGIN_ID\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_CLIENTS_API_ID = \"$APIABLE_AWS_AUTHN_CLIENTS_API_ID\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHN_CLIENTS_API_SECRET = \"$APIABLE_AWS_AUTHN_CLIENTS_API_SECRET\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHZ_ROLE_ARN = \"arn:aws:iam::034444869755:role/ApiableCognitoAuthZ-portal-$PORTAL\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHZ_REGION = \"$REGION\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHZ_USERPOOLID = \"$APIABLE_AWS_AUTHZ_USERPOOLID\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHZ_ISSUER_URI = \"$APIABLE_AWS_AUTHZ_ISSUER_URI\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHZ_DOMAIN = \"$APIABLE_AWS_AUTHZ_DOMAIN\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHZ_CLIENTS_AUTHZ_ID = \"$APIABLE_AWS_AUTHZ_CLIENTS_AUTHZ_ID\"")
+SECRET_VALUE_UPDATED=$(echo "$SECRET_VALUE_UPDATED" | jq ".APIABLE_AWS_AUTHZ_CLIENTS_AUTHZ_SECRET = \"$APIABLE_AWS_AUTHZ_CLIENTS_AUTHZ_SECRET\"")
+ */
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-ROLE-ARN`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-ROLE-ARN`,
+      value: apiableCognitoServiceRoleAuthN.roleArn
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-REGION`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-REGION`,
+      value: region
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-USERPOOLID`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-USERPOOLID`,
+      value: poolAuthN.userPoolId
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-ISSUER-URI`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-ISSUER-URI`,
+      value: `https://cognito-idp.${region}.amazonaws.com/${poolAuthN.userPoolId}`
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-DOMAIN`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-DOMAIN`,
+      value: `https://${domainPrefix}.auth.${region}.amazoncognito.com`
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-LOGIN-ID`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-LOGIN-ID`,
+      value: loginClient.userPoolClientId
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-ID`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-ID`,
+      value: apiClient.userPoolClientId
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-SECRET`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-SECRET`,
+      value: apiClient.userPoolClientSecret.unsafeUnwrap()
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-ID`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-ID`,
+      value: cicdClient.userPoolClientId
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-SECRET`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-SECRET`,
+      value: cicdClient.userPoolClientSecret.unsafeUnwrap()
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-ROLE-ARN`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-ROLE-ARN`,
+      value: apiableCognitoServiceRoleAuthZ.roleArn
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-REGION`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-REGION`,
+      value: region
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-USERPOOLID`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-USERPOOLID`,
+      value: poolAuthZ.userPoolId
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-ISSUER-URI`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-ISSUER-URI`,
+      value: `https://cognito-idp.${region}.amazonaws.com/${poolAuthZ.userPoolId}`
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-DOMAIN`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-DOMAIN`,
+      value: `https://${domainPrefix}z.auth.${region}.amazoncognito.com`
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-ID`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-ID`,
+      value: authzClient.userPoolClientId
+    });
+
+    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-SECRET`, {
+      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-SECRET`,
+      value: authzClient.userPoolClientSecret.unsafeUnwrap()
+    });
+
+
 
   }
 }
