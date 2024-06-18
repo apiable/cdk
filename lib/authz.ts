@@ -5,6 +5,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import {  fromContextOrError } from './utils'
 import * as path from 'path'
+import {CfnOutput} from "aws-cdk-lib";
 
 
 export class AuthZ extends cdk.Stack {
@@ -12,11 +13,16 @@ export class AuthZ extends cdk.Stack {
     super(scope, id, props)
     const stackname = fromContextOrError(this.node, 'stackname')
     console.log("Creating AuthZ Lambda:", stackname)
-    new lambda.Function(this, 'Function', {
+    const l = new lambda.Function(this, 'Function', {
       functionName: `${stackname}-authz`,
       runtime: lambda.Runtime.NODEJS_18_X,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/authorization')),
     })
+
+    new CfnOutput(this, `${stackname}-authz-lambda-arn`, {
+      exportName: `${stackname}-authz-lambda-arn`,
+      value: l.functionArn
+    });
   }
 }
