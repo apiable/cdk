@@ -214,100 +214,101 @@ export class Cognito extends cdk.Stack {
       description: `Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, tokens, etc.) and Portal AuthZ for userpool: ${userPoolName}`,
     })
 
-    apiableCognitoServiceRoleAuthZ.addToPolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        resources: [`arn:aws:cognito-idp:${region}:${account}:userpool/${poolAuthZ.userPoolId}`],
-        actions: [
-          'cognito-idp:*'
-        ]
-      })
-    )
+    const rwAuthZPolicy = new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      resources: [`arn:aws:cognito-idp:${region}:${account}:userpool/${poolAuthZ.userPoolId}`],
+      actions: [
+        'cognito-idp:*'
+      ]
+    })
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-ROLE-ARN`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-ROLE-ARN`,
+    apiableCognitoServiceRoleAuthZ.addToPolicy(rwAuthZPolicy)
+
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00ROLE00ARN`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00ROLE00ARN`,
       value: apiableCognitoServiceRoleAuthN.roleArn
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-REGION`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-REGION`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00REGION`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00REGION`,
       value: region
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-USERPOOLID`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-USERPOOLID`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00USERPOOLID`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00USERPOOLID`,
       value: poolAuthN.userPoolId
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-ISSUER-URI`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-ISSUER-URI`,
-      value: `https://cognito-idp.${region}.amazonaws.com/${poolAuthN.userPoolId}`
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00ISSUER00URI`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00ISSUER00URI`,
+      value: `https://cognito00idp.${region}.amazonaws.com/${poolAuthN.userPoolId}`
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-DOMAIN`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-DOMAIN`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00DOMAIN`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00DOMAIN`,
       value: `https://${domainPrefix}.auth.${region}.amazoncognito.com`
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-LOGIN-ID`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-LOGIN-ID`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00LOGIN00ID`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00LOGIN00ID`,
       value: loginClient.userPoolClientId
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-ID`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-ID`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00API00ID`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00API00ID`,
       value: apiClient.userPoolClientId
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-SECRET`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-SECRET`,
-      value: "***" //apiClient.userPoolClientSecret.unsafeUnwrap()
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00API00SECRET`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00API00SECRET`,
+      value: apiClient.userPoolClientSecret.unsafeUnwrap()
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-ID`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-ID`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00CICD00ID`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00CICD00ID`,
       value: cicdClient.userPoolClientId
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-SECRET`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-SECRET`,
-      value: "***" // cicdClient.userPoolClientSecret.unsafeUnwrap()
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00CICD00SECRET`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHN00CLIENTS00CICD00SECRET`,
+      value: cicdClient.userPoolClientSecret.unsafeUnwrap()
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-ROLE-ARN`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-ROLE-ARN`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHZ00ROLE00ARN`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHZ00ROLE00ARN`,
       value: apiableCognitoServiceRoleAuthZ.roleArn
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-REGION`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-REGION`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHZ00REGION`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHZ00REGION`,
       value: region
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-USERPOOLID`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-USERPOOLID`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHZ00USERPOOLID`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHZ00USERPOOLID`,
       value: poolAuthZ.userPoolId
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-ISSUER-URI`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-ISSUER-URI`,
-      value: `https://cognito-idp.${region}.amazonaws.com/${poolAuthZ.userPoolId}`
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHZ00ISSUER00URI`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHZ00ISSUER00URI`,
+      value: `https://cognito00idp.${region}.amazonaws.com/${poolAuthZ.userPoolId}`
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-DOMAIN`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-DOMAIN`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHZ00DOMAIN`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHZ00DOMAIN`,
       value: `https://${domainPrefix}z.auth.${region}.amazoncognito.com`
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-ID`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-ID`,
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHZ00CLIENTS00AUTHZ00ID`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHZ00CLIENTS00AUTHZ00ID`,
       value: authzClient.userPoolClientId
     });
 
-    new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-SECRET`, {
-      exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-SECRET`,
-      value: "***"// authzClient.userPoolClientSecret.unsafeUnwrap()
+    new CfnOutput(this, `${userPoolName}00APIABLE00AWS00AUTHZ00CLIENTS00AUTHZ00SECRET`, {
+      exportName: `${userPoolName}00APIABLE00AWS00AUTHZ00CLIENTS00AUTHZ00SECRET`,
+      value: authzClient.userPoolClientSecret.unsafeUnwrap()
     });
+
 
   }
 }
