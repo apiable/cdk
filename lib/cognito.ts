@@ -181,19 +181,30 @@ export class Cognito extends cdk.Stack {
     })
     poolAuthZ.addTrigger(cognito.UserPoolOperation.PRE_TOKEN_GENERATION_CONFIG, l, cognito.LambdaVersion.V1_0)
 
+    const authZadminScope = new cognito.ResourceServerScope({
+        scopeName: 'admin',
+        scopeDescription: 'Full Access to the Apiable APIs',
+      }
+    )
+
+    const resourceServerAuthZ = poolAuthZ.addResourceServer('ResourceServer', {
+      userPoolResourceServerName: 'apiable',
+      identifier: 'apiable',
+      scopes: [authZadminScope],
+    })
+
     const authzClient = new cognito.UserPoolClient(this, 'authz', {
       userPool: poolAuthZ,
       userPoolClientName: 'authz',
       generateSecret: true,
-      authFlows: { userPassword: true },
-      idTokenValidity: cdk.Duration.days(1),
-      refreshTokenValidity: cdk.Duration.days(60),
+      authFlows: { userPassword: true, userSrp: true, custom: true },
       oAuth: {
         flows: {
-          implicitCodeGrant: true,
-          authorizationCodeGrant: true
+          clientCredentials: true
         },
-        callbackUrls
+        scopes: [
+          cognito.OAuthScope.resourceServer(resourceServerAuthZ, authZadminScope)
+        ]
       },
     })
 
@@ -250,7 +261,7 @@ export class Cognito extends cdk.Stack {
 
     new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-SECRET`, {
       exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-API-SECRET`,
-      value: apiClient.userPoolClientSecret.unsafeUnwrap()
+      value: "***" //apiClient.userPoolClientSecret.unsafeUnwrap()
     });
 
     new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-ID`, {
@@ -260,7 +271,7 @@ export class Cognito extends cdk.Stack {
 
     new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-SECRET`, {
       exportName: `${userPoolName}-APIABLE-AWS-AUTHN-CLIENTS-CICD-SECRET`,
-      value: cicdClient.userPoolClientSecret.unsafeUnwrap()
+      value: "***" // cicdClient.userPoolClientSecret.unsafeUnwrap()
     });
 
     new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-ROLE-ARN`, {
@@ -295,7 +306,7 @@ export class Cognito extends cdk.Stack {
 
     new CfnOutput(this, `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-SECRET`, {
       exportName: `${userPoolName}-APIABLE-AWS-AUTHZ-CLIENTS-AUTHZ-SECRET`,
-      value: authzClient.userPoolClientSecret.unsafeUnwrap()
+      value: "***"// authzClient.userPoolClientSecret.unsafeUnwrap()
     });
 
   }
