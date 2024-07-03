@@ -42,3 +42,4 @@ out/
 /cdk-outputs.json
 /deploy-all.sh
 !/lib/assets/lambdas/authorization/node_modules/
+/cdk.out/
