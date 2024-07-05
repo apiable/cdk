@@ -4,8 +4,6 @@ import {Construct} from 'constructs'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import * as s3 from "aws-cdk-lib/aws-s3";
 import {fromContextOrError} from "./utils";
-import * as lambda from "aws-cdk-lib/aws-lambda";
-import * as path from "path";
 import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose';
 import * as logs from "aws-cdk-lib/aws-logs";
 
@@ -106,10 +104,6 @@ export class UsageLogs extends cdk.Stack {
       },
     });
 
-
-    new CfnOutput(this, `usagelogs-${stackname}-s3-arn`, { value: bucket.bucketArn});
-    new CfnOutput(this, `usagelogs-${stackname}-lambda-role-arn`, { value: role.roleArn });
-    new CfnOutput(this, `usagelogs-${stackname}-lambda-arn`, { value: l.functionArn });
     new CfnOutput(this, `usagelogs-${stackname}-firehose-arn`, { value: firehose.attrArn });
 
   }
