@@ -49,35 +49,6 @@ export class UsageLogs extends cdk.Stack {
     // Attach the bucket policy to the bucket
     bucket.addToResourcePolicy(bucketPolicy);
 
-    const policyLogs = new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      resources: [
-        "arn:aws:apigateway:*::/usageplans",
-        "arn:aws:apigateway:*::/usageplans/*/*"
-      ],
-      actions: [
-        'apigateway:GET'
-      ]
-    })
-
-    const role = new iam.Role(this, `${stackname}-usagelogs-lambda-role`, {
-      roleName: `${stackname}-usagelogs-lambda-role`,
-      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
-      inlinePolicies: {
-        logs: new iam.PolicyDocument({
-          statements: [policyLogs]
-        }),
-      }
-    })
-
-    const l = new lambda.Function(this, 'Function', {
-      functionName: `usagelogs-${stackname}`,
-      runtime: lambda.Runtime.PYTHON_3_12,
-      handler: 'lambda_function.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/usagelogs')),
-      role
-    })
-
     const log = new logs.LogGroup(this, 'ErrorLogGroup', {
       logGroupName: `/aws/firehose/access-logs-${stackname}`,
       retention: logs.RetentionDays.ONE_WEEK
