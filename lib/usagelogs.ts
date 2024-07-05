@@ -7,6 +7,7 @@ import {fromContextOrError} from "./utils";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as path from "path";
 import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose';
+import * as logs from "aws-cdk-lib/aws-logs";
 
 
 export class UsageLogs extends cdk.Stack {
@@ -28,8 +29,8 @@ export class UsageLogs extends cdk.Stack {
     // Create the S3 bucket
     const bucket = new s3.Bucket(this, 'ApiableLogs', {
       bucketName: `apiable-logs-${stackname}`,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // Change as needed
-      autoDeleteObjects: true, // Change as needed
+      removalPolicy: cdk.RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE, // Change as needed
+      autoDeleteObjects: false // true, // Change as needed
     });
 
     // Create the bucket policy
@@ -77,185 +78,61 @@ export class UsageLogs extends cdk.Stack {
       role
     })
 
-    // Create a role for the Firehose to use the Lambda function
-    const firehoseRole = new iam.Role(this, 'FirehoseRole', {
-      assumedBy: new iam.ServicePrincipal('firehose.amazonaws.com'),
+    const log = new logs.LogGroup(this, 'ErrorLogGroup', {
+      logGroupName: `/aws/firehose/access-logs-${stackname}`,
+      retention: logs.RetentionDays.ONE_WEEK
+    });
+    const stream = new logs.LogStream(this, 'ErrorLogStream', {
+      logGroup: log,
+      logStreamName: 'access-logs'
     });
 
-    // Attach policy statements to the role
-    /*firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'glue:GetTable',
-        'glue:GetTableVersion',
-        'glue:GetTableVersions'
-      ],
-      resources: [
-        `arn:aws:glue:${region}:${account}:catalog`,
-        `arn:aws:glue:${region}:${account}:database/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`,
-        `arn:aws:glue:${region}:${account}:table/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'kafka:GetBootstrapBrokers',
-        'kafka:DescribeCluster',
-        'kafka:DescribeClusterV2',
-        'kafka-cluster:Connect'
-      ],
-      resources: [
-        `arn:aws:kafka:${region}:${account}:cluster/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'kafka-cluster:DescribeTopic',
-        'kafka-cluster:DescribeTopicDynamicConfiguration',
-        'kafka-cluster:ReadData'
-      ],
-      resources: [
-        `arn:aws:kafka:${region}:${account}:topic/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'kafka-cluster:DescribeGroup'
-      ],
-      resources: [
-        `arn:aws:kafka:${region}:${account}:group/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/*`
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        's3:AbortMultipartUpload',
-        's3:GetBucketLocation',
-        's3:GetObject',
-        's3:ListBucket',
-        's3:ListBucketMultipartUploads',
-        's3:PutObject'
-      ],
-      resources: [
-        'arn:aws:s3:::apiable-logs',
-        'arn:aws:s3:::apiable-logs/*'
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'lambda:InvokeFunction',
-        'lambda:GetFunctionConfiguration'
-      ],
-      resources: [
-        l.functionArn
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'kms:GenerateDataKey',
-        'kms:Decrypt'
-      ],
-      resources: [
-        `arn:aws:kms:${region}:${account}:key/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`
-      ],
-      conditions: {
-        'StringEquals': {
-          'kms:ViaService': `s3.${region}.amazonaws.com`
-        },
-        'StringLike': {
-          'kms:EncryptionContext:aws:s3:arn': [
-            'arn:aws:s3:::%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/*',
-            'arn:aws:s3:::%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%'
-          ]
-        }
-      }
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'logs:PutLogEvents'
-      ],
-      resources: [
-        `arn:aws:logs:${region}:${account}:log-group:/aws/kinesisfirehose/amazon-apigateway-api-gateway-access-log-delivery-stream:log-stream:*`,
-        `arn:aws:logs:${region}:${account}:log-group:%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%:log-stream:*`
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'kinesis:DescribeStream',
-        'kinesis:GetShardIterator',
-        'kinesis:GetRecords',
-        'kinesis:ListShards'
-      ],
-      resources: [
-        `arn:aws:kinesis:${region}:${account}:stream/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`
-      ],
-    }));
-
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'kms:Decrypt'
-      ],
-      resources: [
-        `arn:aws:kms:${region}:${account}:key/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`
-      ],
-      conditions: {
-        'StringEquals': {
-          'kms:ViaService': `kinesis.${region}.amazonaws.com`
-        },
-        'StringLike': {
-          'kms:EncryptionContext:aws:kinesis:arn': `arn:aws:kinesis:${region}:${account}:stream/%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%`
-        }
-      }
-    }));
-
-     */
+    // Create an IAM role for Firehose to assume
+    const firehoseRole = new iam.Role(this, 'FirehoseRole', {
+      assumedBy: new iam.ServicePrincipal('firehose.amazonaws.com'),
+      inlinePolicies: {
+        FirehosePolicy: new iam.PolicyDocument({
+          statements: [
+            new iam.PolicyStatement({
+              actions: [
+                's3:AbortMultipartUpload',
+                's3:GetBucketLocation',
+                's3:GetObject',
+                's3:ListBucket',
+                's3:ListBucketMultipartUploads',
+                's3:PutObject',
+              ],
+              resources: [bucket.bucketArn, `${bucket.bucketArn}/*`],
+            }),
+            new iam.PolicyStatement({
+              actions: ['logs:PutLogEvents'],
+              resources: [log.logGroupArn],
+            }),
+          ],
+        }),
+      },
+    });
 
     // Create the Firehose delivery stream
-    const firehose = new kinesisfirehose.CfnDeliveryStream(this, 'KinesisFirehoseDeliveryStream', {
-      deliveryStreamName: `${stackname}-usagelogs-stream`,
+    const firehose = new kinesisfirehose.CfnDeliveryStream(this, `amazon-apigateway-${stackname}-usagelogs-stream`, {
+      deliveryStreamName: `amazon-apigateway-${stackname}-usagelogs-stream`,
       deliveryStreamType: 'DirectPut',
       s3DestinationConfiguration: {
         bucketArn: bucket.bucketArn,
         roleArn: firehoseRole.roleArn,
-        prefix: `${stackname}/aws/logs`,
-        errorOutputPrefix: `${stackname}/aws/logs/errors`,
+        prefix: `${stackname}/aws/logs/`,
+        errorOutputPrefix: `${stackname}/aws/errors/`,
         bufferingHints: {
           intervalInSeconds: 300,
           sizeInMBs: 5,
         },
-        compressionFormat: 'GZIP',
-
+        cloudWatchLoggingOptions: {
+          enabled: true,
+          logGroupName: log.logGroupName,
+          logStreamName: stream.logStreamName,
+        },
+        compressionFormat: 'UNCOMPRESSED' // UNCOMPRESSED | GZIP | ZIP | Snappy | HADOOP_SNAPPY
       },
-
-      /*processingConfiguration: {
-        enabled: true,
-        processors: [
-          {
-            type: 'Lambda',
-            parameters: [
-              {
-                parameterName: 'LambdaArn',
-                parameterValue: l.functionArn,
-              },
-            ],
-          },
-        ],
-      },*/
     });
 
 
