@@ -1,6 +1,5 @@
 import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
-import * as cognito from 'aws-cdk-lib/aws-cognito'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import {  fromContextOrError } from './utils'
@@ -12,6 +11,11 @@ export class AuthZ extends cdk.Stack {
   constructor(scope: Construct, id: string, props: cdk.StackProps) {
     super(scope, id, props)
     const stackname = fromContextOrError(this.node, 'stackname')
+
+    const userpoolId = fromContextOrError(this.node, 'authz-userpool-id')
+    const assumeRoleArn = fromContextOrError(this.node, 'authz-assume-role-arn')
+    const authMethod = fromContextOrError(this.node, 'auth-method')
+
     const account = props.env?.account || 'undefined'
     console.log("Creating AuthZ Lambda:", stackname)
 
@@ -50,10 +54,16 @@ export class AuthZ extends cdk.Stack {
 
     const l = new lambda.Function(this, 'Function', {
       functionName: `${stackname}-authz`,
-      runtime: lambda.Runtime.NODEJS_18_X,
+      runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/authorization')),
-      role
+      role,
+      environment: {
+        AUTH_METHOD: authMethod,
+        APIABLE_AWS_AUTHZ_USERPOOLID: userpoolId,
+        APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn
+      },
+      timeout: cdk.Duration.seconds(30)
     })
 
     new CfnOutput(this, `${stackname}-authz-lambda-arn`, {

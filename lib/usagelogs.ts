@@ -5,7 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam'
 import * as s3 from "aws-cdk-lib/aws-s3";
 import {fromContextOrError} from "./utils";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import path from "path";
+import * as path from "path";
 import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose';
 
 
@@ -83,7 +83,7 @@ export class UsageLogs extends cdk.Stack {
     });
 
     // Attach policy statements to the role
-    firehoseRole.addToPolicy(new iam.PolicyStatement({
+    /*firehoseRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
         'glue:GetTable',
@@ -155,7 +155,7 @@ export class UsageLogs extends cdk.Stack {
         'lambda:GetFunctionConfiguration'
       ],
       resources: [
-        `arn:aws:lambda:${region}:${account}:function:apigw-accesslogs-core-ApiGatewayAccessLogsEnrichme:$LATEST`
+        l.functionArn
       ],
     }));
 
@@ -223,8 +223,10 @@ export class UsageLogs extends cdk.Stack {
       }
     }));
 
+     */
+
     // Create the Firehose delivery stream
-    new kinesisfirehose.CfnDeliveryStream(this, 'KinesisFirehoseDeliveryStream', {
+    const firehose = new kinesisfirehose.CfnDeliveryStream(this, 'KinesisFirehoseDeliveryStream', {
       deliveryStreamName: `${stackname}-usagelogs-stream`,
       deliveryStreamType: 'DirectPut',
       s3DestinationConfiguration: {
@@ -239,7 +241,8 @@ export class UsageLogs extends cdk.Stack {
         compressionFormat: 'GZIP',
 
       },
-      processingConfiguration: {
+
+      /*processingConfiguration: {
         enabled: true,
         processors: [
           {
@@ -252,13 +255,14 @@ export class UsageLogs extends cdk.Stack {
             ],
           },
         ],
-      },
+      },*/
     });
 
 
     new CfnOutput(this, `usagelogs-${stackname}-s3-arn`, { value: bucket.bucketArn});
     new CfnOutput(this, `usagelogs-${stackname}-lambda-role-arn`, { value: role.roleArn });
     new CfnOutput(this, `usagelogs-${stackname}-lambda-arn`, { value: l.functionArn });
+    new CfnOutput(this, `usagelogs-${stackname}-firehose-arn`, { value: firehose.attrArn });
 
   }
 }
