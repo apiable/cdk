@@ -65,6 +65,16 @@ export class UsageLogs extends cdk.Stack {
       })
     )
 
+    s3BucketRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        resources: [`${bucket.bucketArn}/*`],
+        actions: [
+          's3:*'
+        ]
+      })
+    )
+
     const log = new logs.LogGroup(this, 'ErrorLogGroup', {
       logGroupName: `/aws/firehose/access-logs-${stackname}`,
       retention: logs.RetentionDays.ONE_WEEK
