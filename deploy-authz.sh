@@ -31,7 +31,6 @@ new AuthZ(app, "AuthZ", {
 EOT
 CONTEXT_OPTS="--context stackname=$STACKNAME --context authz-userpool-id=$APIABLE_AWS_AUTHZ_USERPOOLID --context authz-assume-role-arn=$APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN --context auth-method=$AUTH_METHOD --require-approval never --outputs-file ./cdk-outputs.json"
 echo $CONTEXT_OPTS
-exit 1
 cdk diff $CONTEXT_OPTS
 cdk synth -q $CONTEXT_OPTS
 cdk deploy $CONTEXT_OPTS

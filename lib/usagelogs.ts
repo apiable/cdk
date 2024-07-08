@@ -32,7 +32,7 @@ export class UsageLogs extends cdk.Stack {
     });
 
     // Create the bucket policy
-    const bucketPolicy = new iam.PolicyStatement({
+    /*const bucketPolicy = new iam.PolicyStatement({
       sid: 'Permissions',
       effect: iam.Effect.ALLOW,
       principals: [new iam.ArnPrincipal(`arn:aws:iam::034444869755:root`)],
@@ -42,10 +42,28 @@ export class UsageLogs extends cdk.Stack {
       resources: [
         bucket.bucketArn
       ],
-    });
+    });*/
 
     // Attach the bucket policy to the bucket
-    bucket.addToResourcePolicy(bucketPolicy);
+    //bucket.addToResourcePolicy(bucketPolicy);
+
+    const name = `apiable-s3-logs-managment-role-${region}`
+
+    const s3BucketRole = new iam.Role(this, `${name}-role`, {
+      assumedBy: new iam.AccountPrincipal('034444869755'),
+      roleName: name,
+      description: `Role for Apiable to Access the S3 Bucket`,
+    })
+
+    s3BucketRole.addToPolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        resources: [bucket.bucketArn],
+        actions: [
+          's3:*'
+        ]
+      })
+    )
 
     const log = new logs.LogGroup(this, 'ErrorLogGroup', {
       logGroupName: `/aws/firehose/access-logs-${stackname}`,
@@ -105,6 +123,7 @@ export class UsageLogs extends cdk.Stack {
     });
 
     new CfnOutput(this, `usagelogs-${stackname}-firehose-arn`, { value: firehose.attrArn });
+    new CfnOutput(this, `s3-assume-role-${stackname}-arn`, { value:  s3BucketRole.roleArn });
 
   }
 }
