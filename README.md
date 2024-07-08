@@ -46,5 +46,18 @@ export SES_VERIFIED_DOMAIN=<your_ses_verified_domain>
 ./deploy-cognito.sh
 ```
 
+## Logging Reporting installation (for advanced reports and usage)
+### Export the paramaters
+```bash
+export AWS_ACCOUNT_ID=<your_account_id>
+export AWS_REGION=<your_region>
+export STACKNAME=<your_pool_name>
+```
+### Deploy the stack
+```bash
+./deploy-usagelogs.sh
+```
+
+
 
 
