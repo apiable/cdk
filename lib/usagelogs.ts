@@ -58,17 +58,10 @@ export class UsageLogs extends cdk.Stack {
     s3BucketRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        resources: [bucket.bucketArn],
-        actions: [
-          's3:*'
-        ]
-      })
-    )
-
-    s3BucketRole.addToPolicy(
-      new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        resources: [`${bucket.bucketArn}/*`],
+        resources: [
+          bucket.bucketArn,
+          `${bucket.bucketArn}/*`
+        ],
         actions: [
           's3:*'
         ]
@@ -134,6 +127,7 @@ export class UsageLogs extends cdk.Stack {
 
     new CfnOutput(this, `usagelogs-${stackname}-firehose-arn`, { value: firehose.attrArn });
     new CfnOutput(this, `s3-assume-role-${stackname}-arn`, { value:  s3BucketRole.roleArn });
+    new CfnOutput(this, `s3-bucket-name`, { value:  bucket.bucketName });
 
   }
 }
