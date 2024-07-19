@@ -68,7 +68,7 @@ export class UsageLogs extends cdk.Stack {
         ]
       })
     )
-/*
+
     const log = new logs.LogGroup(this, 'ErrorLogGroup', {
       logGroupName: `/aws/firehose/access-logs-${stackname}`,
       retention: logs.RetentionDays.ONE_WEEK
@@ -129,6 +129,6 @@ export class UsageLogs extends cdk.Stack {
     new CfnOutput(this, `usagelogs-${stackname}-firehose-arn`, { value: firehose.attrArn });
     new CfnOutput(this, `s3-assume-role-${stackname}-arn`, { value:  s3BucketRole.roleArn });
     new CfnOutput(this, `s3-bucket-name`, { value:  bucket.bucketName });
-*/
+
   }
 }
