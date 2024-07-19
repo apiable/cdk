@@ -1,13 +1,13 @@
 import * as cdk from 'aws-cdk-lib'
-import { AuthZ } from '../lib/authz'
+import { UsageLogs } from '../lib/usagelogs'
 
 const app = new cdk.App()
 // eslint-disable-next-line no-new
-new AuthZ(app, "AuthZ", {
-    stackName: "auth-portal-authz-developer",
-    description: "AuthZ Lambda for Apiable Gateway Authorization developer",
+new UsageLogs(app, "UsageLogs", {
+    stackName: "usagelogs-apiable-alex",
+    description: "Usage Logs for Apiable Portal alex",
     env: {
-        account: "034444869755",
-        region: "eu-west-1"
+        account: "228289654720",
+        region: "eu-central-1"
     }
 })
