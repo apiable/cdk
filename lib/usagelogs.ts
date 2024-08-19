@@ -7,6 +7,7 @@ import {fromContextOrError} from "./utils";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as path from "path";
 import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose';
+import * as logs from "aws-cdk-lib/aws-logs";
 
 
 export class UsageLogs extends cdk.Stack {
@@ -224,10 +225,18 @@ export class UsageLogs extends cdk.Stack {
     }));
 
      */
+    const log = new logs.LogGroup(this, 'ErrorLogGroup', {
+      logGroupName: `amazon-apigateway-api-gateway-access-logs-${stackname}`,
+      retention: logs.RetentionDays.INFINITE
+    });
+    const stream = new logs.LogStream(this, 'ErrorLogStream', {
+      logGroup: log,
+      logStreamName: 'amazon-apigateway-access-logs'
+    });
 
     // Create the Firehose delivery stream
     const firehose = new kinesisfirehose.CfnDeliveryStream(this, 'KinesisFirehoseDeliveryStream', {
-      deliveryStreamName: `${stackname}-usagelogs-stream`,
+      deliveryStreamName: `amazon-apigateway-${stackname}-usagelogs-stream`,
       deliveryStreamType: 'DirectPut',
       s3DestinationConfiguration: {
         bucketArn: bucket.bucketArn,
@@ -238,24 +247,12 @@ export class UsageLogs extends cdk.Stack {
           intervalInSeconds: 300,
           sizeInMBs: 5,
         },
-        compressionFormat: 'GZIP',
-
+        cloudWatchLoggingOptions: {
+          enabled: true,
+          logGroupName: log.logGroupName,
+          logStreamName: stream.logStreamName,
+        },
       },
-
-      /*processingConfiguration: {
-        enabled: true,
-        processors: [
-          {
-            type: 'Lambda',
-            parameters: [
-              {
-                parameterName: 'LambdaArn',
-                parameterValue: l.functionArn,
-              },
-            ],
-          },
-        ],
-      },*/
     });
 
 
