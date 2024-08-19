@@ -24,9 +24,11 @@ export class UsageLogs extends cdk.Stack {
       throw new Error("region must be set in the stack props")
     }
 
+    const bucketName = `apiable-logs-${stackname}`
+
     // Create the S3 bucket
     const bucket = new s3.Bucket(this, 'ApiableLogs', {
-      bucketName: `apiable-logs-${stackname}`,
+      bucketName,
       removalPolicy: cdk.RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE, // Change as needed
       autoDeleteObjects: false // true, // Change as needed
     });
@@ -48,7 +50,7 @@ export class UsageLogs extends cdk.Stack {
     // Attach the bucket policy to the bucket
     bucket.addToResourcePolicy(bucketPolicy);
 
-    const name = `apiable-s3-logs-managment-role-${region}`
+    const name = `${bucketName}-managment-role-${region}`
 
     const s3BucketRole = new iam.Role(this, `${name}-role`, {
       assumedBy: new iam.AccountPrincipal('034444869755'),
