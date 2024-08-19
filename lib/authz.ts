@@ -31,6 +31,16 @@ export class AuthZ extends cdk.Stack {
       ]
     })
 
+    /* allows the lambda to assume roles in the Apiable account, in case the cognito pool is in Apiable AWS */
+    const policyAssumeRoleApiable = new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      resources: [`arn:aws:iam::034444869755:role/*`],
+      actions: [
+        'sts:AssumeRole'
+      ]
+    })
+
+    /* allows the lambda to assume roles in the Client account, in case the cognito pool is in Client AWS  */
     const policyAssumeRole = new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       resources: [`arn:aws:iam::${account}:role/*`],
@@ -47,7 +57,7 @@ export class AuthZ extends cdk.Stack {
           statements: [policyLogs]
         }),
         assumeRole: new iam.PolicyDocument({
-          statements: [policyAssumeRole]
+          statements: [policyAssumeRole, policyAssumeRoleApiable]
         })
       }
     })

@@ -22,12 +22,9 @@ You can find the role arn in the output of the stack.
 export AWS_ACCOUNT_ID=<your_account_id>
 export AWS_REGION=<your_region>
 export STACKNAME=<your_pool_name>
-```
-### Add .env into lib/assets/lambdas/authorization
-This file will be git ignored, so you can add your secrets here.
-
-```
-COGNITO_USER_POOL_ID=YOUR_AUTHZ_USERPOOL_ID
+export APIABLE_AWS_AUTHZ_USERPOOLID=<your_authz_userpool_id>
+export APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN=<your_authz_assume_role_arn>
+export AUTH_METHOD=JWT
 ```
 
 ### Deploy the stack
@@ -48,6 +45,19 @@ export SES_VERIFIED_DOMAIN=<your_ses_verified_domain>
 ```bash
 ./deploy-cognito.sh
 ```
+
+## Logging Reporting installation (for advanced reports and usage)
+### Export the paramaters
+```bash
+export AWS_ACCOUNT_ID=<your_account_id>
+export AWS_REGION=<your_region>
+export STACKNAME=<your_pool_name>
+```
+### Deploy the stack
+```bash
+./deploy-usagelogs.sh
+```
+
 
 
 

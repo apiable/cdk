@@ -18,13 +18,13 @@ rm $CDK_BIN_FILE
 
 cat <<EOT >> $CDK_BIN_FILE
 import * as cdk from 'aws-cdk-lib'
-import { AuthZ } from '../lib/authz'
+import { GatewayRole } from '../lib/gatewayrole'
 
 const app = new cdk.App()
 // eslint-disable-next-line no-new
-new AuthZ(app, "AuthZ", {
-    stackName: "cdk-bootstrap",
-    description: "CDK Bootstrap",
+new GatewayRole(app, "GatewayRole", {
+    stackName: "gatewayrole",
+    description: "Gateway Management Role for Apiable",
     env: {
         account: "$AWS_ACCOUNT_ID",
         region: "$AWS_REGION"
