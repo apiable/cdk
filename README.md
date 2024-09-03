@@ -51,12 +51,48 @@ export SES_VERIFIED_DOMAIN=<your_ses_verified_domain>
 ```bash
 export AWS_ACCOUNT_ID=<your_account_id>
 export AWS_REGION=<your_region>
-export STACKNAME=<your_pool_name>
+export STACKNAME=<your_stack_name>
 ```
-### Deploy the stack
+### Deploy the S3 bucket (if not exists, otherwise skip this step)
 ```bash
-./deploy-usagelogs.sh
+./deploy-logs-bucket.sh
 ```
+
+### Export the paramater of logs bucket
+```bash
+export AWS_ACCOUNT_ID=<your_account_id>
+export AWS_REGION=<your_region>
+export LOGS_BUCKET_ARN=<logs_bucket_arn_from_previous_step>
+export STACKNAME=<your_stack_name>
+```
+### Deploy the Usagelogs firehose stream
+```bash
+./deploy-usagelogs-stream.sh
+```
+### Enable the logs in the API Gateway
+- Go to the API Gateway console
+- Select the API
+- Go to the Stages
+- Select the Stage
+- Go to the Logs/Tracing and click Edit
+Paste following pattern in the Log format field:
+```json
+{"api_id": "$context.apiId","api_key": "$context.identity.apiKey","key_id": "$context.identity.apiKeyId","ip": "$context.identity.sourceIp","method": "$context.httpMethod","uri": "$context.path","response_size":"$context.responseLength","response_status": "$context.status","resource_id": "$context.resourceId","request_id": "$context.requestId","request_latency": "$context.responseLatency","request_time":"$context.requestTimeEpoch","stage": "$context.stage", "usage_prompt_tokens": "$context.responseOverride.header.usageprompttokens", "usage_completion_tokens": "$context.responseOverride.header.usagecompletiontokens", "usage_total_tokens": "$context.responseOverride.header.usagetotaltokens"}
+```
+- Save the changes
+
+### Export the paramater of logs bucket
+```bash
+export AWS_ACCOUNT_ID=<your_account_id>
+export AWS_REGION=<your_region>
+export LOGS_BUCKET_ARN=<logs_bucket_arn_from_previous_step>
+export STACKNAME=<your_stack_name>
+```
+### Deploy the Usagelogs firehose stream
+```bash
+./deploy-usagelogs-stream.sh
+```
+
 
 
 

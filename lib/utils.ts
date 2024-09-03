@@ -15,3 +15,13 @@ export const fromContextOrError = (node: Node, key:string) => {
     }
     throw new Error(`key=${key} must be set using --context ${key}=value`)
 }
+
+export const generateRandomString = (length: number) => {
+    const characters = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+        const randomIndex = Math.floor(Math.random() * characters.length);
+        result += characters[randomIndex];
+    }
+    return result;
+}
