@@ -13,7 +13,7 @@ export class GatewayRole extends cdk.Stack {
 
     if(!region) throw new Error("region must be set in the stack props")
 
-    const name = `apiable-gateway-managment-role-${region}`
+    const name = `apiable-gateway-managment-role`
 
     const gatewayRole = new iam.Role(this, `${name}-role`, {
       assumedBy: new iam.AccountPrincipal('034444869755'),

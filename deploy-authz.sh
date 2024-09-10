@@ -25,11 +25,15 @@ new AuthZ(app, "AuthZ", {
     description: "AuthZ Lambda for Apiable Gateway Authorization $STACKNAME",
     env: {
         account: "$AWS_ACCOUNT_ID",
-        region: "$AWS_REGION"
+        region: "$AWS_REGION",
+        name: "$STACKNAME",
+        userpoolId: "$APIABLE_AWS_AUTHZ_USERPOOLID",
+        assumeRoleArn: "$APIABLE_AWS_AUTHZ_ROLE_ARN",
+        authMethod: "$AUTH_METHOD",
     }
 })
 EOT
-CONTEXT_OPTS="--context stackname=$STACKNAME --context authz-userpool-id=$APIABLE_AWS_AUTHZ_USERPOOLID --context authz-assume-role-arn=$APIABLE_AWS_AUTHZ_ROLE_ARN --context auth-method=$AUTH_METHOD --require-approval never --outputs-file ./cdk-outputs.json"
+CONTEXT_OPTS="--require-approval never --outputs-file ./cdk-outputs.json"
 echo $CONTEXT_OPTS
 cdk diff $CONTEXT_OPTS
 cdk synth -q $CONTEXT_OPTS

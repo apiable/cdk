@@ -16,7 +16,7 @@ deploy-all.sh
 .settings
 .springBeans
 .sts4-cache
-bin/
+bin/*
 !**/src/main/**/bin/
 !**/src/test/**/bin/
 
@@ -44,3 +44,4 @@ out/
 !/lib/assets/lambdas/authorization/node_modules/
 /cdk.out/
 *spec.json
+/temp/

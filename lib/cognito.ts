@@ -8,23 +8,31 @@ import * as path from 'path'
 import {CfnOutput} from "aws-cdk-lib";
 
 
+export interface Env extends cdk.StackProps {
+  account: string;
+  region: string;
+  name: string;
+  domain?: string;
+  fromEmail?: string;
+}
+export interface Props extends cdk.StackProps {
+  env: Env;
+}
+
 export class Cognito extends cdk.Stack {
 
-  constructor(scope: Construct, id: string, props: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: Props) {
 
     super(scope, id, props)
-    const region = props.env?.region || 'undefined'
-    const account = props.env?.account || 'undefined'
-    const stackname = fromContextOrError(this.node, 'stackname')
-    const domain = fromContextOrDefault(this.node, 'domain', `${stackname}.apiable.io`)
-    const fromEmail = fromContextOrDefault(this.node, 'from-email', 'info@apiable.io')
-    const replyTo = fromEmail
-    const sesVerifiedDomain = fromContextOrDefault(this.node, 'ses-verified-domain', null)
-    const userPoolName = `portal-${stackname}`
+    const { account, region, name, domain: domainProp, fromEmail: fromEmailProp} = props.env
 
-    console.log("Creating Cognito Pool for stack: ", stackname)
+    const fromEmail = fromEmailProp || 'info@apiable.io'
+    const replyTo = fromEmail
+    const domain = domainProp || `${name}.apiable.io`
+    const userPoolName = `portal-${name}`
+
+    console.log("Creating Cognito Pool for stack: ", name)
     console.log("User Pool Name is: ", userPoolName)
-    const sesConfig: cognito.UserPoolSESOptions = sesVerifiedDomain ?{ fromEmail, replyTo }:{ fromEmail, replyTo, sesVerifiedDomain }
     const callbackUrls = ['http://localhost:3000', `https://${domain}/api/oauth2/oauth-token` ]
     const logoutUrls = callbackUrls
 
@@ -38,10 +46,10 @@ export class Cognito extends cdk.Stack {
 ╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝     ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝    ╚═╝      ╚═════╝  ╚═════╝ ╚══════╝
 
  */
-    const poolAuthN = new cognito.UserPool(this, stackname, {
+    const poolAuthN = new cognito.UserPool(this, name, {
       deletionProtection: false,
       userPoolName,
-      email: cognito.UserPoolEmail.withSES(sesConfig),
+      email: cognito.UserPoolEmail.withCognito(fromEmail),
       mfa: cognito.Mfa.OPTIONAL,
       signInCaseSensitive: false,
       signInAliases: {
@@ -92,15 +100,15 @@ export class Cognito extends cdk.Stack {
       scopes: [adminScope, readScope, cicdScope],
     })
 
-    let domainPrefix = `apiable-${stackname}`
-    if (stackname === 'aws') domainPrefix = 'apiable-aw-s' // aws is reserver on aws and cannot be used
+    let domainPrefix = `apiable-${name}`
+    if (name === 'aws') domainPrefix = 'apiable-aw-s' // aws is reserver on aws and cannot be used
     poolAuthN.addDomain('CognitoDomain', {cognitoDomain:{ domainPrefix}})
 
     const loginClient = new cognito.UserPoolClient(this, 'login', {
       userPool: poolAuthN,
       userPoolClientName: 'login',
       preventUserExistenceErrors: true,
-      authFlows: { userPassword: stackname === 'dev', userSrp: true, custom: true },
+      authFlows: { userPassword: name === 'dev', userSrp: true, custom: true },
       oAuth: {
         scopes: [ cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PHONE ],
         callbackUrls,
@@ -161,7 +169,7 @@ export class Cognito extends cdk.Stack {
     ██║  ██║╚██████╔╝   ██║   ██║  ██║███████╗    ╚██████╔╝███████║███████╗██║  ██║    ██║     ╚██████╔╝╚██████╔╝███████╗
     ╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝╚══════╝     ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝    ╚═╝      ╚═════╝  ╚═════╝ ╚══════╝
     */
-    const poolAuthZ = new cognito.UserPool(this, `${stackname}-authz`, {
+    const poolAuthZ = new cognito.UserPool(this, `${name}-authz`, {
       deletionProtection: false,
       userPoolName: `${userPoolName}-authz`,
       mfa: cognito.Mfa.OFF,

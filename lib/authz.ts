@@ -6,18 +6,28 @@ import {  fromContextOrError } from './utils'
 import * as path from 'path'
 import {CfnOutput} from "aws-cdk-lib";
 
+export interface Env extends cdk.StackProps {
+  account: string;
+  region: string;
+  name: string;
+  userpoolId: string;
+  assumeRoleArn: string;
+  authMethod?: string;
+}
+export interface Props extends cdk.StackProps {
+  env: Env;
+}
 
 export class AuthZ extends cdk.Stack {
-  constructor(scope: Construct, id: string, props: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props: Props) {
     super(scope, id, props)
-    const stackname = fromContextOrError(this.node, 'stackname')
 
-    const userpoolId = fromContextOrError(this.node, 'authz-userpool-id')
-    const assumeRoleArn = fromContextOrError(this.node, 'authz-assume-role-arn')
-    const authMethod = fromContextOrError(this.node, 'auth-method')
 
-    const account = props.env?.account || 'undefined'
-    console.log("Creating AuthZ Lambda:", stackname)
+    const { account, region, name, userpoolId, assumeRoleArn, authMethod: authMethodProp } = props.env
+
+    const authMethod = authMethodProp || 'JWT'
+
+    console.log("Creating AuthZ Lambda:", name)
 
     if(!account) {
       throw new Error("account must be set in the stack props")
@@ -49,8 +59,8 @@ export class AuthZ extends cdk.Stack {
       ]
     })
 
-    const role = new iam.Role(this, `${stackname}-authz-lambda-role`, {
-      roleName: `${stackname}-authz-lambda-role`,
+    const role = new iam.Role(this, `${name}-authz-lambda-role`, {
+      roleName: `${name}-authz-lambda-role`,
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       inlinePolicies: {
         logs: new iam.PolicyDocument({
@@ -63,7 +73,7 @@ export class AuthZ extends cdk.Stack {
     })
 
     const l = new lambda.Function(this, 'Function', {
-      functionName: `${stackname}-authz`,
+      functionName: `${name}-authz`,
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/authorization')),
@@ -76,12 +86,12 @@ export class AuthZ extends cdk.Stack {
       timeout: cdk.Duration.seconds(30)
     })
 
-    new CfnOutput(this, `${stackname}-authz-lambda-arn`, {
-      exportName: `${stackname}-authz-lambda-arn`,
+    new CfnOutput(this, `${name}-authz-lambda-arn`, {
+      exportName: `${name}-authz-lambda-arn`,
       value: l.functionArn
     });
-    new CfnOutput(this, `${stackname}-authz-lambda-role-arn`, {
-      exportName: `${stackname}-authz-lambda-role-arn`,
+    new CfnOutput(this, `${name}-authz-lambda-role-arn`, {
+      exportName: `${name}-authz-lambda-role-arn`,
       value: role.roleArn
     });
   }

@@ -9,12 +9,11 @@ checkMandatoryParameter () {
   fi
 }
 
-EXAMPLE="./deploy-cognito.sh 034444869755 eu-central-1 dev no-reply@apiable.io apiable.io"
+EXAMPLE="./deploy-cognito.sh 034444869755 eu-central-1 dev no-reply@apiable.io"
 checkMandatoryParameter "$1" "$AWS_ACCOUNT_ID" "aws-account-id must be passed as a first parameter or exported through environment variable 'export AWS_ACCOUNT_ID=1234'" && AWS_ACCOUNT_ID=$1
 checkMandatoryParameter "$2" "$AWS_REGION" "aws-region must be passed as a second parameter or exported through environment variable 'export AWS_REGION=eu-central-1'" && AWS_REGION=$2
 checkMandatoryParameter "$3" "$POOLNAME" "poolname must be passed as a third parameter or exported through environment variable 'export POOLNAME=staging'" && POOLNAME=$3
 checkMandatoryParameter "$4" "$FROM_EMAIL" "from email must be passed as a fourth parameter or exported through environment variable 'export FROM_EMAIL=no-reply@apiable.io'" && FROM_EMAIL=$4
-checkMandatoryParameter "$5" "$SES_VERIFIED_DOMAIN" "ses-verified-domain must be passed as a fifth parameter or exported through environment variable 'export SES_VERIFIED_DOMAIN=apiable.io'" && SES_VERIFIED_DOMAIN=$5
 
 CDK_BIN_FILE="bin/apiable-cdk.ts"
 rm $CDK_BIN_FILE
@@ -30,11 +29,14 @@ new Cognito(app, "Cognito", {
     description: "Cognito Pool for Apiable $POOLNAME Portal",
     env: {
         account: "$AWS_ACCOUNT_ID",
-        region: "$AWS_REGION"
+        region: "$AWS_REGION",
+        name: "$POOLNAME",
+        domain: "$POOLNAME.apiable.io",
+        fromEmail: "$FROM_EMAIL"
     }
 })
 EOT
-CONTEXT_OPTS="--context stackname=$POOLNAME --context from-email=$FROM_EMAIL --context ses-verified-domain=$SES_VERIFIED_DOMAIN --require-approval never --outputs-file ./cdk-outputs.json"
+CONTEXT_OPTS="--require-approval never --outputs-file ./cdk-outputs.json"
 echo $CONTEXT_OPTS
 cdk diff $CONTEXT_OPTS
 cdk synth -q $CONTEXT_OPTS

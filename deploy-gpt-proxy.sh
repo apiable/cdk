@@ -9,7 +9,7 @@ checkMandatoryParameter () {
   fi
 }
 
-EXAMPLE="./deploy-gpt-proxy.sh 034444869755 034444869755 eu-west-2 dev apikey_76djf6HGgf6jG6jh46Hghffi"
+EXAMPLE="./deploy-gpt-proxy.sh 034444869755 eu-west-2 dev $API_KEY apikey_76djf6HGgf6jG6jh46Hghffi"
 checkMandatoryParameter "$1" "$AWS_ACCOUNT_ID" "aws-account-id must be passed as a first parameter or exported through environment variable 'export AWS_ACCOUNT_ID=1234'" && AWS_ACCOUNT_ID=$1
 checkMandatoryParameter "$2" "$AWS_REGION" "aws-region must be passed as a second parameter or exported through environment variable 'export AWS_REGION=eu-central-1'" && AWS_REGION=$2
 checkMandatoryParameter "$3" "$STACKNAME" "stackname must be passed as a third parameter or exported through environment variable 'export STACKNAME=staging'" && STACKNAME=$3
