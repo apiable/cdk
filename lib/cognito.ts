@@ -26,7 +26,7 @@ export class Cognito extends cdk.Stack {
     super(scope, id, props)
     const { account, region, name, domain: domainProp, fromEmail: fromEmailProp} = props.env
 
-    const fromEmail = fromEmailProp || 'info@apiable.io'
+    const fromEmail = fromEmailProp || 'no-reply@verificationemail.com'
     const replyTo = fromEmail
     const domain = domainProp || `${name}.apiable.io`
     const userPoolName = `portal-${name}`
