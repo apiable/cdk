@@ -38,8 +38,6 @@ export AUTH_METHOD=JWT
 export AWS_ACCOUNT_ID=<your_account_id>
 export AWS_REGION=<your_region>
 export POOLNAME=<your_pool_name>
-export FROM_EMAIL=<your_from_email>
-export SES_VERIFIED_DOMAIN=<your_ses_verified_domain>
 ```
 ### Deploy the stack
 ```bash
