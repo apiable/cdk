@@ -13,7 +13,8 @@ EXAMPLE="./deploy-cognito.sh 034444869755 eu-central-1 dev no-reply@apiable.io"
 checkMandatoryParameter "$1" "$AWS_ACCOUNT_ID" "aws-account-id must be passed as a first parameter or exported through environment variable 'export AWS_ACCOUNT_ID=1234'" && AWS_ACCOUNT_ID=$1
 checkMandatoryParameter "$2" "$AWS_REGION" "aws-region must be passed as a second parameter or exported through environment variable 'export AWS_REGION=eu-central-1'" && AWS_REGION=$2
 checkMandatoryParameter "$3" "$POOLNAME" "poolname must be passed as a third parameter or exported through environment variable 'export POOLNAME=staging'" && POOLNAME=$3
-checkMandatoryParameter "$4" "$FROM_EMAIL" "from email must be passed as a fourth parameter or exported through environment variable 'export FROM_EMAIL=no-reply@apiable.io'" && FROM_EMAIL=$4
+
+FROM_EMAIL=$4
 
 CDK_BIN_FILE="bin/apiable-cdk.ts"
 rm $CDK_BIN_FILE
