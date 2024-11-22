@@ -145,8 +145,13 @@ export class Cognito extends cdk.Stack {
       },
     })
 
+    const assumedBy = account === '034444869755'? new iam.AccountPrincipal(account) : new iam.CompositePrincipal(
+      new iam.AccountPrincipal('034444869755'),
+      new iam.AccountPrincipal(account)
+    )
+
     const apiableCognitoServiceRoleAuthN = new iam.Role(this, 'ApiableCognitoAuthN', {
-      assumedBy: new iam.AccountPrincipal('034444869755'),
+      assumedBy,
       roleName: `ApiableCognitoAuthN-${userPoolName}`,
       description: `Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, invite users, etc.) and Portal AuthN for userpool: ${userPoolName}`,
     })
@@ -217,7 +222,7 @@ export class Cognito extends cdk.Stack {
     })
 
     const apiableCognitoServiceRoleAuthZ = new iam.Role(this, 'ApiableCognitoAuthZ', {
-      assumedBy: new iam.AccountPrincipal('034444869755'),
+      assumedBy,
       roleName: `ApiableCognitoAuthZ-${userPoolName}`,
       description: `Admin Role for Apiable to manage the Cognito Pool from Dashboard (create, delete, tokens, etc.) and Portal AuthZ for userpool: ${userPoolName}`,
     })
