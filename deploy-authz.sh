@@ -11,6 +11,27 @@ checkMandatoryParameter "$4" "$APIABLE_AWS_AUTHZ_ROLE_ARN" "-" "authz-assume-rol
 checkMandatoryParameter "$5" "$AUTH_METHOD" "JWT" "auth-method must be passed as a fifth parameter or exported through environment variable 'export AUTH_METHOD=JWT'" && AUTH_METHOD=$5
 checkMandatoryParameter "$6" "$STACKNAME" "-" "stackname must be passed as a sixth parameter or exported through environment variable 'export STACKNAME=staging'" && STACKNAME=$6
 
+SECRET_KEY=$STACKNAME/authzcache
+
+aws secretsmanager delete-secret \
+  --secret-id "$SECRET_KEY" \
+  --force-delete-without-recovery \
+  --region "$AWS_REGION" &> /dev/null
+
+# Wait for a few seconds to ensure the secret is deleted
+sleep 30
+
+CREATE_SECRET_RESPONSE=$(aws secretsmanager create-secret \
+  --name "$SECRET_KEY" \
+  --description "$STACKNAME Authz Cache" \
+  --region "$AWS_REGION" \
+  --secret-string "{}")
+
+# Extract the ARN of the created secret using jq
+SECRET_ARN=$(echo "$CREATE_SECRET_RESPONSE" | jq -r '.ARN')
+
+echo "Secret ARN: $SECRET_ARN"
+
 CDK_BIN_FILE="bin/apiable-cdk.ts"
 rm $CDK_BIN_FILE
 
@@ -30,6 +51,8 @@ new AuthZ(app, "AuthZ", {
         userpoolId: "$APIABLE_AWS_AUTHZ_USERPOOLID",
         assumeRoleArn: "$APIABLE_AWS_AUTHZ_ROLE_ARN",
         authMethod: "$AUTH_METHOD",
+        secretArn: "$SECRET_ARN",
+        secretKey: "$SECRET_KEY"
     }
 })
 EOT

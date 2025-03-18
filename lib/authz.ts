@@ -2,15 +2,17 @@ import * as cdk from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as iam from 'aws-cdk-lib/aws-iam'
-import {  fromContextOrError } from './utils'
 import * as path from 'path'
 import {CfnOutput} from "aws-cdk-lib";
+
 
 export interface Env extends cdk.StackProps {
   account: string;
   region: string;
   name: string;
   userpoolId: string;
+  secretArn: string;
+  secretKey: string;
   assumeRoleArn: string;
   authMethod?: string;
 }
@@ -23,7 +25,7 @@ export class AuthZ extends cdk.Stack {
     super(scope, id, props)
 
 
-    const { account, region, name, userpoolId, assumeRoleArn, authMethod: authMethodProp } = props.env
+    const { account, region, name, userpoolId, assumeRoleArn, secretArn, secretKey, authMethod: authMethodProp } = props.env
 
     const authMethod = authMethodProp || 'JWT'
 
@@ -32,6 +34,18 @@ export class AuthZ extends cdk.Stack {
     if(!account) {
       throw new Error("account must be set in the stack props")
     }
+
+    const policySecretsManager = new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'secretsmanager:GetSecretValue',
+        'secretsmanager:PutSecretValue',
+        'secretsmanager:DescribeSecret',
+        'secretsmanager:ListSecrets'
+      ],
+      resources: [secretArn], // Use the ARN of the created secret
+    });
+
 
     const policyLogs = new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
@@ -68,7 +82,10 @@ export class AuthZ extends cdk.Stack {
         }),
         assumeRole: new iam.PolicyDocument({
           statements: [policyAssumeRole, policyAssumeRoleApiable]
-        })
+        }),
+        secretsManager: new iam.PolicyDocument({
+          statements: [policySecretsManager],
+        }),
       }
     })
 
@@ -81,7 +98,8 @@ export class AuthZ extends cdk.Stack {
       environment: {
         AUTH_METHOD: authMethod,
         APIABLE_AWS_AUTHZ_USERPOOLID: userpoolId,
-        APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn
+        APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn,
+        APIABLE_AWS_AUTHZ_SM_CACHE_NAME: secretKey
       },
       timeout: cdk.Duration.seconds(30)
     })
