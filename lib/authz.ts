@@ -82,6 +82,7 @@ export class AuthZ extends cdk.Stack {
       role,
       environment: {
         AUTH_METHOD: authMethod,
+        AUTH_REGION: region,
         APIABLE_AWS_AUTHZ_USERPOOLID: userpoolId,
         APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn,
         APIABLE_AWS_AUTHZ_API_GATEWAY_ASSUME_ROLE_ARN: apiGatewayAssumeRoleArn,
