@@ -13,6 +13,8 @@ export interface Env extends cdk.StackProps {
   userpoolId: string;
   assumeRoleArn: string;
   authMethod?: string;
+  apiGatewayAssumeRoleArn: string;
+  apiGatewayRegion: string;
 }
 export interface Props extends cdk.StackProps {
   env: Env;
@@ -23,7 +25,7 @@ export class AuthZ extends cdk.Stack {
     super(scope, id, props)
 
 
-    const { account, region, name, userpoolId, assumeRoleArn, authMethod: authMethodProp } = props.env
+    const { account, region, name, userpoolId, assumeRoleArn, authMethod: authMethodProp, apiGatewayAssumeRoleArn, apiGatewayRegion } = props.env
 
     const authMethod = authMethodProp || 'JWT'
 
@@ -81,7 +83,9 @@ export class AuthZ extends cdk.Stack {
       environment: {
         AUTH_METHOD: authMethod,
         APIABLE_AWS_AUTHZ_USERPOOLID: userpoolId,
-        APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn
+        APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn,
+        APIABLE_AWS_AUTHZ_API_GATEWAY_ASSUME_ROLE_ARN: apiGatewayAssumeRoleArn,
+        APIABLE_AWS_AUTHZ_API_GATEWAY_REGION:apiGatewayRegion
       },
       timeout: cdk.Duration.seconds(30)
     })
