@@ -86,7 +86,8 @@ export class AuthZ extends cdk.Stack {
         APIABLE_AWS_AUTHZ_USERPOOLID: userpoolId,
         APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn,
         APIABLE_AWS_AUTHZ_API_GATEWAY_ASSUME_ROLE_ARN: apiGatewayAssumeRoleArn,
-        APIABLE_AWS_AUTHZ_API_GATEWAY_REGION:apiGatewayRegion
+        APIABLE_AWS_AUTHZ_API_GATEWAY_REGION:apiGatewayRegion,
+        APIABLE_AWS_AUTHZ_CREDIT_SIGNING_KEY: "replace-me-with-your-key",
       },
       timeout: cdk.Duration.seconds(30)
     })
