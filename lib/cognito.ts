@@ -188,7 +188,7 @@ export class Cognito extends cdk.Stack {
 
     const l = new lambda.Function(this, 'Function', {
       functionName: `${userPoolName}-auth`,
-      runtime: lambda.Runtime.NODEJS_18_X,
+      runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/pre-token-generation-authz')),
     })
