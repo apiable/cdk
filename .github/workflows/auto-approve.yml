@@ -1,0 +1,9 @@
+name: Auto Approve
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  approve:
+    uses: apiable/apiable-github-actions/.github/workflows/auto-approve.yml@master
+    secrets: inherit
