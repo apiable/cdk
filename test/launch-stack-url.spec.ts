@@ -50,6 +50,14 @@ describe('generateLaunchStackUrl — edge and error paths', () => {
     )
   })
 
+  it('addresses the template via the region-agnostic global S3 endpoint', () => {
+    // the host bucket is single-region; the deploy region must not be embedded in the S3 host
+    // or the console fetches the template cross-region and 301s
+    const url = decodeURIComponent(generateLaunchStackUrl({ ...VALID, region: 'ap-southeast-2' }))
+    expect(url).toContain(`${DEFAULT_LAUNCHSTACK_BUCKET}.s3.amazonaws.com/`)
+    expect(url).not.toContain('.s3.ap-southeast-2.')
+  })
+
   it('honours a custom bucket override', () => {
     const url = decodeURIComponent(generateLaunchStackUrl({ ...VALID, bucket: 'tenant-bucket' }))
     expect(url).toContain('tenant-bucket.s3.')

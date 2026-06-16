@@ -1,4 +1,9 @@
-export { GatewayRole, GatewayRoleStack, TRUST_ACCOUNT_PARAMETER } from './gateway-role'
+export {
+  GatewayRole,
+  GatewayRoleStack,
+  buildPublishedStack,
+  TRUST_ACCOUNT_PARAMETER,
+} from './gateway-role'
 export type { GatewayRoleProps, GatewayRoleStackProps } from './gateway-role'
 export {
   CONSTRUCT_NAME,

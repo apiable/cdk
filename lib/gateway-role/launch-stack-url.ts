@@ -49,8 +49,8 @@ export const launchStackTemplateS3Uri = (
 ): string => `s3://${bucket}/${launchStackTemplateKey(version)}`
 
 /** HTTPS address the CloudFormation console fetches the template from. */
-const templateHttpsUrl = (version: string, region: string, bucket: string): string =>
-  `https://${bucket}.s3.${region}.amazonaws.com/${launchStackTemplateKey(version)}`
+const templateHttpsUrl = (version: string, bucket: string): string =>
+  `https://${bucket}.s3.amazonaws.com/${launchStackTemplateKey(version)}`
 
 /**
  * Build a one-click AWS Console launch-stack URL for the published gateway-role template,
@@ -71,7 +71,7 @@ export const generateLaunchStackUrl = (input: LaunchStackUrlInput): string => {
   }
 
   const params = new URLSearchParams({
-    templateURL: templateHttpsUrl(version, region, bucket),
+    templateURL: templateHttpsUrl(version, bucket),
     stackName: CONSTRUCT_NAME,
     param_ApiableTrustAccount: roleTrustTarget,
   })

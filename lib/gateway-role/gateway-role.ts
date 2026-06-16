@@ -5,6 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam'
 import {
   ACCOUNT_ID_PATTERN,
   ACCOUNT_ID_PATTERN_SOURCE,
+  CONSTRUCT_NAME,
   DEFAULT_APIABLE_TRUST_ACCOUNT,
 } from './launch-stack-url'
 
@@ -88,3 +89,18 @@ export class GatewayRoleStack extends cdk.Stack {
     this.gatewayRole = new GatewayRole(this, 'GatewayRole', { trustAccount: props.trustAccount })
   }
 }
+
+/**
+ * Build the gateway-role stack as published in the launch-stack template: no `env`, so the
+ * region resolves at deployment and the trusted account stays a deploy-time parameter.
+ *
+ * Single source of the publish-time synth config so the artifact a customer one-clicks is
+ * exactly what the published-stack spec asserts.
+ */
+export const buildPublishedStack = (app: cdk.App): GatewayRoleStack =>
+  new GatewayRoleStack(app, CONSTRUCT_NAME, {
+    description: 'Apiable gateway-management role — one-click provisioning',
+    analyticsReporting: false,
+    // an asset-less role must install into an un-bootstrapped account, so drop the bootstrap-version rule
+    synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
+  })

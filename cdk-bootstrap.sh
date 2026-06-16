@@ -75,11 +75,11 @@ fi
 # Generate CDK bootstrap file
 cat <<EOT >> "$CDK_BIN_FILE"
 import * as cdk from 'aws-cdk-lib'
-import { GatewayRole } from '../lib/gatewayrole'
+import { GatewayRoleStack } from '../lib/gatewayrole'
 
 const app = new cdk.App()
 // eslint-disable-next-line no-new
-new GatewayRole(app, "GatewayRole", {
+new GatewayRoleStack(app, "GatewayRole", {
     stackName: "gatewayrole",
     description: "Gateway Management Role for Apiable",
     env: {
@@ -100,11 +100,11 @@ cdk bootstrap $CONTEXT_OPTS || { echo "CDK bootstrap failed"; exit 1; }
 echo "CDK bootstrap completed successfully!"
 cat <<EOT >> $CDK_BIN_FILE
 import * as cdk from 'aws-cdk-lib'
-import { GatewayRole } from '../lib/gatewayrole'
+import { GatewayRoleStack } from '../lib/gatewayrole'
 
 const app = new cdk.App()
 // eslint-disable-next-line no-new
-new GatewayRole(app, "GatewayRole", {
+new GatewayRoleStack(app, "GatewayRole", {
     stackName: "gatewayrole",
     description: "Gateway Management Role for Apiable",
     env: {

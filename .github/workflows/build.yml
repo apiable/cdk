@@ -35,6 +35,7 @@ jobs:
         run: npm test
 
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS Credentials

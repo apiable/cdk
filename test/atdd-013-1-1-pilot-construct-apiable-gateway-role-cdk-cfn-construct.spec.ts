@@ -38,7 +38,7 @@ describe('gateway-management role — synth contract', () => {
         Statement: Match.arrayWith([Match.objectLike({ Effect: 'Allow', Action: 'apigateway:*' })]),
       }),
     })
-    t.hasOutput('*', Match.objectLike({ Value: Match.anyValue() }))
+    t.hasOutput('*', Match.objectLike({ Value: Match.objectLike({ 'Fn::GetAtt': Match.arrayWith(['Arn']) }) }))
   })
 
   // S2 — tenant/Apiable values are deploy-time values, addressable by component name + version
