@@ -8,6 +8,8 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
+    "test:live": "jest --config jest.live.config.js",
+    "synth:launchstack": "bash synth-launchstack.sh",
     "cdk": "cdk"
   },
   "devDependencies": {
