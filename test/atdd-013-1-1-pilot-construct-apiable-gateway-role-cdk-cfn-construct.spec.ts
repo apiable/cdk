@@ -67,7 +67,7 @@ describe('gateway-management role — synth contract', () => {
     expect(url).toMatch(/param_ApiableTrustAccount=034444869755/)
   })
 
-  // S5 — omitting optional values reproduces the role existing customers already run (zero regression)
+  // S5 — omitting optional values reproduces the role existing customers already run (behaviour preserved)
   it('S5: with only required inputs, role name/trust/permissions equal the existing role', () => {
     const t = templateFor({ env: { region: REGION } })
     t.hasResourceProperties('AWS::IAM::Role', Match.objectLike({ RoleName: EXPECTED_ROLE_NAME }))
