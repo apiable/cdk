@@ -21,7 +21,7 @@ import {
   SecretRef,
 } from './model'
 import { canonicalCfnKind, nodeRef, policyServices } from './canonical'
-import { grantsFromPolicyDocument } from './iam'
+import { grantsFromPolicyDocument, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asString, asStringArray, isRecord } from './narrow'
 
 interface CfnResource {
@@ -230,6 +230,8 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
         ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust'),
       )
       values['role-name'] = normaliseLogical(resolve(res.properties.RoleName), region)
+      const trustAccount = trustedAccountsOf(res.properties.AssumeRolePolicyDocument, resolve)
+      if (trustAccount !== undefined) values['role-trust-account'] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
       grants.push(...grantsFromPolicyDocument(res.properties.PolicyDocument, resolve, region, 'inline'))

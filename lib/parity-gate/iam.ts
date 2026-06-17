@@ -6,7 +6,7 @@
  * turns a channel-native value (a CloudFormation intrinsic, or a concrete Terraform string) into
  * a comparable string; resources and principals are then normalised to logical references.
  */
-import { normaliseLogical, PermissionGrant } from './model'
+import { accountIdsIn, normaliseLogical, PermissionGrant } from './model'
 import { policyServices } from './canonical'
 import { asArray, asRecord, asString, isRecord } from './narrow'
 
@@ -46,3 +46,24 @@ export const grantsFromPolicyDocument = (
     const ref = kind === 'trust' ? 'grant:assume-role' : `grant:${policyServices(actions)}`
     return { ref, effect, actions, resources, principal }
   })
+
+/**
+ * The account(s) a role's trust policy is configured to trust — who may assume the role — captured
+ * by value (account ids preserved, never tokenised). A trust target the channels disagree on is a
+ * load-bearing divergence the gate must fail on; the grant {@link principalOf} above keeps the
+ * principal logical so the incidental deploy account never false-fails, while this reads the one
+ * value that is load-bearing. Returns a stable comma-joined key, or undefined when no AWS principal
+ * names an account (a service principal trusts no account).
+ */
+export const trustedAccountsOf = (doc: unknown, resolve: (v: unknown) => string): string | undefined => {
+  const accounts = new Set<string>()
+  for (const stmtUnknown of asArray(asRecord(doc).Statement)) {
+    const principal = asRecord(stmtUnknown).Principal
+    const awsPrincipal = isRecord(principal) ? principal.AWS : principal
+    for (const entry of toList(awsPrincipal)) {
+      if (entry === undefined) continue
+      for (const account of accountIdsIn(resolve(entry))) accounts.add(account)
+    }
+  }
+  return accounts.size > 0 ? [...accounts].sort().join(',') : undefined
+}

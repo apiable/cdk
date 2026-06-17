@@ -2,7 +2,7 @@
  * Acceptance specs for the release-time CDK ↔ CFN ↔ Terraform parity gate (static tiers).
  * Frozen contract: contract-013-1-3-ci-parity-gate-cdk-cfn-terraform.md
  *
- * One un-skipped spec per static contract scenario (S1–S8, S10) — those provable with no cloud
+ * One un-skipped spec per static contract scenario (S1–S8, S10, S11) — those provable with no cloud
  * account. The live half (S9) deploys each channel into the isolated apiable-logging account and
  * lives in the sibling `*.deploy.live.spec.ts`, excluded from the default `npm test` / CI gate by
  * the `.live.spec.ts` name (see jest.config.js).
@@ -263,18 +263,60 @@ describe('parity gate — static three-tier diff contract', () => {
     expect(oauthDivergence?.channels).toEqual(['terraform'])
   })
 
-  // contract: S10 — account/region-specific identifiers differing alone do not false-diverge
-  it('S10: equivalent models differing only in account/region identifiers → compared by logical ref → pass', () => {
-    const tfAt = (region: string, account: string, channel: Channel): ChannelModel => {
-      const text = fs.readFileSync(TF_FIXTURE, 'utf8').split('eu-central-1').join(region).split('034444869755').join(account)
-      return reduceTerraformShowJson(JSON.parse(text), channel, region)
+  // A pilot terraform plan with the incidental deploy account/region and the load-bearing trust
+  // target set independently, so a test can vary one while holding the other.
+  const tfChannel = (region: string, incidentalAccount: string, trustAccount: string, channel: Channel): ChannelModel => {
+    const plan = clone(tfPlan()) as {
+      planned_values: { root_module: { resources: { type: string; values: Record<string, string> }[] } }
     }
+    const resources = plan.planned_values.root_module.resources
+    const role = resources.find((resource) => resource.type === 'aws_iam_role')
+    const policy = resources.find((resource) => resource.type === 'aws_iam_role_policy')
+    if (role !== undefined) {
+      role.values.name = `apiable-gateway-managment-role-${region}`
+      role.values.assume_role_policy = JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [{ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${trustAccount}:root` }, Action: 'sts:AssumeRole' }],
+      })
+    }
+    if (policy !== undefined) {
+      policy.values.policy = JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [{ Effect: 'Allow', Action: 'apigateway:*', Resource: `arn:aws:apigateway:${region}:${incidentalAccount}:/*` }],
+      })
+    }
+    return reduceTerraformShowJson(plan, channel, region)
+  }
+
+  // contract: S10 — INCIDENTAL deploy account/region identifiers differing alone do not false-diverge (trust target held identical)
+  it('S10: models differing only in the incidental deploy account/region (trust target identical) → compared by logical ref → pass', () => {
     const result = gate([
-      tfAt('eu-central-1', '034444869755', 'cdk'),
-      tfAt('us-east-1', '111111111111', 'cfn'),
-      tfAt('ap-southeast-2', '222222222222', 'terraform'),
+      tfChannel('eu-central-1', '111111111111', '034444869755', 'cdk'),
+      tfChannel('us-east-1', '222222222222', '034444869755', 'cfn'),
+      tfChannel('ap-southeast-2', '333333333333', '034444869755', 'terraform'),
     ])
     expect(formatGateReport(result)).toContain('PARITY OK')
     expect(result.passed).toBe(true)
+  })
+
+  // contract: S11 — a divergent TRUST TARGET (who may assume the role) across channels is caught + named
+  it('S11: one channel trusts a DIFFERENT account → trust target compared BY VALUE → gate FAILS naming the channel', () => {
+    // Incidental deploy account/region are held identical across all three; only the trust target
+    // diverges. A gate that normalised the trust account away would wrongly pass — the trust target
+    // is load-bearing and compared by value, distinct from the incidental deploy account of S10.
+    const result = gate([
+      tfChannel('eu-central-1', '111111111111', '034444869755', 'cdk'),
+      tfChannel('eu-central-1', '111111111111', '034444869755', 'cfn'),
+      tfChannel('eu-central-1', '111111111111', '999988887777', 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    const trustDivergence = result.divergences.find(
+      (divergence) => divergence.tier === 'value' && divergence.detail.includes('role-trust-account'),
+    )
+    expect(trustDivergence).toBeDefined()
+    expect(trustDivergence?.detail).toContain('034444869755')
+    expect(trustDivergence?.detail).toContain('999988887777')
+    expect(trustDivergence?.channels).toEqual(['terraform'])
+    expect(formatGateReport(result)).toContain('PARITY FAILED')
   })
 })

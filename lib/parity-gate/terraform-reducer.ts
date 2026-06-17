@@ -21,7 +21,7 @@ import {
   SecretRef,
 } from './model'
 import { canonicalTfKind, nodeRef, policyServices } from './canonical'
-import { grantsFromPolicyDocument } from './iam'
+import { grantsFromPolicyDocument, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asScalarString, asString, asStringArray, isRecord } from './narrow'
 
 const SECRET_KEY = /(secret|password|private_?key|signing_?key|token|api_?key)/i
@@ -215,6 +215,8 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     if (kind === 'iam-role') {
       grants.push(...grantsFromPolicyDocument(parseJson(res.values.assume_role_policy), tfResolve, region, 'trust'))
       values['role-name'] = normaliseLogical(tfResolve(res.values.name), region)
+      const trustAccount = trustedAccountsOf(parseJson(res.values.assume_role_policy), tfResolve)
+      if (trustAccount !== undefined) values['role-trust-account'] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
       grants.push(...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline'))

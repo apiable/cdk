@@ -7,7 +7,8 @@
  *         account- or region-specific identifiers;
  *   (ii)  the load-bearing scalar settings — equality by value (the access-token customisation
  *         version, the pool feature tier, the OAuth flows/scopes, the authorizer type and the
- *         request location it reads the caller credential from);
+ *         request location it reads the caller credential from, and the account a role is
+ *         configured to trust — who may assume it);
  *   (iii) the permission semantics — an access-grant comparison a resource-count check misses.
  *
  * Severity is encoded structurally by where a reducer routes a setting: a load-bearing scalar
@@ -146,3 +147,11 @@ export const normaliseLogical = (value: string, region?: string): string => {
   const withRegion = region ? value.split(region).join(REGION_TOKEN) : value
   return withRegion.replace(AWS_REGION, REGION_TOKEN).replace(ACCOUNT_ID, ACCOUNT_TOKEN)
 }
+
+/**
+ * The 12-digit AWS account ids in a value, by value — the same definition {@link normaliseLogical}
+ * blanks, but preserved rather than tokenised. The account a role is configured to trust is read
+ * this way: who may assume the role is load-bearing and compared by value (tier ii), distinct from
+ * the incidental account a resource is deployed into, which normalises to {@link ACCOUNT_TOKEN}.
+ */
+export const accountIdsIn = (value: string): readonly string[] => value.match(ACCOUNT_ID) ?? []
