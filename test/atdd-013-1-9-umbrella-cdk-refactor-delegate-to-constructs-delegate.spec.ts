@@ -210,6 +210,18 @@ describe('013-1-9 umbrella delegate refactor — zero-observable-change contract
       expect(bucketName(candidate.logsBucket())).toEqual(bucketName(baseline.logsBucket()))
       expect(bucketName(candidate.logsBucket())).toBe(`apiable-logs-${TENANT}`)
     })
+
+    it('the firehose delivery stream keeps the mandatory amazon-apigateway- prefixed name across the refactor', () => {
+      const streamName = (template: Json): unknown => {
+        const resource = Object.values(template.Resources ?? {}).find(
+          (r) => (r as { Type: string }).Type === 'AWS::KinesisFirehose::DeliveryStream',
+        ) as { Properties?: { DeliveryStreamName?: unknown } }
+        return resource.Properties?.DeliveryStreamName
+      }
+      expect(streamName(candidate.logsStream())).toEqual(streamName(baseline.logsStream()))
+      // the name MUST keep the amazon-apigateway- prefix — API Gateway access logging requires it
+      expect(streamName(candidate.logsStream())).toBe(`amazon-apigateway-usagelogs-${TENANT}`)
+    })
   })
 
   // S4 — a strangler step that would drift an existing stack is blocked
