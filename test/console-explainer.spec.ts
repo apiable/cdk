@@ -75,9 +75,9 @@ describe('unmapped resource types', () => {
       }),
       'misc',
     ).resources
-    // an SNS topic is not an enumerated kind; only its synthesized output (if any) would appear, never a topic descriptor
-    expect(descriptors.every((d) => d.kind !== 'bucket' && d.identity !== 'unmodelled')).toBe(true)
-    expect(descriptors.some((d) => d.kind === 'iam-role')).toBe(false)
+    // an SNS topic is not an enumerated kind and the stack has no outputs, so nothing is enumerated —
+    // the topic is skipped, never turned into a guessed descriptor
+    expect(descriptors).toEqual([])
   })
 })
 
