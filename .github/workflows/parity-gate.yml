@@ -56,7 +56,7 @@ jobs:
 
       # CFN channel well-formedness: lint every published launch-stack template before the diff.
       - name: cfn-lint the published template(s)
-        run: cfn-lint dist/launchstack/**/template.yaml
+        run: cfn-lint dist/launchstack/*/*/template.yaml
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

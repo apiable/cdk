@@ -160,10 +160,19 @@ const referencedAddress = (reference: string, addresses: ReadonlySet<string>): {
   return undefined
 }
 
-const referencesOf = (expression: unknown, addresses: ReadonlySet<string>): { address: string; attr: string }[] =>
-  asStringArray(asRecord(expression).references)
-    .map((reference) => referencedAddress(reference, addresses))
-    .filter((hit): hit is { address: string; attr: string } => hit !== undefined)
+const referencesOf = (expression: unknown, addresses: ReadonlySet<string>): { address: string; attr: string }[] => {
+  const seen = new Set<string>()
+  const hits: { address: string; attr: string }[] = []
+  for (const reference of asStringArray(asRecord(expression).references)) {
+    const hit = referencedAddress(reference, addresses)
+    // A reference list names both `<addr>.<attr>` and the bare `<addr>`; keep one edge per address.
+    if (hit !== undefined && !seen.has(hit.address)) {
+      seen.add(hit.address)
+      hits.push(hit)
+    }
+  }
+  return hits
+}
 
 /** Reduce parsed `terraform show -json` output into a {@link ChannelModel}. */
 export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terraform', region?: string): ChannelModel => {

@@ -19,9 +19,6 @@
 /** A distribution channel a published infrastructure component ships through. */
 export type Channel = 'cdk' | 'cfn' | 'terraform'
 
-/** The channels the gate compares, in report order. */
-export const CHANNELS: readonly Channel[] = ['cdk', 'cfn', 'terraform']
-
 /**
  * A resource reduced to a channel-independent identity: a canonical kind plus a discriminator
  * built only from account/region-agnostic attributes, so the same component carries the same

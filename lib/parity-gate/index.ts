@@ -7,12 +7,7 @@
  * with no cloud account. The I/O that loads a published template or a `terraform show -json`
  * file lives in the gate harness that drives this in CI.
  */
-export {
-  ACCOUNT_TOKEN,
-  CHANNELS,
-  REGION_TOKEN,
-  normaliseLogical,
-} from './model'
+export { ACCOUNT_TOKEN, REGION_TOKEN, normaliseLogical } from './model'
 export type {
   Channel,
   ChannelModel,
@@ -30,13 +25,7 @@ export type {
 } from './model'
 export { reduceCloudFormation } from './cfn-reducer'
 export { reduceTerraformShowJson } from './terraform-reducer'
-export {
-  compareGrants,
-  compareGraph,
-  compareSecrets,
-  compareValues,
-  cosmeticWarnings,
-} from './compare'
+export { compareGraph } from './compare'
 export { checkOAuthConformance } from './oauth-conformance'
 export type { ConformanceIssue } from './oauth-conformance'
 export { formatGateReport, gate } from './gate'
