@@ -61,7 +61,6 @@ export const trustedAccountsOf = (doc: unknown, resolve: (v: unknown) => string)
     const principal = asRecord(stmtUnknown).Principal
     const awsPrincipal = isRecord(principal) ? principal.AWS : principal
     for (const entry of toList(awsPrincipal)) {
-      if (entry === undefined) continue
       for (const account of accountIdsIn(resolve(entry))) accounts.add(account)
     }
   }

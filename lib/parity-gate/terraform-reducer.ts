@@ -213,9 +213,10 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     cosmetics = { ...cosmetics, ...collectCosmetics(kind, res.values) }
     secrets.push(...collectSecrets(res.values))
     if (kind === 'iam-role') {
-      grants.push(...grantsFromPolicyDocument(parseJson(res.values.assume_role_policy), tfResolve, region, 'trust'))
+      const assumePolicy = parseJson(res.values.assume_role_policy)
+      grants.push(...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust'))
       values['role-name'] = normaliseLogical(tfResolve(res.values.name), region)
-      const trustAccount = trustedAccountsOf(parseJson(res.values.assume_role_policy), tfResolve)
+      const trustAccount = trustedAccountsOf(assumePolicy, tfResolve)
       if (trustAccount !== undefined) values['role-trust-account'] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
