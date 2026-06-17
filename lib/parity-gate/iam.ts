@@ -65,23 +65,29 @@ export const grantsFromPolicyDocument = (
     return { ref, effect, actions, resources, principal, condition }
   })
 
+/** Principal keys whose identifier names an AWS account — the direct account-root and a federated
+ * provider ARN (`arn:aws:iam::<acct>:saml-provider/X`, an OIDC-provider ARN). A `Service` principal
+ * names a service, not an account, so its value is not scanned for an account id. */
+const ACCOUNT_BEARING_PRINCIPAL_KEYS = ['AWS', 'Federated'] as const
+
 /**
  * The account(s) a role's trust policy is configured to trust — who may assume the role — captured
  * by value (account ids preserved, never tokenised). A trust target the channels disagree on is a
  * load-bearing divergence the gate must fail on; the grant {@link principalOf} above keeps the
  * principal logical so the incidental deploy account never false-fails, while this reads the one
- * value that is load-bearing. Reads every account-bearing principal form — the direct `AWS`
- * account-root and an account named through a federated identity provider
- * (`arn:aws:iam::<acct>:saml-provider/X`, an OIDC-provider ARN) — so a federated trust's account
- * reaches the same by-value comparison the direct form does, never blanked. Returns a stable
- * comma-joined key, or undefined when no principal names an account (an account-less service
- * principal trusts none).
+ * value that is load-bearing. Reads the account from each account-bearing principal form — the
+ * direct `AWS` account-root and an account named through a federated identity provider — so a
+ * federated trust's account reaches the same by-value comparison the direct form does, never
+ * blanked. Returns a stable comma-joined key, or undefined when no principal names an account (an
+ * account-less service principal trusts none).
  */
 export const trustedAccountsOf = (doc: unknown, resolve: (v: unknown) => string): string | undefined => {
   const accounts = new Set<string>()
   for (const stmtUnknown of asArray(asRecord(doc).Statement)) {
     const principal = asRecord(stmtUnknown).Principal
-    const principalEntries = isRecord(principal) ? Object.values(principal) : [principal]
+    const principalEntries = isRecord(principal)
+      ? ACCOUNT_BEARING_PRINCIPAL_KEYS.map((key) => principal[key])
+      : [principal]
     for (const principalEntry of principalEntries) {
       for (const entry of toList(principalEntry)) {
         for (const account of accountIdsIn(resolve(entry))) accounts.add(account)

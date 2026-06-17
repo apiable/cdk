@@ -157,6 +157,65 @@ describe('parity gate — trust target (who may assume the role)', () => {
     const model = reduceCloudFormation(cfnRole({ Federated: 'arn:aws:iam::555555555555:saml-provider/corp' }), 'cfn')
     expect(model.values[TRUST_ACCOUNT_KEY]).toBe('555555555555')
   })
+
+  it('does not mistake a service principal hostname that embeds digits for a trusted account', () => {
+    const model = reduceCloudFormation(cfnRole({ Service: '123456789012.dkr.ecr.eu-central-1.amazonaws.com' }), 'cfn')
+    expect(model.values[TRUST_ACCOUNT_KEY]).toBeUndefined()
+  })
+})
+
+// A role whose trust carries the given full statements (with conditions), for the condition tier.
+const cfnRoleWithStatements = (statements: readonly unknown[]): unknown => ({
+  Resources: {
+    Role: {
+      Type: 'AWS::IAM::Role',
+      Properties: {
+        RoleName: 'apiable-conditional-role',
+        AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: statements },
+      },
+    },
+  },
+})
+
+const conditionalTrust = (condition: unknown): unknown => ({
+  Effect: 'Allow',
+  Principal: { AWS: 'arn:aws:iam::034444869755:root' },
+  Action: 'sts:AssumeRole',
+  Condition: condition,
+})
+
+describe('parity gate — trust condition (a load-bearing assume-role guard)', () => {
+  it('fails when one channel drops the external-id condition guarding who may assume the role', () => {
+    const guarded = cfnRoleWithStatements([conditionalTrust({ StringEquals: { 'sts:ExternalId': 'apiable-tenant' } })])
+    const unguarded = cfnRoleWithStatements([
+      { Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::034444869755:root' }, Action: 'sts:AssumeRole' },
+    ])
+    const result = gate([
+      reduceCloudFormation(guarded, 'cdk'),
+      reduceCloudFormation(guarded, 'cfn'),
+      reduceCloudFormation(unguarded, 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    const divergence = result.divergences.find((entry) => entry.tier === 'permission')
+    expect(divergence?.detail).toContain('grant:assume-role')
+    expect(divergence?.channels).toEqual(['terraform'])
+  })
+
+  it('treats the same condition emitted in a different key order as equal (canonicalised)', () => {
+    const orderA = cfnRoleWithStatements([
+      conditionalTrust({ StringEquals: { 'sts:ExternalId': 'apiable-tenant', 'aws:PrincipalTag/team': 'platform' } }),
+    ])
+    const orderB = cfnRoleWithStatements([
+      conditionalTrust({ StringEquals: { 'aws:PrincipalTag/team': 'platform', 'sts:ExternalId': 'apiable-tenant' } }),
+    ])
+    const result = gate([
+      reduceCloudFormation(orderA, 'cdk'),
+      reduceCloudFormation(orderA, 'cfn'),
+      reduceCloudFormation(orderB, 'terraform'),
+    ])
+    expect(result.passed).toBe(true)
+    expect(result.divergences.find((entry) => entry.tier === 'permission')).toBeUndefined()
+  })
 })
 
 describe('parity gate — report', () => {
