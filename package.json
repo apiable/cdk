@@ -10,6 +10,7 @@
     "test": "jest",
     "test:live": "jest --config jest.live.config.js",
     "synth:launchstack": "bash synth-launchstack.sh",
+    "publish:terraform": "bash publish-terraform.sh",
     "cdk": "cdk"
   },
   "devDependencies": {
