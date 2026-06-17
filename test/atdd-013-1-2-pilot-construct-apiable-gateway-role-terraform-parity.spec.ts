@@ -71,13 +71,19 @@ const tfTrustValidationPattern = (): string => {
   return m[1]
 }
 
+const tfTrustValidationCondition = (): string => {
+  const m = moduleFile('variables.tf').match(/condition\s*=\s*(.+)/)
+  if (!m) throw new Error('no trust_account validation condition in the Terraform module')
+  return m[1].trim()
+}
+
 const tfTrustAccountDefault = (): string => {
   const m = moduleFile('variables.tf').match(/variable\s+"trust_account"[\s\S]*?default\s*=\s*"([^"]+)"/)
   if (!m) throw new Error('no trust_account default in the Terraform module')
   return m[1]
 }
 
-describe('013-1-2 terraform gateway-management role — plan-parity contract', () => {
+describe('terraform gateway-management role — plan-parity contract', () => {
   // contract: S1 — the Terraform module yields the same role / single-account trust / apigateway perm as the 1-1 CFN artifact
   it('S1: defines one gateway-management role equal to the one-click channel (name, trust, permission)', () => {
     const main = moduleFile('main.tf')
@@ -124,6 +130,13 @@ describe('013-1-2 terraform gateway-management role — plan-parity contract', (
 
     // the bound is identical to the one-click channel's frozen trust bound (parity with 013-1-1 AC5)
     expect(tfTrustValidationPattern()).toBe(ACCOUNT_ID_PATTERN_SOURCE)
+
+    // polarity guard: the condition must be the POSITIVE `can(regex(...))` form, never a negated
+    // `!can(regex(...))` that would accept "*" and fail OPEN. The pattern-string checks above run the
+    // regex in JS but cannot see a polarity flip in the .tf (engine-level proof is deferred to 1-3).
+    const condition = tfTrustValidationCondition()
+    expect(condition).toMatch(/^can\(\s*regex\(/)
+    expect(condition).not.toMatch(/^!/)
   })
 
   // contract: S6 — no account/region literal baked into the module (each is a variable)
@@ -156,7 +169,7 @@ describe('013-1-2 terraform gateway-management role — plan-parity contract', (
   })
 })
 
-describe('013-1-2 terraform gateway-management role — versioning', () => {
+describe('terraform gateway-management role — versioning', () => {
   // contract: S2 — module version matches the equivalent one-click-channel artifact version (lockstep)
   it('S2: the Terraform channel publishes at the same single-sourced version as the one-click artifact', () => {
     const oneClickVersion = JSON.parse(

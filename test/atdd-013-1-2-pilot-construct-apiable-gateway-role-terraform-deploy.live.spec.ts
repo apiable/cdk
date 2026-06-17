@@ -16,7 +16,7 @@ import * as path from 'path'
 const runLiveDeploy = Boolean(process.env.RUN_LIVE_DEPLOY)
 const MODULE_DIR = path.resolve(__dirname, '../terraform/apiable-gateway-role')
 
-describe('013-1-2 terraform gateway-management role — live apply (manual, CI-excluded)', () => {
+describe('terraform gateway-management role — live apply (manual, CI-excluded)', () => {
   // S3 — apply provisions the role identically to the one-click channel
   it('S3: terraform apply creates the role identical to the CFN path (identity, trust, permission)', () => {
     const region = process.env.AWS_REGION ?? 'eu-central-1'
