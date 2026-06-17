@@ -5,6 +5,7 @@
     "baseUrl": ".",
     "paths": {
       "@apiable/cdk-gateway-role": ["lib/gateway-role/index.ts"],
+      "@apiable/cdk-logs-bucket": ["lib/logs-bucket/index.ts"],
       "@apiable/parity-gate": ["lib/parity-gate/index.ts"]
     },
     "lib": [

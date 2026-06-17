@@ -57,6 +57,7 @@ export STACKNAME=<your_stack_name>
 ```bash
 ./deploy-logs-bucket.sh
 ```
+> **Existing logs buckets:** do not re-deploy an existing stack with this code. The bucket name `apiable-logs-<name>` is unchanged and the already-provisioned bucket keeps working as-is (it is retained, not replaced); the restructured template gives the bucket a new logical id, so an in-place re-deploy collides on the unchanged, globally-unique bucket name (`BucketAlreadyExists`). Provision new tenants via the one-click `apiable-logs-bucket` stack instead.
 
 ### Export the paramater of logs bucket
 ```bash

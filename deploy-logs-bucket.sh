@@ -19,17 +19,17 @@ rm $CDK_BIN_FILE
 
 cat <<EOT >> $CDK_BIN_FILE
 import * as cdk from 'aws-cdk-lib'
-import { LogsBucket } from '../lib/logs-bucket'
+import { LogsBucketStack } from '../lib/logs-bucket'
 
 const app = new cdk.App()
 // eslint-disable-next-line no-new
-new LogsBucket(app, "LogsBucket", {
+new LogsBucketStack(app, "LogsBucket", {
     stackName: "apiable-$STACKNAME-logs-bucket",
     description: "Apiable S3 Bucket to write logs into",
+    name: "$STACKNAME",
     env: {
         account: "$AWS_ACCOUNT_ID",
-        region: "$AWS_REGION",
-        name: "$STACKNAME"
+        region: "$AWS_REGION"
     }
 })
 EOT

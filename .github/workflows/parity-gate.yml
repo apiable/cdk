@@ -54,6 +54,13 @@ jobs:
       - name: Install cfn-lint
         run: pip install cfn-lint
 
+      # Synthesize the published templates the cfn-lint + diff tiers consume (dist/ is gitignored,
+      # so each channel's artifact is produced here from its single-sourced version before linting).
+      - name: Synthesize published launch-stack templates
+        run: |
+          bash synth-launchstack.sh apiable-gateway-role
+          bash synth-launchstack.sh apiable-logs-bucket
+
       # CFN channel well-formedness: lint every published launch-stack template before the diff.
       - name: cfn-lint the published template(s)
         run: cfn-lint dist/launchstack/*/*/template.yaml
@@ -83,6 +90,27 @@ jobs:
         run: |
           if terraform plan -input=false -var region=${{ env.AWS_REGION }} -var trust_account='*' 2>plan-err.log; then
             echo "expected the wildcard trust_account to be rejected, but the plan succeeded"
+            exit 1
+          fi
+          grep -q '12-digit' plan-err.log
+
+      - name: terraform validate (logs-bucket module)
+        working-directory: terraform/apiable-logs-bucket
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      # Engine-level no-widen proof for the logs bucket: a wildcard write principal must be refused
+      # by the module's own variable validation, not merely by a JS-side guard.
+      - name: terraform rejects a write-principal-widening value
+        working-directory: terraform/apiable-logs-bucket
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: |
+          if terraform plan -input=false -var name=ci -var partner_account='*' 2>plan-err.log; then
+            echo "expected the wildcard partner_account to be rejected, but the plan succeeded"
             exit 1
           fi
           grep -q '12-digit' plan-err.log

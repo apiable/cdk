@@ -1,0 +1,14 @@
+{
+  "name": "@apiable/cdk-logs-bucket",
+  "version": "1.0.0",
+  "description": "Apiable CDK construct kit: tenant-scoped logs S3 bucket with one-click CloudFormation provisioning.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "peerDependencies": {
+    "aws-cdk-lib": "2.137.0",
+    "constructs": "^10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
