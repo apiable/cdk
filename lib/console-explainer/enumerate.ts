@@ -93,11 +93,14 @@ const describeResource = (
   if (!kind) return undefined
   const identity = resourceIdentity(logicalId, kind, properties)
   const hasFixedName = identity !== logicalId
+  const consoleDeepLink = deriveConsoleDeepLink(kind, identity, hasFixedName)
   return {
     kind,
     identity,
     contentKey: `${component}/${kind}/${toKeySegment(identity)}`,
-    consoleDeepLink: deriveConsoleDeepLink(kind, identity, hasFixedName),
+    // the optional key is omitted entirely when absent, never present-but-undefined, so a resource
+    // with no console representation truly omits it
+    ...(consoleDeepLink ? { consoleDeepLink } : {}),
   }
 }
 
