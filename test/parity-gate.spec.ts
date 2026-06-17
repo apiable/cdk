@@ -122,6 +122,35 @@ describe('parity gate — tiers beyond the role pilot', () => {
   })
 })
 
+const cfnRole = (principal: unknown): unknown => ({
+  Resources: {
+    Role: {
+      Type: 'AWS::IAM::Role',
+      Properties: {
+        RoleName: 'apiable-gateway-managment-role',
+        AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: principal, Action: 'sts:AssumeRole' }] },
+      },
+    },
+  },
+})
+
+describe('parity gate — trust target (who may assume the role)', () => {
+  it('captures the trusted account by value as a load-bearing setting, not a logical token', () => {
+    const model = reduceCloudFormation(cfnRole({ AWS: 'arn:aws:iam::034444869755:root' }), 'cfn')
+    expect(model.values['role-trust-account']).toBe('034444869755')
+  })
+
+  it('omits the trust-account setting when the role trusts a service principal, not an account', () => {
+    const model = reduceCloudFormation(cfnRole({ Service: 'lambda.amazonaws.com' }), 'cfn')
+    expect(model.values['role-trust-account']).toBeUndefined()
+  })
+
+  it('captures multiple trusted accounts by value, sorted so the key is channel-stable', () => {
+    const model = reduceCloudFormation(cfnRole({ AWS: ['arn:aws:iam::222222222222:root', 'arn:aws:iam::111111111111:root'] }), 'cfn')
+    expect(model.values['role-trust-account']).toBe('111111111111,222222222222')
+  })
+})
+
 describe('parity gate — report', () => {
   it('renders a failing result naming the tier and the divergent detail', () => {
     const result = gate([
