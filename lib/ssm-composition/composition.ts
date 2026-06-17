@@ -1,4 +1,3 @@
-import { CfnOutput } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as ssm from 'aws-cdk-lib/aws-ssm'
 
