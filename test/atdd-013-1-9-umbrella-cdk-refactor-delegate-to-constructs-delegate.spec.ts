@@ -51,7 +51,7 @@ const baseline = {
         stackName: 'gatewayrole',
         description: 'Gateway Management Role for Apiable',
         env: ENV,
-      } as cdk.StackProps),
+      }),
     ),
   logsBucket: (): Json =>
     toJson(
@@ -60,7 +60,7 @@ const baseline = {
         description: 'Apiable S3 Bucket to write logs into',
         name: TENANT,
         env: ENV,
-      } as cdk.StackProps),
+      }),
     ),
   logsStream: (): Json =>
     toJson(

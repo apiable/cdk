@@ -98,7 +98,7 @@ export const buildGatewayRoleStack = (app: cdk.App, config: GatewayRoleConfig): 
     stackName: umbrellaStackName.gatewayrole(),
     description: 'Gateway Management Role for Apiable',
     env: config.env,
-  } as cdk.StackProps)
+  })
 
 export const buildLogsBucketStack = (app: cdk.App, config: LogsBucketConfig): cdk.Stack =>
   new LogsBucketStack(app, 'LogsBucket', {
@@ -106,7 +106,7 @@ export const buildLogsBucketStack = (app: cdk.App, config: LogsBucketConfig): cd
     description: 'Apiable S3 Bucket to write logs into',
     name: config.name,
     env: config.env,
-  } as cdk.StackProps)
+  })
 
 export const buildLogsStreamStack = (app: cdk.App, config: LogsStreamConfig): cdk.Stack =>
   new LogsStream(app, 'LogsStream', {
