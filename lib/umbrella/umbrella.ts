@@ -1,15 +1,15 @@
 import * as cdk from 'aws-cdk-lib'
-import { GatewayRoleStack } from '../gatewayrole'
-import { LogsBucketStack } from '../logs-bucket'
+import { GatewayRoleStack, GATEWAY_ROLE_COMPONENT } from '../gateway-role'
+import { LogsBucketStack, LOGS_BUCKET_COMPONENT } from '../logs-bucket'
 import { Cognito } from '../cognito'
 import { AuthZ } from '../authz'
 import { LogsStream } from '../logs-stream'
 import { readUpstreamOutput } from '@apiable/cdk-ssm-composition'
 
-/** Kebab kit-component segments the composition keys address each construct under. */
+/** Kebab kit-component segments the composition keys address each construct under (single-sourced from each construct). */
 export const compositionComponent = {
-  gatewayRole: 'gateway-role',
-  logsBucket: 'logs-bucket',
+  gatewayRole: GATEWAY_ROLE_COMPONENT,
+  logsBucket: LOGS_BUCKET_COMPONENT,
 } as const
 
 /**

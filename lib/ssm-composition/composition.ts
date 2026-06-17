@@ -85,7 +85,8 @@ export const publishOutputs = (scope: Construct, props: PublishOutputsProps): ss
     })
   })
 
-export interface ReadUpstreamOutputProps extends CompositionKey {}
+/** A read addresses the same three segments a write published under. */
+export type ReadUpstreamOutputProps = CompositionKey
 
 /**
  * Resolve an upstream component's published output by composing its key and reading the shared
