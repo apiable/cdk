@@ -11,5 +11,6 @@ module.exports = {
     '^@apiable/parity-gate$': '<rootDir>/lib/parity-gate/index.ts',
     '^@apiable/umbrella$': '<rootDir>/lib/umbrella/index.ts',
     '^@apiable/cdk-ssm-composition$': '<rootDir>/lib/ssm-composition/index.ts',
+    '^@apiable/cdk-console-explainer$': '<rootDir>/lib/console-explainer/index.ts',
   },
 }
