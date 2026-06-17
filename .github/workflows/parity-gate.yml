@@ -1,0 +1,96 @@
+name: parity-gate
+
+# Release-time gate that proves the three distribution channels (CDK construct, published
+# CloudFormation template, hand-rolled Terraform module) would provision the same component.
+# The static tiers run here with zero live AWS; the live-deploy half (S9) runs only against the
+# isolated apiable-logging account and is never wired to this default gate, so a per-PR run can
+# never reach a production-containing account.
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - master
+    paths:
+      - 'lib/**'
+      - 'terraform/**'
+      - 'dist/launchstack/**'
+      - 'test/**'
+      - 'jest.config.js'
+      - '.github/workflows/parity-gate.yml'
+  push:
+    branches:
+      - develop
+      - master
+    paths:
+      - 'lib/**'
+      - 'terraform/**'
+      - 'dist/launchstack/**'
+
+env:
+  NODE_VERSION: lts/iron
+  AWS_REGION: eu-central-1
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Python (for cfn-lint)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      # CFN channel well-formedness: lint every published launch-stack template before the diff.
+      - name: cfn-lint the published template(s)
+        run: cfn-lint dist/launchstack/**/template.yaml
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      # Terraform channel well-formedness via the real engine (no cloud account: validate needs
+      # only the provider plugin, not credentials).
+      - name: terraform validate (gateway-role module)
+        working-directory: terraform/apiable-gateway-role
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      # Engine-level no-widen proof: a wildcard trust target must be refused by the module's own
+      # variable validation, not merely by a JS-side polarity guard. The step passes only when the
+      # plan fails for that reason.
+      - name: terraform rejects a trust-widening value
+        working-directory: terraform/apiable-gateway-role
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: |
+          if terraform plan -input=false -var region=${{ env.AWS_REGION }} -var trust_account='*' 2>plan-err.log; then
+            echo "expected the wildcard trust_account to be rejected, but the plan succeeded"
+            exit 1
+          fi
+          grep -q '12-digit' plan-err.log
+
+      # The static three-tier diff + OAuth2/OIDC conformance specs are the gate itself: a CDK ↔ CFN
+      # ↔ Terraform divergence fails the build with a report naming the divergent piece. The
+      # Terraform side diffs the committed `terraform show -json` fixture; refreshing that fixture
+      # from a real credentialed plan, and the S9 live deploy, run only in the apiable-logging
+      # account via `npm run test:live` — out of this default gate.
+      - name: Run parity gate (static tiers)
+        run: npm test

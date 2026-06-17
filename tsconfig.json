@@ -4,7 +4,8 @@
     "module": "commonjs",
     "baseUrl": ".",
     "paths": {
-      "@apiable/cdk-gateway-role": ["lib/gateway-role/index.ts"]
+      "@apiable/cdk-gateway-role": ["lib/gateway-role/index.ts"],
+      "@apiable/parity-gate": ["lib/parity-gate/index.ts"]
     },
     "lib": [
       "es2020",

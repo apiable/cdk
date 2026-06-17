@@ -7,5 +7,6 @@ module.exports = {
   testPathIgnorePatterns: ['/node_modules/', '\\.live\\.spec\\.ts$'],
   moduleNameMapper: {
     '^@apiable/cdk-gateway-role$': '<rootDir>/lib/gateway-role/index.ts',
+    '^@apiable/parity-gate$': '<rootDir>/lib/parity-gate/index.ts',
   },
 }
