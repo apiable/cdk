@@ -14,7 +14,7 @@ export interface Env extends cdk.StackProps {
   assumeRoleArn: string;
   authMethod?: string;
   apiGatewayAssumeRoleArn: string;
-  apiGatewayRegion: string;
+  apiGatewayRegion?: string;
 }
 export interface Props extends cdk.StackProps {
   env: Env;
@@ -74,21 +74,25 @@ export class AuthZ extends cdk.Stack {
       }
     })
 
+    const environment: Record<string, string> = {
+      AUTH_METHOD: authMethod,
+      AUTH_REGION: region,
+      APIABLE_AWS_AUTHZ_USERPOOLID: userpoolId,
+      APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn,
+      APIABLE_AWS_AUTHZ_API_GATEWAY_ASSUME_ROLE_ARN: apiGatewayAssumeRoleArn,
+      APIABLE_AWS_AUTHZ_CREDIT_SIGNING_KEY: "replace-me-with-your-key",
+    }
+    if (apiGatewayRegion !== undefined) {
+      environment.APIABLE_AWS_AUTHZ_API_GATEWAY_REGION = apiGatewayRegion
+    }
+
     const l = new lambda.Function(this, 'Function', {
       functionName: `${name}-authz`,
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/authorization')),
       role,
-      environment: {
-        AUTH_METHOD: authMethod,
-        AUTH_REGION: region,
-        APIABLE_AWS_AUTHZ_USERPOOLID: userpoolId,
-        APIABLE_AWS_AUTHZ_ASSUME_ROLE_ARN: assumeRoleArn,
-        APIABLE_AWS_AUTHZ_API_GATEWAY_ASSUME_ROLE_ARN: apiGatewayAssumeRoleArn,
-        APIABLE_AWS_AUTHZ_API_GATEWAY_REGION:apiGatewayRegion,
-        APIABLE_AWS_AUTHZ_CREDIT_SIGNING_KEY: "replace-me-with-your-key",
-      },
+      environment,
       timeout: cdk.Duration.seconds(30)
     })
 
