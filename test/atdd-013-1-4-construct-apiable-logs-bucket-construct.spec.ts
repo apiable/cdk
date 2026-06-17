@@ -146,7 +146,7 @@ describe('013-1-4 apiable-logs-bucket — synth + parity contract', () => {
     expect(pubBucketName).toContain(TENANT_NAME_PARAMETER)
   })
 
-  // S4 — omitting optional inputs reproduces the existing bucket exactly (zero regression)
+  // S4 — omitting optional inputs reproduces the existing bucket exactly (edge / back-compat)
   it('S4: with only required inputs, bucket name/policy/write-role equal the existing bucket', () => {
     const t = concreteTemplate() // name + tenant account supplied; partner account omitted → default
 
@@ -219,7 +219,7 @@ describe('013-1-4 apiable-logs-bucket — synth + parity contract', () => {
   })
 
   // S7 — retention/lifecycle posture is the existing one; no new expiry rule (deferred to analytics redesign)
-  it('S7: retention/lifecycle posture is unchanged from the existing bucket and identical across all three channels', () => {
+  it('S7: retention/lifecycle posture matches the existing bucket and is identical across all three channels', () => {
     // CDK construct channel: retained (RETAIN_ON_UPDATE_OR_DELETE), no S3 lifecycle/expiry configuration
     const cdkBucket = firstResource(concreteTemplate(), 'AWS::S3::Bucket')
     expect(cdkBucket.Properties?.LifecycleConfiguration).toBeUndefined()
