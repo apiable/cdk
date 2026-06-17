@@ -4,6 +4,13 @@ import { LogsBucketStack } from '../logs-bucket'
 import { Cognito } from '../cognito'
 import { AuthZ } from '../authz'
 import { LogsStream } from '../logs-stream'
+import { readUpstreamOutput } from '@apiable/cdk-ssm-composition'
+
+/** Kebab kit-component segments the composition keys address each construct under. */
+export const compositionComponent = {
+  gatewayRole: 'gateway-role',
+  logsBucket: 'logs-bucket',
+} as const
 
 /**
  * The umbrella deployment for an existing custom-deployed Apiable tenant. Each component is a
@@ -149,3 +156,37 @@ export const buildAuthZStack = (app: cdk.App, config: AuthZConfig): cdk.Stack =>
       apiGatewayRegion: config.apiGatewayRegion,
     },
   })
+
+/**
+ * New-deploy composition variants. A new kit deployment is keyed by a concrete tenant, so each
+ * upstream component publishes its declared outputs to the shared parameter space and each downstream
+ * component resolves its dependency by key — replacing the `cdk-outputs.json` + README copy/paste
+ * relay the existing-customer builders above still use. The composition seam is wired here by default
+ * (default-on for new deploys); the existing-customer builders never enable it, so an installed stack
+ * is never auto-retrofitted with new parameter resources.
+ */
+export const buildGatewayRoleStackComposed = (app: cdk.App, config: GatewayRoleConfig & { tenant: string }): cdk.Stack =>
+  new GatewayRoleStack(app, 'GatewayRole', {
+    stackName: umbrellaStackName.gatewayrole(),
+    description: 'Gateway Management Role for Apiable',
+    env: config.env,
+    tenant: config.tenant,
+    publishComposition: true,
+  })
+
+export const buildLogsBucketStackComposed = (app: cdk.App, config: LogsBucketConfig): cdk.Stack =>
+  new LogsBucketStack(app, 'LogsBucket', {
+    stackName: umbrellaStackName.logsBucket(config.name),
+    description: 'Apiable S3 Bucket to write logs into',
+    name: config.name,
+    env: config.env,
+    publishComposition: true,
+  })
+
+/** Resolve the logs bucket ARN a downstream firehose consumes, by key, from the shared parameter space. */
+export const resolveLogsBucketArn = (scope: cdk.Stack, tenant: string): string =>
+  readUpstreamOutput(scope, { tenant, component: compositionComponent.logsBucket, output: 'bucket-arn' })
+
+/** Resolve the gateway-management role ARN the authorizer consumes, by key, from the shared parameter space. */
+export const resolveGatewayRoleArn = (scope: cdk.Stack, tenant: string): string =>
+  readUpstreamOutput(scope, { tenant, component: compositionComponent.gatewayRole, output: 'role-arn' })

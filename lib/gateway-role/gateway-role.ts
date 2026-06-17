@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib'
 import { CfnOutput, CfnParameter } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as iam from 'aws-cdk-lib/aws-iam'
+import { publishOutputs } from '@apiable/cdk-ssm-composition'
 import {
   ACCOUNT_ID_PATTERN,
   ACCOUNT_ID_PATTERN_SOURCE,
@@ -12,12 +13,27 @@ import {
 /** Logical id of the trust-account parameter; the launch-stack URL pre-fills `param_<this>`. */
 export const TRUST_ACCOUNT_PARAMETER = 'ApiableTrustAccount'
 
+/** Kebab kit-component segment this construct publishes its outputs under. */
+export const GATEWAY_ROLE_COMPONENT = 'gateway-role'
+
 export interface GatewayRoleProps {
   /**
    * AWS account authorised to assume the gateway-management role. Omitting it defaults to
    * Apiable's account, reproducing the role existing customers already run.
    */
   readonly trustAccount?: string
+  /**
+   * Tenant key the construct publishes its composition parameters under. Set together with
+   * {@link publishComposition} to wire the SSM composition seam; omitting it leaves the seam off so
+   * an existing customer's stack gains no new parameter resource.
+   */
+  readonly tenant?: string
+  /**
+   * Opt in to publishing this construct's declared outputs to the shared parameter space at
+   * `/apiable/{tenant}/gateway-role/{output}`. Off by default: the seam is wired only for new kit
+   * deployments, never auto-retrofitted onto an existing stack.
+   */
+  readonly publishComposition?: boolean
 }
 
 /**
@@ -72,12 +88,25 @@ export class GatewayRole extends Construct {
     this.roleArnOutput = new CfnOutput(this, 'GatewayManagementRoleArn', {
       value: this.role.roleArn,
     })
+
+    if (props.publishComposition) {
+      if (!props.tenant) throw new Error('tenant is required to publish composition parameters')
+      publishOutputs(this, {
+        tenant: props.tenant,
+        component: GATEWAY_ROLE_COMPONENT,
+        outputs: [{ name: 'role-arn', value: this.role.roleArn }],
+      })
+    }
   }
 }
 
 export interface GatewayRoleStackProps extends cdk.StackProps {
   /** Forwarded to {@link GatewayRoleProps.trustAccount}. */
   readonly trustAccount?: string
+  /** Forwarded to {@link GatewayRoleProps.tenant}. */
+  readonly tenant?: string
+  /** Forwarded to {@link GatewayRoleProps.publishComposition}. */
+  readonly publishComposition?: boolean
 }
 
 /** Thin stack wrapper so the construct synthesizes standalone into the published template. */
@@ -86,7 +115,11 @@ export class GatewayRoleStack extends cdk.Stack {
 
   constructor(scope: Construct, id: string, props: GatewayRoleStackProps = {}) {
     super(scope, id, props)
-    this.gatewayRole = new GatewayRole(this, 'GatewayRole', { trustAccount: props.trustAccount })
+    this.gatewayRole = new GatewayRole(this, 'GatewayRole', {
+      trustAccount: props.trustAccount,
+      tenant: props.tenant,
+      publishComposition: props.publishComposition,
+    })
   }
 }
 

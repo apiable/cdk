@@ -1,0 +1,14 @@
+{
+  "name": "@apiable/cdk-ssm-composition",
+  "version": "1.0.0",
+  "description": "Apiable CDK construct kit: loose stack composition via SSM Parameter Store at /apiable/{tenant}/{component}/{output}.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "peerDependencies": {
+    "aws-cdk-lib": "2.137.0",
+    "constructs": "^10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

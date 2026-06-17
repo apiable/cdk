@@ -10,5 +10,6 @@ module.exports = {
     '^@apiable/cdk-logs-bucket$': '<rootDir>/lib/logs-bucket/index.ts',
     '^@apiable/parity-gate$': '<rootDir>/lib/parity-gate/index.ts',
     '^@apiable/umbrella$': '<rootDir>/lib/umbrella/index.ts',
+    '^@apiable/cdk-ssm-composition$': '<rootDir>/lib/ssm-composition/index.ts',
   },
 }

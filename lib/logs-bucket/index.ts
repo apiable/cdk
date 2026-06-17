@@ -4,6 +4,7 @@ export {
   buildPublishedStack,
   PARTNER_ACCOUNT_PARAMETER,
   TENANT_NAME_PARAMETER,
+  LOGS_BUCKET_COMPONENT,
 } from './logs-bucket'
 export type { LogsBucketProps, LogsBucketStackProps } from './logs-bucket'
 export {

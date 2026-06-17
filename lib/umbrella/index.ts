@@ -1,10 +1,15 @@
 export {
   umbrellaStackName,
+  compositionComponent,
   buildGatewayRoleStack,
   buildLogsBucketStack,
   buildLogsStreamStack,
   buildCognitoStack,
   buildAuthZStack,
+  buildGatewayRoleStackComposed,
+  buildLogsBucketStackComposed,
+  resolveLogsBucketArn,
+  resolveGatewayRoleArn,
 } from './umbrella'
 export type {
   UmbrellaComponent,

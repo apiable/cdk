@@ -3,6 +3,7 @@ export {
   GatewayRoleStack,
   buildPublishedStack,
   TRUST_ACCOUNT_PARAMETER,
+  GATEWAY_ROLE_COMPONENT,
 } from './gateway-role'
 export type { GatewayRoleProps, GatewayRoleStackProps } from './gateway-role'
 export {

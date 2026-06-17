@@ -3,6 +3,7 @@ import { CfnOutput, CfnParameter } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as s3 from 'aws-cdk-lib/aws-s3'
 import * as iam from 'aws-cdk-lib/aws-iam'
+import { publishOutputs } from '@apiable/cdk-ssm-composition'
 import {
   ACCOUNT_ID_PATTERN,
   ACCOUNT_ID_PATTERN_SOURCE,
@@ -17,6 +18,9 @@ export const PARTNER_ACCOUNT_PARAMETER = 'ApiablePartnerAccount'
 /** Logical id of the tenant-name parameter the published template scopes the bucket by. */
 export const TENANT_NAME_PARAMETER = 'TenantName'
 
+/** Kebab kit-component segment this construct publishes its outputs under. */
+export const LOGS_BUCKET_COMPONENT = 'logs-bucket'
+
 export interface LogsBucketProps {
   /** Tenant/stack identifier the bucket is scoped to — the bucket is named `apiable-logs-<name>`. */
   readonly name: string
@@ -25,6 +29,13 @@ export interface LogsBucketProps {
    * defaults to Apiable's partner account, reproducing the bucket existing customers already run.
    */
   readonly partnerAccount?: string
+  /**
+   * Opt in to publishing this construct's declared outputs (bucket name, bucket ARN, write-role ARN)
+   * to the shared parameter space at `/apiable/{name}/logs-bucket/{output}`. Off by default so an
+   * existing customer's stack gains no new parameter resource; the tenant key is the bucket's
+   * {@link LogsBucketProps.name}.
+   */
+  readonly publishComposition?: boolean
 }
 
 /**
@@ -116,6 +127,21 @@ export class LogsBucket extends Construct {
       value: this.writeRole.roleArn,
       description: 'The ARN of the S3 bucket role',
     })
+
+    if (props.publishComposition) {
+      if (cdk.Token.isUnresolved(name)) {
+        throw new Error('a concrete tenant name is required to publish composition parameters')
+      }
+      publishOutputs(this, {
+        tenant: name,
+        component: LOGS_BUCKET_COMPONENT,
+        outputs: [
+          { name: 'bucket-name', value: this.bucket.bucketName },
+          { name: 'bucket-arn', value: this.bucket.bucketArn },
+          { name: 's3-assume-role-arn', value: this.writeRole.roleArn },
+        ],
+      })
+    }
   }
 }
 
@@ -127,6 +153,8 @@ export interface LogsBucketStackProps extends cdk.StackProps {
   readonly name?: string
   /** Forwarded to {@link LogsBucketProps.partnerAccount}. */
   readonly partnerAccount?: string
+  /** Forwarded to {@link LogsBucketProps.publishComposition} (requires a concrete {@link name}). */
+  readonly publishComposition?: boolean
 }
 
 /** Thin stack wrapper so the construct synthesizes standalone into the published template. */
@@ -149,7 +177,11 @@ export class LogsBucketStack extends cdk.Stack {
       name = tenantNameParameter.valueAsString
     }
 
-    this.logsBucket = new LogsBucket(this, 'LogsBucket', { name, partnerAccount: props.partnerAccount })
+    this.logsBucket = new LogsBucket(this, 'LogsBucket', {
+      name,
+      partnerAccount: props.partnerAccount,
+      publishComposition: props.publishComposition,
+    })
   }
 }
 
