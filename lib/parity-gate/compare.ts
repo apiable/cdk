@@ -86,7 +86,29 @@ export const compareValues = (models: readonly ChannelModel[]): Divergence[] => 
   return divergences
 }
 
-/** Tier (iii): the permission semantics — actions, resources, principal, and source scoping. */
+/**
+ * One grant statement canonicalised to a stable string. Two statements with the same effect,
+ * resources, principal, condition, and source scope but actions in a different order sign alike;
+ * a difference in any of those — including a widened principal or a different invoke source —
+ * signs differently.
+ */
+const grantSignature = (grant: ChannelModel['grants'][number]): string =>
+  JSON.stringify({
+    effect: grant.effect,
+    actions: [...grant.actions].sort(),
+    resources: [...grant.resources].sort(),
+    principal: grant.principal ?? null,
+    condition: grant.condition ?? null,
+    sourceArn: grant.sourceArn ?? null,
+  })
+
+/**
+ * Tier (iii): the permission semantics — actions, resources, principal, condition, and source
+ * scope. Several grants legitimately share one ref (a trust policy with more than one statement),
+ * so a channel's signature for a ref is the sorted multiset of every grant on it, never the first.
+ * A second statement that widens who may assume a role shares the ref but enlarges the multiset,
+ * so it diverges instead of being silently dropped.
+ */
 export const compareGrants = (models: readonly ChannelModel[]): Divergence[] => {
   const channels = channelsOf(models)
   const refs = new Set(models.flatMap((model) => model.grants.map((grant) => grant.ref)))
@@ -94,18 +116,9 @@ export const compareGrants = (models: readonly ChannelModel[]): Divergence[] => 
   for (const ref of [...refs].sort()) {
     const signatureByChannel: SignatureByChannel = new Map()
     for (const model of models) {
-      const grant = model.grants.find((candidate) => candidate.ref === ref)
-      if (grant === undefined) continue
-      signatureByChannel.set(
-        model.channel,
-        JSON.stringify({
-          effect: grant.effect,
-          actions: grant.actions,
-          resources: grant.resources,
-          principal: grant.principal ?? null,
-          sourceScoped: grant.sourceScoped ?? null,
-        }),
-      )
+      const grants = model.grants.filter((candidate) => candidate.ref === ref)
+      if (grants.length === 0) continue
+      signatureByChannel.set(model.channel, JSON.stringify(grants.map(grantSignature).sort()))
     }
     const diverging = divergentChannels(signatureByChannel, channels)
     if (diverging.length > 0) {

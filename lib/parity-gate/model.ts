@@ -52,6 +52,11 @@ export type LoadBearingValues = Readonly<Record<string, string>>
  * One access grant reduced to its permission semantics. `resources` and `principal` are
  * normalised to logical references — account and region tokens replaced — never raw ARNs, so
  * two channels deployed to different accounts still compare equal.
+ *
+ * Several grants legitimately share one {@link ref} — a trust policy may carry more than one
+ * statement, all keyed `grant:assume-role`. The ref is the grouping key; the identity of the
+ * grouped grants is the multiset of their full signatures, so a second statement that widens who
+ * may assume the role is a divergence, never a dropped duplicate.
  */
 export interface PermissionGrant {
   readonly ref: string
@@ -60,10 +65,18 @@ export interface PermissionGrant {
   readonly resources: readonly string[]
   readonly principal?: string
   /**
-   * Whether an invoke grant scopes its source to a single resource (the least-privilege form).
-   * A grant that omits source scoping is broader than one that pins it, even at equal count.
+   * A statement's `Condition`, canonicalised to a stable string. Load-bearing on a trust
+   * statement: two statements that differ only in their condition (one keyed to an external id,
+   * one open) are distinct grants the comparison must tell apart.
    */
-  readonly sourceScoped?: boolean
+  readonly condition?: string
+  /**
+   * The normalised source an invoke grant is scoped to — the single resource permitted to invoke
+   * the function (the least-privilege form). Compared by value: a grant scoped to a different
+   * source, or left unscoped while another channel pins one, is broader and diverges. Absent when
+   * the grant carries no source scope.
+   */
+  readonly sourceArn?: string
 }
 
 /** A secret reference. The value is never captured — only whether it is present and wired through. */
@@ -155,3 +168,12 @@ export const normaliseLogical = (value: string, region?: string): string => {
  * the incidental account a resource is deployed into, which normalises to {@link ACCOUNT_TOKEN}.
  */
 export const accountIdsIn = (value: string): readonly string[] => value.match(ACCOUNT_ID) ?? []
+
+/**
+ * Qualify each load-bearing value key with its resource's logical ref, so two resources of the
+ * same kind do not collapse onto one global key and clobber each other last-write-wins. The ref is
+ * channel-stable (built from account/region-agnostic attributes), so the same resource carries the
+ * same qualified key in every channel and the value comparison stays per resource.
+ */
+export const namespaceByRef = (values: LoadBearingValues, ref: string): LoadBearingValues =>
+  Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}:${ref}`, value]))

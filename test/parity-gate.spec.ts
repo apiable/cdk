@@ -76,7 +76,7 @@ describe('parity gate — reducer well-formedness and version precedence', () =>
 
   it('prefers the explicit pre_token_generation_config version over the legacy attribute', () => {
     const model = reduceTerraformShowJson(tfPoolBothForms(), 'terraform', 'eu-central-1')
-    expect(model.values['pretokengen-version']).toBe('V3_0')
+    expect(model.values['pretokengen-version:cognito-user-pool:authz']).toBe('V3_0')
   })
 })
 
@@ -134,20 +134,28 @@ const cfnRole = (principal: unknown): unknown => ({
   },
 })
 
+// The trust-account value is keyed per role node, so a second role cannot clobber the first.
+const TRUST_ACCOUNT_KEY = 'role-trust-account:iam-role:apiable-gateway-managment-role'
+
 describe('parity gate — trust target (who may assume the role)', () => {
   it('captures the trusted account by value as a load-bearing setting, not a logical token', () => {
     const model = reduceCloudFormation(cfnRole({ AWS: 'arn:aws:iam::034444869755:root' }), 'cfn')
-    expect(model.values['role-trust-account']).toBe('034444869755')
+    expect(model.values[TRUST_ACCOUNT_KEY]).toBe('034444869755')
   })
 
   it('omits the trust-account setting when the role trusts a service principal, not an account', () => {
     const model = reduceCloudFormation(cfnRole({ Service: 'lambda.amazonaws.com' }), 'cfn')
-    expect(model.values['role-trust-account']).toBeUndefined()
+    expect(model.values[TRUST_ACCOUNT_KEY]).toBeUndefined()
   })
 
   it('captures multiple trusted accounts by value, sorted so the key is channel-stable', () => {
     const model = reduceCloudFormation(cfnRole({ AWS: ['arn:aws:iam::222222222222:root', 'arn:aws:iam::111111111111:root'] }), 'cfn')
-    expect(model.values['role-trust-account']).toBe('111111111111,222222222222')
+    expect(model.values[TRUST_ACCOUNT_KEY]).toBe('111111111111,222222222222')
+  })
+
+  it('reads an account named through a federated identity-provider trust by value', () => {
+    const model = reduceCloudFormation(cfnRole({ Federated: 'arn:aws:iam::555555555555:saml-provider/corp' }), 'cfn')
+    expect(model.values[TRUST_ACCOUNT_KEY]).toBe('555555555555')
   })
 })
 

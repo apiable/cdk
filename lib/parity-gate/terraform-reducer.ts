@@ -13,6 +13,7 @@
 import {
   Channel,
   ChannelModel,
+  namespaceByRef,
   normaliseLogical,
   OAuthConfig,
   PermissionGrant,
@@ -140,13 +141,15 @@ const oauthFrom = (values: Record<string, unknown>): OAuthConfig | undefined => 
 
 const lambdaPermissionGrant = (values: Record<string, unknown>, region: string | undefined): PermissionGrant => {
   const principal = normaliseLogical(tfResolve(values.principal), region)
+  const rawSource = asScalarString(values.source_arn)
+  const sourceArn = rawSource === undefined || rawSource === '' ? undefined : normaliseLogical(rawSource, region)
   return {
     ref: `grant:invoke:${principal}`,
     effect: 'Allow',
     actions: [asString(values.action) ?? 'lambda:InvokeFunction'],
     resources: [],
     principal,
-    sourceScoped: values.source_arn !== undefined && values.source_arn !== null && values.source_arn !== '',
+    ...(sourceArn !== undefined ? { sourceArn } : {}),
   }
 }
 
@@ -208,16 +211,17 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
 
   for (const res of resources) {
     const kind = kindByAddress.get(res.address) ?? res.type
-    nodes.push({ ref: refToNode.get(res.address) ?? kind, kind })
-    values = { ...values, ...collectValues(kind, res.values) }
+    const ref = refToNode.get(res.address) ?? kind
+    nodes.push({ ref, kind })
+    values = { ...values, ...namespaceByRef(collectValues(kind, res.values), ref) }
     cosmetics = { ...cosmetics, ...collectCosmetics(kind, res.values) }
     secrets.push(...collectSecrets(res.values))
     if (kind === 'iam-role') {
       const assumePolicy = parseJson(res.values.assume_role_policy)
       grants.push(...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust'))
-      values['role-name'] = normaliseLogical(tfResolve(res.values.name), region)
+      values[`role-name:${ref}`] = normaliseLogical(tfResolve(res.values.name), region)
       const trustAccount = trustedAccountsOf(assumePolicy, tfResolve)
-      if (trustAccount !== undefined) values['role-trust-account'] = trustAccount
+      if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
       grants.push(...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline'))

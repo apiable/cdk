@@ -12,6 +12,7 @@ import {
   ACCOUNT_TOKEN,
   Channel,
   ChannelModel,
+  namespaceByRef,
   normaliseLogical,
   OAuthConfig,
   PermissionGrant,
@@ -173,13 +174,14 @@ const lambdaPermissionGrant = (
 ): PermissionGrant => {
   const principal = normaliseLogical(resolve(props.Principal), region)
   const action = asString(props.Action) ?? 'lambda:InvokeFunction'
+  const sourceArn = props.SourceArn === undefined ? undefined : normaliseLogical(resolve(props.SourceArn), region)
   return {
     ref: `grant:invoke:${principal}`,
     effect: 'Allow',
     actions: [action],
     resources: [],
     principal,
-    sourceScoped: props.SourceArn !== undefined,
+    ...(sourceArn !== undefined && sourceArn !== '' ? { sourceArn } : {}),
   }
 }
 
@@ -221,7 +223,7 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     const kind = canonicalCfnKind(res.type)
     const ref = refToNode.get(id) ?? kind
     nodes.push({ ref, kind })
-    values = { ...values, ...collectValues(kind, res.properties) }
+    values = { ...values, ...namespaceByRef(collectValues(kind, res.properties), ref) }
     cosmetics = { ...cosmetics, ...collectCosmetics(kind, res.properties) }
     secrets.push(...collectSecrets(res.properties))
 
@@ -229,9 +231,9 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       grants.push(
         ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust'),
       )
-      values['role-name'] = normaliseLogical(resolve(res.properties.RoleName), region)
+      values[`role-name:${ref}`] = normaliseLogical(resolve(res.properties.RoleName), region)
       const trustAccount = trustedAccountsOf(res.properties.AssumeRolePolicyDocument, resolve)
-      if (trustAccount !== undefined) values['role-trust-account'] = trustAccount
+      if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
       grants.push(...grantsFromPolicyDocument(res.properties.PolicyDocument, resolve, region, 'inline'))
