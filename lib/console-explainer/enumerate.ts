@@ -110,6 +110,21 @@ const describeResource = (
  * The stable interface Epic 4 iterates: any stack that synthesizes is enumerated the same way, so a
  * newly added construct is adopted with no change on the consuming side.
  */
+/**
+ * Guard that content keys are unique within the construct. A clean key is built by kebab-collapsing a
+ * unique identity, which is lossy, so a collision is possible in principle; surfacing it here fails the
+ * build loudly rather than emitting two descriptors the side-loaded content cannot address apart.
+ */
+const assertUniqueContentKeys = (resources: readonly ResourceDescriptor[]): void => {
+  const seen = new Set<string>()
+  for (const { contentKey } of resources) {
+    if (seen.has(contentKey)) {
+      throw new Error(`duplicate content key "${contentKey}" — content keys must be unique within a construct`)
+    }
+    seen.add(contentKey)
+  }
+}
+
 export const describeResources = (stack: cdk.Stack, component: string): ResourceEnumeration => {
   const template = Template.fromStack(stack).toJSON() as SynthesizedTemplate
 
@@ -128,6 +143,8 @@ export const describeResources = (stack: cdk.Stack, component: string): Resource
       contentKey: `${component}/resource-output/${toKeySegment(logicalId)}`,
     })
   }
+
+  assertUniqueContentKeys(resources)
 
   return { component, resources }
 }
