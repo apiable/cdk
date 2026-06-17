@@ -268,16 +268,32 @@ describe('013-1-9 umbrella delegate refactor — zero-observable-change contract
   describe('S6: the equivalence check asserts properties + exports (logical-id tolerant), not a raw whole-template snapshot', () => {
     it('a pure logical-id rename false-fails a raw whole-template comparison but passes the property+export check', () => {
       const before = candidate.gatewayrole()
-      // model the construct-extraction effect: the same resource re-keyed under a different logical id
-      const renamed: Json = { ...before, Resources: {} }
-      for (const [logicalId, resource] of Object.entries(before.Resources ?? {})) {
-        ;(renamed.Resources as Record<string, unknown>)[`Refactored${logicalId}`] = resource
-      }
+      // model the construct-extraction effect: every logical id consistently re-prefixed (keys + every
+      // Ref/GetAtt/PolicyName echo), the resource graph otherwise byte-identical
+      const renamed: Json = JSON.parse(
+        JSON.stringify(before).replace(/"(GatewayRole[A-Za-z0-9]+)"/g, '"Refactored$1"'),
+      )
       // a raw whole-template snapshot is the WRONG oracle — the deliberate logical-id rename trips it
       expect(renamed.Resources).not.toEqual(before.Resources)
       // the right oracle — property + export equivalence — sees no observable change
       expect(cfnDifferences(before, renamed)).toEqual([])
       expect(isCfnEquivalent(before, renamed)).toBe(true)
+    })
+
+    it('renaming a referenced logical id (and its Ref/PolicyName echoes) is tolerated, not flagged', () => {
+      const before = candidate.gatewayrole()
+      // rename the IAM role logical id everywhere it is keyed or referenced — the deep effect of a
+      // construct re-parenting; the resource graph is otherwise byte-identical
+      const renamed: Json = JSON.parse(JSON.stringify(before))
+      const resources = renamed.Resources ?? {}
+      const oldId = Object.keys(resources).find((id) => (resources[id] as { Type: string }).Type === 'AWS::IAM::Role') as string
+      const newId = `Refactored${oldId}`
+      const rewrite = (s: string): string => s.split(oldId).join(newId)
+      renamed.Resources = JSON.parse(rewrite(JSON.stringify(resources)))
+      // sanity: the raw templates now differ (the rename touched keys, Ref, PolicyName)
+      expect(renamed.Resources).not.toEqual(before.Resources)
+      // the engine tolerates it — the role + its policy are the same resources under new ids
+      expect(cfnDifferences(before, renamed)).toEqual([])
     })
 
     it('a real property change (not a rename) is caught by the property+export check', () => {

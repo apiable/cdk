@@ -31,13 +31,72 @@ export interface CfnDifference {
   readonly detail: string
 }
 
-const stable = (value: unknown): string => JSON.stringify(value, Object.keys(value as object ?? {}).sort())
+/** Deterministic serialization with recursively-sorted object keys, so key order never registers. */
+const canonical = (value: unknown): string => {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort)
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.keys(v as Record<string, unknown>)
+          .sort()
+          .map((k) => [k, sort((v as Record<string, unknown>)[k])]),
+      )
+    }
+    return v
+  }
+  return JSON.stringify(sort(value))
+}
 
-/** The multiset of resource shapes, keyed by type+properties so logical-id renames do not register. */
+/**
+ * Rewrite every cross-resource logical-id reference (`{Ref}`, `{Fn::GetAtt}`, `DependsOn`) and the
+ * CDK default-policy `PolicyName` (which echoes the role's logical id) to a single placeholder, so a
+ * pure logical-id rename of a referenced resource does not register as a property difference. The
+ * referent's own identity is still compared via its type + (placeholder-normalised) properties.
+ */
+const normaliseLogicalRefs = (value: unknown, logicalIds: Set<string>): unknown => {
+  const PLACEHOLDER = '__logical-ref__'
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk)
+    if (v && typeof v === 'object') {
+      const obj = v as Record<string, unknown>
+      const keys = Object.keys(obj)
+      if (keys.length === 1 && obj.Ref !== undefined && typeof obj.Ref === 'string' && logicalIds.has(obj.Ref)) {
+        return { Ref: PLACEHOLDER }
+      }
+      if (keys.length === 1 && Array.isArray(obj['Fn::GetAtt'])) {
+        const [target, ...rest] = obj['Fn::GetAtt'] as unknown[]
+        if (typeof target === 'string' && logicalIds.has(target)) {
+          return { 'Fn::GetAtt': [PLACEHOLDER, ...rest.map(walk)] }
+        }
+      }
+      const out: Record<string, unknown> = {}
+      for (const k of keys) {
+        if (k === 'PolicyName' && typeof obj[k] === 'string' && logicalIds.has(obj[k] as string)) {
+          out[k] = PLACEHOLDER
+        } else if (k === 'DependsOn') {
+          const dep = obj[k]
+          out[k] = (Array.isArray(dep) ? dep : [dep]).map((d) => (typeof d === 'string' && logicalIds.has(d) ? PLACEHOLDER : d))
+        } else {
+          out[k] = walk(obj[k])
+        }
+      }
+      return out
+    }
+    return v
+  }
+  return walk(value)
+}
+
+/**
+ * The multiset of resource shapes, keyed by type + logical-id-normalised properties so that a rename
+ * of a resource's logical id (and of any reference to it) does not register as a change.
+ */
 export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
+  const logicalIds = new Set(Object.keys(template.Resources ?? {}))
   const counts = new Map<string, number>()
   for (const resource of Object.values(template.Resources ?? {})) {
-    const key = JSON.stringify({ type: resource.Type, properties: resource.Properties ?? null })
+    const properties = normaliseLogicalRefs(resource.Properties ?? null, logicalIds)
+    const key = canonical({ type: resource.Type, properties })
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
   return counts
@@ -45,11 +104,12 @@ export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
 
 /** Published exports keyed by export name — the contract dependent stacks import via `Fn::ImportValue`. */
 export const publishedExports = (template: CfnTemplate): Map<string, string> => {
+  const logicalIds = new Set(Object.keys(template.Resources ?? {}))
   const exports = new Map<string, string>()
   for (const output of Object.values(template.Outputs ?? {})) {
     const exportName = output.Export?.Name
     if (typeof exportName === 'string') {
-      exports.set(exportName, stable(output.Value))
+      exports.set(exportName, canonical(normaliseLogicalRefs(output.Value, logicalIds)))
     }
   }
   return exports
