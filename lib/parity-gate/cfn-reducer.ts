@@ -25,7 +25,16 @@ import {
   ResourceNode,
   SecretRef,
 } from './model'
-import { canonicalCfnKind, nodeRef, policyServices } from './canonical'
+import {
+  canonicalCfnKind,
+  DECLARED_ID_KINDS,
+  DECLARED_ID_TAG,
+  discriminatorOf,
+  ENFORCED_DECLARED_ID_KINDS,
+  missingDeclaredId,
+  nodeRef,
+  policyServices,
+} from './canonical'
 import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asString, asStringArray, isRecord } from './narrow'
 
@@ -82,7 +91,33 @@ const resourceRefsIn = (value: unknown, resourceIds: ReadonlySet<string>): { id:
   return []
 }
 
-/** Channel-stable discriminator for a resource, derived only from account/region-agnostic attributes. */
+/** The author-declared `apiable:logical-id` for a taggable primary, or undefined when the tag is absent.
+ * A user pool carries it in the `UserPoolTags` map; every other taggable kind in the standard `Tags` list. */
+const declaredLogicalId = (kind: string, props: Record<string, unknown>): string | undefined => {
+  if (kind === 'cognito-user-pool') return asString(asRecord(props.UserPoolTags)[DECLARED_ID_TAG])
+  for (const entry of asArray(props.Tags)) {
+    const tag = asRecord(entry)
+    if (asString(tag.Key) === DECLARED_ID_TAG) return asString(tag.Value)
+  }
+  return undefined
+}
+
+/** The sorted IAM service set an inline policy grants on — its channel-stable per-parent local key. */
+const inlinePolicyServices = (props: Record<string, unknown>): string => {
+  const statements = asArray(asRecord(props.PolicyDocument).Statement)
+  const allActions = statements.flatMap((s) => {
+    const action = asRecord(s).Action
+    return typeof action === 'string' ? [action] : asStringArray(action)
+  })
+  return policyServices(allActions)
+}
+
+/**
+ * The discriminator for a resource whose identity is not an author-declared id: a channel-stable
+ * value derived from account/region-agnostic attributes. The taggable primaries ({@link DECLARED_ID_KINDS})
+ * are keyed by their declared id in {@link identityFor} and only reach here as a name-based fall-back for
+ * the kinds not yet enforced (a tag-less pool/function keeps its prior verdict).
+ */
 const discriminatorFor = (
   kind: string,
   props: Record<string, unknown>,
@@ -90,16 +125,8 @@ const discriminatorFor = (
   region: string | undefined,
 ): string | undefined => {
   switch (kind) {
-    case 'iam-role':
-      return normaliseLogical(resolve(props.RoleName), region) || undefined
-    case 'iam-inline-policy': {
-      const statements = asArray(asRecord(props.PolicyDocument).Statement)
-      const allActions = statements.flatMap((s) => {
-        const action = asRecord(s).Action
-        return typeof action === 'string' ? [action] : asStringArray(action)
-      })
-      return policyServices(allActions) || undefined
-    }
+    case 'iam-inline-policy':
+      return inlinePolicyServices(props) || undefined
     case 'cognito-user-pool':
       return normaliseLogical(resolve(props.UserPoolName), region) || 'pool'
     case 'cognito-user-pool-client':
@@ -110,11 +137,38 @@ const discriminatorFor = (
       return normaliseLogical(resolve(props.Name), region) || 'authorizer'
     case 'lambda-function':
       return normaliseLogical(resolve(props.FunctionName), region) || 'function'
-    case 's3-bucket':
-      return normaliseLogical(resolve(props.BucketName), region) || 'bucket'
     default:
       return undefined
   }
+}
+
+/** The CloudFormation property carrying a taggable primary's name, demoted to a cosmetic note. */
+const PRIMARY_NAME_PROPERTY: Readonly<Record<string, string>> = {
+  'iam-role': 'RoleName',
+  's3-bucket': 'BucketName',
+  'cognito-user-pool': 'UserPoolName',
+  'lambda-function': 'FunctionName',
+}
+
+/**
+ * A resource's channel-stable identity. A taggable primary is keyed by its author-declared
+ * `apiable:logical-id`; an enforced primary ({@link ENFORCED_DECLARED_ID_KINDS}) missing the id takes a
+ * per-channel-unique token so the omission is an explicit divergence, never inferred from the name.
+ * Every other resource keeps its attribute-derived {@link discriminatorFor}.
+ */
+const identityFor = (
+  kind: string,
+  props: Record<string, unknown>,
+  resolve: (v: unknown) => string,
+  region: string | undefined,
+  localId: string,
+): string | undefined => {
+  if (DECLARED_ID_KINDS.has(kind)) {
+    const declaredId = declaredLogicalId(kind, props)
+    if (declaredId !== undefined) return declaredId
+    if (ENFORCED_DECLARED_ID_KINDS.has(kind)) return missingDeclaredId(localId)
+  }
+  return discriminatorFor(kind, props, resolve, region)
 }
 
 /**
@@ -259,15 +313,39 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
   const refToNode = new Map<string, string>()
   for (const [id, res] of Object.entries(resources)) {
     const kind = canonicalCfnKind(res.type)
-    refToNode.set(id, nodeRef(kind, discriminatorFor(kind, res.properties, resolve, region)))
+    refToNode.set(id, nodeRef(kind, identityFor(kind, res.properties, resolve, region, id)))
   }
-  // A bucket-policy carries no name of its own; its channel-stable identity is the bucket it secures,
-  // so re-key its node by the referenced bucket's discriminator once every bucket node ref is known.
+  // An attached resource carries no channel-stable name of its own; anchor its node to its parent's
+  // declared identity plus a per-parent local key, so two of the same kind under one parent stay
+  // distinct and a divergence on the second is never clobbered. Run after every primary node ref is
+  // known (a parent is keyed in the loop above).
   for (const [id, res] of Object.entries(resources)) {
-    if (canonicalCfnKind(res.type) !== 's3-bucket-policy') continue
-    const bucketTarget = resourceRefsIn(res.properties.Bucket, resourceIds)[0]
-    const bucketName = securedBucketName(bucketTarget !== undefined ? refToNode.get(bucketTarget.id) : undefined)
-    refToNode.set(id, nodeRef('s3-bucket-policy', bucketName))
+    const kind = canonicalCfnKind(res.type)
+    if (kind === 'iam-inline-policy') {
+      const roleTarget = resourceRefsIn(res.properties.Roles, resourceIds)[0] ?? resourceRefsIn(res.properties.RoleName, resourceIds)[0]
+      if (roleTarget !== undefined) {
+        const roleDisc = discriminatorOf(refToNode.get(roleTarget.id) ?? roleTarget.id)
+        refToNode.set(id, nodeRef('iam-inline-policy', `policy-of:${roleDisc}:${inlinePolicyServices(res.properties)}`))
+      }
+    }
+    if (kind === 'lambda-permission') {
+      const principal = normaliseLogical(resolve(res.properties.Principal), region)
+      const fnTarget = resourceRefsIn(res.properties.FunctionName, resourceIds)[0]
+      const fnKey = fnTarget !== undefined ? discriminatorOf(refToNode.get(fnTarget.id) ?? fnTarget.id) : normaliseLogical(resolve(res.properties.FunctionName), region)
+      refToNode.set(id, nodeRef('lambda-permission', `invoke-on:${fnKey}:${principal}`))
+    }
+    if (kind === 'cognito-user-pool-domain') {
+      const poolTarget = resourceRefsIn(res.properties.UserPoolId, resourceIds)[0]
+      if (poolTarget !== undefined) {
+        refToNode.set(id, nodeRef('cognito-user-pool-domain', `of-pool:${discriminatorOf(refToNode.get(poolTarget.id) ?? poolTarget.id)}`))
+      }
+    }
+    // A bucket-policy's channel-stable identity is the bucket it secures (its own name is generated).
+    if (kind === 's3-bucket-policy') {
+      const bucketTarget = resourceRefsIn(res.properties.Bucket, resourceIds)[0]
+      const bucketName = securedBucketName(bucketTarget !== undefined ? refToNode.get(bucketTarget.id) : undefined)
+      refToNode.set(id, nodeRef('s3-bucket-policy', bucketName))
+    }
   }
 
   // The hosted-UI domain prefix per pool node ref, so a client's discovery document can carry the
@@ -314,6 +392,13 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     const kind = canonicalCfnKind(res.type)
     const ref = refToNode.get(id) ?? kind
     nodes.push({ ref, kind })
+    // A taggable primary's name is identity-free under the declared id, so it is a cosmetic note,
+    // keyed per node so two resources never collapse onto one name and a tenant/region difference warns.
+    const nameProperty = PRIMARY_NAME_PROPERTY[kind]
+    if (nameProperty !== undefined) {
+      const name = normaliseLogical(resolve(res.properties[nameProperty]), region)
+      if (name !== '') cosmetics[`name:${ref}`] = name
+    }
     values = { ...values, ...namespaceByRef(collectValues(kind, res.properties), ref) }
     cosmetics = { ...cosmetics, ...collectCosmetics(kind, res.properties) }
     secrets.push(...collectSecrets(res.properties))
@@ -322,7 +407,6 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       grants.push(
         ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust', canonicaliseResource),
       )
-      values[`role-name:${ref}`] = normaliseLogical(resolve(res.properties.RoleName), region)
       const trustAccount = trustedAccountsOf(res.properties.AssumeRolePolicyDocument, resolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }

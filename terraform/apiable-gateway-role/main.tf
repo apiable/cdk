@@ -3,6 +3,11 @@ resource "aws_iam_role" "this" {
   name        = "apiable-gateway-managment-role-${var.region}"
   description = "Role for Apiable to manage the API Gateway"
 
+  # Channel-stable identity the release-time parity gate keys this role on, identical to the CDK/CFN channels.
+  tags = {
+    "apiable:logical-id" = "apiable-gateway-role"
+  }
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [

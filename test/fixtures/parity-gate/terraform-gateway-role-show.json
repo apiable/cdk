@@ -12,6 +12,8 @@
           "values": {
             "name": "apiable-gateway-managment-role-eu-central-1",
             "description": "Role for Apiable to manage the API Gateway",
+            "tags": { "apiable:logical-id": "apiable-gateway-role" },
+            "tags_all": { "apiable:logical-id": "apiable-gateway-role" },
             "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::034444869755:root\"},\"Action\":\"sts:AssumeRole\"}]}"
           }
         },

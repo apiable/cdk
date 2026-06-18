@@ -154,33 +154,22 @@ export interface GateResult {
  */
 export const ACCOUNT_TOKEN = '{account}'
 export const REGION_TOKEN = '{region}'
-export const TENANT_TOKEN = '{tenant}'
 
 const ACCOUNT_ID = /(?<!\d)\d{12}(?!\d)/g
 const AWS_REGION = /[a-z]{2}-[a-z]+-\d(?![\w-])/g
-// The tenant segment of an `apiable-logs-<name>` identifier (the bucket `apiable-logs-<name>` and
-// the write-role `apiable-logs-<name>-s3-role`). The name varies by tenant and one channel may
-// carry it as an unresolved parameter reference (`@ref:TenantName`) rather than a concrete value,
-// so it collapses to {@link TENANT_TOKEN}. The optional `-s3-role` suffix is preserved structurally
-// so the bucket and the role stay distinct identifiers after normalisation.
-const TENANT_NAME = /apiable-logs-(?:@ref:\w+|[a-z0-9]+(?:-[a-z0-9]+)*?)(?=-s3-role|\/|$)/g
 
 /**
- * Replace account ids, AWS regions, and the tenant-scoped name segment in a value with logical
- * tokens, so the comparison key is the logical reference. An explicit `region` is replaced first to
- * catch regions that are not in the generic `xx-yyyy-n` shape (none today, but the channel supplies
- * the deployed region). Every 12-digit account id then collapses to {@link ACCOUNT_TOKEN} — the
- * incidental account a resource is deployed into is never load-bearing here (the one account that IS
- * — who may assume a role, who may write to a bucket — is read separately, by value). The tenant
- * segment is replaced last, after region/account, so an account- or region-bearing tenant name does
- * not leave a stray literal behind.
+ * Replace account ids and AWS regions in a value with logical tokens, so the comparison key is the
+ * logical reference. An explicit `region` is replaced first to catch regions that are not in the
+ * generic `xx-yyyy-n` shape (none today, but the channel supplies the deployed region). Every
+ * 12-digit account id then collapses to {@link ACCOUNT_TOKEN} — the incidental account a resource is
+ * deployed into is never load-bearing here (the one account that IS — who may assume a role, who may
+ * write to a bucket — is read separately, by value). A resource's identity is its declared
+ * `apiable:logical-id`, so a tenant-scoped name drives no identity and is never tokenised here.
  */
 export const normaliseLogical = (value: string, region?: string): string => {
   const withRegion = region ? value.split(region).join(REGION_TOKEN) : value
-  return withRegion
-    .replace(AWS_REGION, REGION_TOKEN)
-    .replace(ACCOUNT_ID, ACCOUNT_TOKEN)
-    .replace(TENANT_NAME, `apiable-logs-${TENANT_TOKEN}`)
+  return withRegion.replace(AWS_REGION, REGION_TOKEN).replace(ACCOUNT_ID, ACCOUNT_TOKEN)
 }
 
 /** A wildcard principal — "any principal" — preserved as a sentinel that can never equal a bounded account set. */

@@ -25,7 +25,16 @@ import {
   ResourceNode,
   SecretRef,
 } from './model'
-import { canonicalTfKind, nodeRef, policyServices } from './canonical'
+import {
+  canonicalTfKind,
+  DECLARED_ID_KINDS,
+  DECLARED_ID_TAG,
+  discriminatorOf,
+  ENFORCED_DECLARED_ID_KINDS,
+  missingDeclaredId,
+  nodeRef,
+  policyServices,
+} from './canonical'
 import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asScalarString, asString, asStringArray, isRecord } from './narrow'
 
@@ -56,22 +65,37 @@ interface TfResource {
   readonly values: Record<string, unknown>
 }
 
+/** The author-declared `apiable:logical-id` for a taggable primary, read from the resource's tags
+ * (falling back to the provider-merged `tags_all`), or undefined when the tag is absent. */
+const declaredLogicalId = (values: Record<string, unknown>): string | undefined => {
+  const tags = asRecord(values.tags ?? values.tags_all)
+  return asString(tags[DECLARED_ID_TAG])
+}
+
+/** The sorted IAM service set an inline policy grants on — its channel-stable per-parent local key. */
+const inlinePolicyServices = (values: Record<string, unknown>): string => {
+  const doc = asRecord(parseJson(values.policy))
+  const actions = asArray(doc.Statement).flatMap((s) => {
+    const action = asRecord(s).Action
+    return typeof action === 'string' ? [action] : asStringArray(action)
+  })
+  return policyServices(actions)
+}
+
+/**
+ * The discriminator for a resource whose identity is not an author-declared id: a channel-stable
+ * value derived from account/region-agnostic attributes. The taggable primaries ({@link DECLARED_ID_KINDS})
+ * are keyed by their declared id in {@link identityFor} and only reach here as a name-based fall-back for
+ * the kinds not yet enforced (a tag-less pool/function keeps its prior verdict).
+ */
 const discriminatorFor = (
   kind: string,
   values: Record<string, unknown>,
   region: string | undefined,
 ): string | undefined => {
   switch (kind) {
-    case 'iam-role':
-      return normaliseLogical(tfResolve(values.name), region) || undefined
-    case 'iam-inline-policy': {
-      const doc = asRecord(parseJson(values.policy))
-      const actions = asArray(doc.Statement).flatMap((s) => {
-        const action = asRecord(s).Action
-        return typeof action === 'string' ? [action] : asStringArray(action)
-      })
-      return policyServices(actions) || undefined
-    }
+    case 'iam-inline-policy':
+      return inlinePolicyServices(values) || undefined
     case 'cognito-user-pool':
       return normaliseLogical(tfResolve(values.name), region) || 'pool'
     case 'cognito-user-pool-client':
@@ -82,11 +106,37 @@ const discriminatorFor = (
       return normaliseLogical(tfResolve(values.name), region) || 'authorizer'
     case 'lambda-function':
       return normaliseLogical(tfResolve(values.function_name), region) || 'function'
-    case 's3-bucket':
-      return normaliseLogical(tfResolve(values.bucket), region) || 'bucket'
     default:
       return undefined
   }
+}
+
+/** The Terraform attribute carrying a taggable primary's name, demoted to a cosmetic note. */
+const PRIMARY_NAME_ATTRIBUTE: Readonly<Record<string, string>> = {
+  'iam-role': 'name',
+  's3-bucket': 'bucket',
+  'cognito-user-pool': 'name',
+  'lambda-function': 'function_name',
+}
+
+/**
+ * A resource's channel-stable identity. A taggable primary is keyed by its author-declared
+ * `apiable:logical-id`; an enforced primary ({@link ENFORCED_DECLARED_ID_KINDS}) missing the id takes a
+ * per-channel-unique token so the omission is an explicit divergence, never inferred from the name.
+ * Every other resource keeps its attribute-derived {@link discriminatorFor}.
+ */
+const identityFor = (
+  kind: string,
+  values: Record<string, unknown>,
+  region: string | undefined,
+  localId: string,
+): string | undefined => {
+  if (DECLARED_ID_KINDS.has(kind)) {
+    const declaredId = declaredLogicalId(values)
+    if (declaredId !== undefined) return declaredId
+    if (ENFORCED_DECLARED_ID_KINDS.has(kind)) return missingDeclaredId(localId)
+  }
+  return discriminatorFor(kind, values, region)
 }
 
 /**
@@ -253,7 +303,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   for (const res of resources) {
     const kind = canonicalTfKind(res.type)
     kindByAddress.set(res.address, kind)
-    refToNode.set(res.address, nodeRef(kind, discriminatorFor(kind, res.values, region)))
+    refToNode.set(res.address, nodeRef(kind, identityFor(kind, res.values, region, res.address)))
   }
 
   // A plan leaves a computed user_pool_id unknown in planned_values, so the cognito reference graph
@@ -262,10 +312,13 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const configResources = asArray(asRecord(asRecord(root.configuration).root_module).resources)
   const poolRefByClientAddress = new Map<string, string>()
   const domainPrefixByPoolRef = new Map<string, string>()
-  // The bucket a bucket-policy secures, read from the configuration's reference expressions (the
-  // bucket id is computed and absent from planned_values), so the policy node and its grant carry the
-  // bucket's channel-stable identity.
+  // The parent each attached resource is anchored to, read from the configuration's reference
+  // expressions (the parent id is computed and absent from planned_values), so the attached node and
+  // its grant carry the parent's channel-stable declared identity, never a generated name of their own.
   const securedBucketByPolicyAddress = new Map<string, string>()
+  const roleRefByPolicyAddress = new Map<string, string>()
+  const functionRefByPermissionAddress = new Map<string, string>()
+  const poolRefByDomainAddress = new Map<string, string>()
   for (const entry of configResources) {
     const record = asRecord(entry)
     const address = asString(record.address)
@@ -280,20 +333,48 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
       const domainResource = resources.find((candidate) => candidate.address === address)
       const domain = domainResource !== undefined ? asString(domainResource.values.domain) : undefined
-      if (poolTarget !== undefined && domain !== undefined) {
-        domainPrefixByPoolRef.set(refToNode.get(poolTarget.address) ?? poolTarget.address, domain)
+      if (poolTarget !== undefined) {
+        const poolRef = refToNode.get(poolTarget.address) ?? poolTarget.address
+        poolRefByDomainAddress.set(address, poolRef)
+        if (domain !== undefined) domainPrefixByPoolRef.set(poolRef, domain)
       }
+    }
+    if (kind === 'iam-inline-policy') {
+      const roleTarget = referencesOf(expressions.role, addresses)[0]
+      if (roleTarget !== undefined) roleRefByPolicyAddress.set(address, refToNode.get(roleTarget.address) ?? roleTarget.address)
+    }
+    if (kind === 'lambda-permission') {
+      const fnTarget = referencesOf(expressions.function_name, addresses)[0]
+      if (fnTarget !== undefined) functionRefByPermissionAddress.set(address, refToNode.get(fnTarget.address) ?? fnTarget.address)
     }
     if (kind === 's3-bucket-policy') {
       const bucketTarget = referencesOf(expressions.bucket, addresses)[0]
       if (bucketTarget !== undefined) securedBucketByPolicyAddress.set(address, refToNode.get(bucketTarget.address) ?? bucketTarget.address)
     }
   }
-  // Re-key each bucket-policy node by the bucket it secures (its name is channel-stable; the policy's
-  // own address is not), so the policy node matches across channels.
+  // Re-key each attached resource by its parent + a per-parent local key (the policy's/permission's
+  // own address is not channel-stable), so two of one kind under one parent stay distinct.
   for (const res of resources) {
-    if (kindByAddress.get(res.address) !== 's3-bucket-policy') continue
-    refToNode.set(res.address, nodeRef('s3-bucket-policy', securedBucketName(securedBucketByPolicyAddress.get(res.address))))
+    const kind = kindByAddress.get(res.address)
+    if (kind === 's3-bucket-policy') {
+      refToNode.set(res.address, nodeRef('s3-bucket-policy', securedBucketName(securedBucketByPolicyAddress.get(res.address))))
+    }
+    if (kind === 'iam-inline-policy') {
+      const roleRef = roleRefByPolicyAddress.get(res.address)
+      if (roleRef !== undefined) {
+        refToNode.set(res.address, nodeRef('iam-inline-policy', `policy-of:${discriminatorOf(roleRef)}:${inlinePolicyServices(res.values)}`))
+      }
+    }
+    if (kind === 'lambda-permission') {
+      const principal = normaliseLogical(tfResolve(res.values.principal), region)
+      const fnRef = functionRefByPermissionAddress.get(res.address)
+      const fnKey = fnRef !== undefined ? discriminatorOf(fnRef) : normaliseLogical(tfResolve(res.values.function_name), region)
+      refToNode.set(res.address, nodeRef('lambda-permission', `invoke-on:${fnKey}:${principal}`))
+    }
+    if (kind === 'cognito-user-pool-domain') {
+      const poolRef = poolRefByDomainAddress.get(res.address)
+      if (poolRef !== undefined) refToNode.set(res.address, nodeRef('cognito-user-pool-domain', `of-pool:${discriminatorOf(poolRef)}`))
+    }
   }
 
   // A grant resource that is one of this plan's S3 bucket ARNs reduces to that bucket's channel-stable
@@ -326,13 +407,19 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     const kind = kindByAddress.get(res.address) ?? res.type
     const ref = refToNode.get(res.address) ?? kind
     nodes.push({ ref, kind })
+    // A taggable primary's name is identity-free under the declared id, so it is a cosmetic note,
+    // keyed per node so two resources never collapse onto one name and a tenant/region difference warns.
+    const nameAttribute = PRIMARY_NAME_ATTRIBUTE[kind]
+    if (nameAttribute !== undefined) {
+      const name = normaliseLogical(tfResolve(res.values[nameAttribute]), region)
+      if (name !== '') cosmetics[`name:${ref}`] = name
+    }
     values = { ...values, ...namespaceByRef(collectValues(kind, res.values), ref) }
     cosmetics = { ...cosmetics, ...collectCosmetics(kind, res.values) }
     secrets.push(...collectSecrets(res.values))
     if (kind === 'iam-role') {
       const assumePolicy = parseJson(res.values.assume_role_policy)
       grants.push(...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust', canonicaliseResource))
-      values[`role-name:${ref}`] = normaliseLogical(tfResolve(res.values.name), region)
       const trustAccount = trustedAccountsOf(assumePolicy, tfResolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }

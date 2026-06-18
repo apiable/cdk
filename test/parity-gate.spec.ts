@@ -105,16 +105,9 @@ describe('parity gate — tiers beyond the role pilot', () => {
   })
 
   it('detects an EXTRA resource in one channel, not only a missing one', () => {
-    const base: ChannelModel = reduceCloudFormation({ Resources: { R: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'r' } } } }, 'cdk')
-    const withExtra = reduceCloudFormation(
-      {
-        Resources: {
-          R: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'r' } },
-          Extra: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'extra' } },
-        },
-      },
-      'terraform',
-    )
+    const role = (id: string): unknown => ({ Type: 'AWS::IAM::Role', Properties: { RoleName: id, Tags: [{ Key: 'apiable:logical-id', Value: id }] } })
+    const base: ChannelModel = reduceCloudFormation({ Resources: { R: role('r') } }, 'cdk')
+    const withExtra = reduceCloudFormation({ Resources: { R: role('r'), Extra: role('extra') } }, 'terraform')
     const result = gate([base, { ...base, channel: 'cfn' }, withExtra])
     expect(result.passed).toBe(false)
     const divergence = result.divergences.find((entry) => entry.tier === 'graph' && entry.detail.includes('iam-role:extra'))
@@ -128,14 +121,15 @@ const cfnRole = (principal: unknown): unknown => ({
       Type: 'AWS::IAM::Role',
       Properties: {
         RoleName: 'apiable-gateway-managment-role',
+        Tags: [{ Key: 'apiable:logical-id', Value: 'gateway-managment-role' }],
         AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: principal, Action: 'sts:AssumeRole' }] },
       },
     },
   },
 })
 
-// The trust-account value is keyed per role node, so a second role cannot clobber the first.
-const TRUST_ACCOUNT_KEY = 'role-trust-account:iam-role:apiable-gateway-managment-role'
+// The trust-account value is keyed per role node (by its declared id), so a second role cannot clobber the first.
+const TRUST_ACCOUNT_KEY = 'role-trust-account:iam-role:gateway-managment-role'
 
 describe('parity gate — trust target (who may assume the role)', () => {
   it('captures the trusted account by value as a load-bearing setting, not a logical token', () => {
@@ -171,6 +165,7 @@ const cfnRoleWithStatements = (statements: readonly unknown[]): unknown => ({
       Type: 'AWS::IAM::Role',
       Properties: {
         RoleName: 'apiable-conditional-role',
+        Tags: [{ Key: 'apiable:logical-id', Value: 'conditional-role' }],
         AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: statements },
       },
     },
@@ -294,17 +289,21 @@ describe('parity gate — grant multiset (count and inline policies)', () => {
   })
 })
 
-describe('parity gate — per-resource value keys (the role-name sibling of role-trust-account)', () => {
-  it('keys each role name by its own node so a two-role artifact does not collapse to one role-name', () => {
+describe('parity gate — per-resource identity by declared id (two roles do not collapse)', () => {
+  it('keys each role by its declared apiable:logical-id so a two-role artifact yields two distinct nodes, the name demoted to a cosmetic', () => {
     const twoRoles: unknown = {
       Resources: {
-        RoleA: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'apiable-role-a' } },
-        RoleB: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'apiable-role-b' } },
+        RoleA: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'apiable-role-a', Tags: [{ Key: 'apiable:logical-id', Value: 'role-a' }] } },
+        RoleB: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'apiable-role-b', Tags: [{ Key: 'apiable:logical-id', Value: 'role-b' }] } },
       },
     }
     const model = reduceCloudFormation(twoRoles, 'cfn')
-    expect(model.values['role-name:iam-role:apiable-role-a']).toBe('apiable-role-a')
-    expect(model.values['role-name:iam-role:apiable-role-b']).toBe('apiable-role-b')
+    const roleNodes = model.graph.nodes.filter((node) => node.kind === 'iam-role').map((node) => node.ref)
+    expect(roleNodes).toEqual(['iam-role:role-a', 'iam-role:role-b'])
+    // the name carries no identity under the declared id, so it is a per-node cosmetic, never a load-bearing value
+    expect(model.values['role-name:iam-role:role-a']).toBeUndefined()
+    expect(model.cosmetics['name:iam-role:role-a']).toBe('apiable-role-a')
+    expect(model.cosmetics['name:iam-role:role-b']).toBe('apiable-role-b')
   })
 })
 

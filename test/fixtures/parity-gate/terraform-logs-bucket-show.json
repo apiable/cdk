@@ -12,7 +12,9 @@
           "provider_name": "registry.terraform.io/hashicorp/aws",
           "values": {
             "bucket": "apiable-logs-ci",
-            "force_destroy": false
+            "force_destroy": false,
+            "tags": { "apiable:logical-id": "apiable-logs-bucket" },
+            "tags_all": { "apiable:logical-id": "apiable-logs-bucket" }
           }
         },
         {
@@ -32,6 +34,8 @@
           "values": {
             "name": "apiable-logs-ci-s3-role",
             "description": "Role for partner account to Access the S3 Bucket",
+            "tags": { "apiable:logical-id": "apiable-logs-write-role" },
+            "tags_all": { "apiable:logical-id": "apiable-logs-write-role" },
             "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::034444869755:root\"},\"Action\":\"sts:AssumeRole\"}]}"
           }
         },

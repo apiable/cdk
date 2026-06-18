@@ -16,6 +16,14 @@ export const TRUST_ACCOUNT_PARAMETER = 'ApiableTrustAccount'
 /** Kebab kit-component segment this construct publishes its outputs under. */
 export const GATEWAY_ROLE_COMPONENT = 'gateway-role'
 
+/**
+ * Author-declared, channel-identical identity the release-time parity gate keys the role on (the
+ * `apiable:logical-id` tag), so the same role compares equal across the CDK, published-CFN, and
+ * Terraform channels regardless of its generated name, account, or region. The hand-rolled Terraform
+ * module declares the identical literal.
+ */
+export const GATEWAY_ROLE_LOGICAL_ID = 'apiable-gateway-role'
+
 export interface GatewayRoleProps {
   /**
    * AWS account authorised to assume the gateway-management role. Omitting it defaults to
@@ -76,6 +84,10 @@ export class GatewayRole extends Construct {
       roleName: name,
       description: 'Role for Apiable to manage the API Gateway',
     })
+    // Declare the channel-stable identity on the role itself (never the stack — a stack-wide tag
+    // propagates one id onto every resource and collapses them), so the parity gate compares it by
+    // declared id rather than its region-suffixed name. 'apiable:logical-id' is the gate's tag key.
+    cdk.Tags.of(this.role).add('apiable:logical-id', GATEWAY_ROLE_LOGICAL_ID)
 
     this.role.addToPolicy(
       new iam.PolicyStatement({

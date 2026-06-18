@@ -5,6 +5,11 @@ resource "aws_s3_bucket" "this" {
   bucket        = "apiable-logs-${var.name}"
   force_destroy = false
 
+  # Channel-stable identity the release-time parity gate keys this bucket on, identical to the CDK/CFN channels.
+  tags = {
+    "apiable:logical-id" = "apiable-logs-bucket"
+  }
+
   # Mirrors the CDK RETAIN_ON_UPDATE_OR_DELETE posture; no S3 lifecycle/expiry rule is introduced.
   lifecycle {
     prevent_destroy = true
@@ -36,6 +41,11 @@ resource "aws_s3_bucket_policy" "this" {
 resource "aws_iam_role" "this" {
   name        = "apiable-logs-${var.name}-s3-role"
   description = "Role for partner account to Access the S3 Bucket"
+
+  # Channel-stable identity the release-time parity gate keys this role on, identical to the CDK/CFN channels.
+  tags = {
+    "apiable:logical-id" = "apiable-logs-write-role"
+  }
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

@@ -7,7 +7,7 @@
  * with no cloud account. The I/O that loads a published template or a `terraform show -json`
  * file lives in the gate harness that drives this in CI.
  */
-export { ACCOUNT_TOKEN, REGION_TOKEN, TENANT_TOKEN, normaliseLogical } from './model'
+export { ACCOUNT_TOKEN, REGION_TOKEN, normaliseLogical } from './model'
 export type {
   Channel,
   ChannelModel,

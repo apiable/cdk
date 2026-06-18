@@ -21,6 +21,15 @@ export const TENANT_NAME_PARAMETER = 'TenantName'
 /** Kebab kit-component segment this construct publishes its outputs under. */
 export const LOGS_BUCKET_COMPONENT = 'logs-bucket'
 
+/**
+ * Author-declared, channel-identical identities the release-time parity gate keys the two taggable
+ * primaries on (the `apiable:logical-id` tag), so each compares equal across the CDK, published-CFN,
+ * and Terraform channels regardless of its tenant-scoped name. The hand-rolled Terraform module
+ * declares the identical literals.
+ */
+export const LOGS_BUCKET_LOGICAL_ID = 'apiable-logs-bucket'
+export const LOGS_WRITE_ROLE_LOGICAL_ID = 'apiable-logs-write-role'
+
 export interface LogsBucketProps {
   /** Tenant/stack identifier the bucket is scoped to — the bucket is named `apiable-logs-<name>`. */
   readonly name: string
@@ -84,6 +93,9 @@ export class LogsBucket extends Construct {
       removalPolicy: cdk.RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
       autoDeleteObjects: false,
     })
+    // Declare the channel-stable identity per-resource (never the stack — that collapses every
+    // resource onto one id), so the parity gate keys the bucket by declared id, not its tenant name.
+    cdk.Tags.of(this.bucket).add('apiable:logical-id', LOGS_BUCKET_LOGICAL_ID)
 
     this.bucket.addToResourcePolicy(
       new iam.PolicyStatement({
@@ -103,6 +115,7 @@ export class LogsBucket extends Construct {
       roleName: `apiable-logs-${name}-s3-role`,
       description: 'Role for partner account to Access the S3 Bucket',
     })
+    cdk.Tags.of(this.writeRole).add('apiable:logical-id', LOGS_WRITE_ROLE_LOGICAL_ID)
 
     this.writeRole.addToPolicy(
       new iam.PolicyStatement({
