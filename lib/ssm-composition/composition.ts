@@ -100,7 +100,7 @@ export type ReadUpstreamOutputProps = CompositionKey
  * downstream deploys it sees the current value or the deploy fails — never an empty/stale literal.
  * The flip side is propagation: an upstream that rewrites its parameter after a downstream has
  * deployed does not push the new value into that downstream until the downstream is redeployed. This
- * is the AR10 loose-coupling trade-off, not a defect; coordinated redeploys carry forward upstream
+ * is the loose-coupling trade-off, not a defect; coordinated redeploys carry forward upstream
  * changes.
  */
 export const readUpstreamOutput = (scope: Construct, props: ReadUpstreamOutputProps): string =>

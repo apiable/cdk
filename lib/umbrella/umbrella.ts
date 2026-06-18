@@ -188,13 +188,11 @@ export const buildLogsBucketStackComposed = (app: cdk.App, config: LogsBucketCon
  * firehose consumes the logs-bucket ARN, the authorizer consumes the gateway-role ARN. They compose
  * the same key the writer publishes under and read it by value from the shared parameter space.
  *
- * These resolvers are forward-scaffolding: the constructs that will call them — the firehose
- * (`usagelogs`/`usagetokens`, stories 1-5/1-6) and the lambda authorizer (story 1-8, with the
- * cognito pool from 1-7) — are still hand-relayed `Stack` classes (`LogsStream`/`AuthZ`) that take
- * the upstream ARN as a string prop. The consumer-side wiring (re-point those constructs onto these
- * reads) lands when each is extracted into a kit `Construct` in 1-5/1-6/1-7/1-8; doing it here would
- * regress 1-9's zero-drift equivalence and collide with that extraction. So the writers exist (the
- * `…Composed` builders publish), and the readers exist here, but the legacy stacks are not yet wired
+ * These resolvers are forward-scaffolding: the firehose and lambda-authorizer constructs still take
+ * the upstream ARN as a string prop; they are re-pointed onto these SSM reads when each is extracted
+ * into a kit `Construct`. Wiring the legacy stacks here would regress the zero-drift equivalence, so
+ * the consumer-side wiring lands with those construct-extraction stories. The writers exist (the
+ * `…Composed` builders publish) and the readers exist here, but the legacy stacks are not yet wired
  * to them.
  */
 export const resolveLogsBucketArn = (scope: cdk.Stack, tenant: string): string =>
