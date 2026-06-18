@@ -6,7 +6,7 @@
  * diverges; a divergence fails the release with a report naming the divergent piece and the
  * disagreeing channel(s).
  */
-import { ChannelModel, Divergence, GateResult } from './model'
+import { ChannelModel, Divergence, GateResult, OAuthConfig } from './model'
 import {
   compareGrants,
   compareGraph,
@@ -16,16 +16,31 @@ import {
 } from './compare'
 import { checkOAuthConformance } from './oauth-conformance'
 
+/**
+ * Every OAuth configuration a channel emits, for the conformance check. A channel reduced from a
+ * real artifact carries one config per client in {@link ChannelModel.oauthByClient}, so each client
+ * is checked; a hand-built model that sets only the single {@link ChannelModel.oauth} slot is honoured
+ * too. Both populated means the per-client map is authoritative (the single slot is its last entry).
+ */
+const oauthConfigsOf = (model: ChannelModel): readonly OAuthConfig[] => {
+  const byClient = model.oauthByClient !== undefined ? Object.values(model.oauthByClient) : []
+  if (byClient.length > 0) return byClient
+  return model.oauth === undefined ? [] : [model.oauth]
+}
+
 const oauthDivergences = (models: readonly ChannelModel[]): Divergence[] =>
   models.flatMap((model) =>
-    model.oauth === undefined
-      ? []
-      : checkOAuthConformance(model.oauth).map((issue) => ({
-          tier: 'oauth' as const,
-          detail: `${issue.rule}: ${issue.detail}`,
-          channels: [model.channel],
-        })),
+    oauthConfigsOf(model).flatMap((oauth) =>
+      checkOAuthConformance(oauth).map((issue) => ({
+        tier: 'oauth' as const,
+        detail: `${issue.rule}: ${issue.detail}`,
+        channels: [model.channel],
+      })),
+    ),
   )
+
+/** Every distribution channel the parity gate must compare; a set missing any of them is incomplete. */
+const REQUIRED_CHANNELS: readonly ChannelModel['channel'][] = ['cdk', 'cfn', 'terraform']
 
 /** Run the parity gate across the reduced channel models. */
 export const gate = (models: readonly ChannelModel[]): GateResult => {
@@ -38,6 +53,22 @@ export const gate = (models: readonly ChannelModel[]): GateResult => {
         tier: 'wellformed',
         detail: `the ${model.channel} artifact is not well-formed`,
         channels: [model.channel],
+      })),
+      warnings: [],
+    }
+  }
+
+  // An incomplete channel set cannot pass vacuously: with a channel absent there is nothing to
+  // diverge from, so a single-channel (or empty) run would otherwise report agreement it never proved.
+  const present = new Set(models.map((model) => model.channel))
+  const missing = REQUIRED_CHANNELS.filter((channel) => !present.has(channel))
+  if (missing.length > 0) {
+    return {
+      passed: false,
+      divergences: missing.map((channel) => ({
+        tier: 'wellformed',
+        detail: `the ${channel} channel is absent — the parity set is incomplete`,
+        channels: [channel],
       })),
       warnings: [],
     }

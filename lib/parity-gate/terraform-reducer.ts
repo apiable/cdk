@@ -16,7 +16,9 @@ import {
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
+  OidcDiscovery,
   PermissionGrant,
+  REGION_TOKEN,
   ResourceEdge,
   ResourceNode,
   SecretRef,
@@ -100,7 +102,9 @@ const collectValues = (kind: string, values: Record<string, unknown>): Record<st
     if (flows.length > 0) out['oauth-flows'] = [...flows].sort().join(',')
     const scopes = asStringArray(values.allowed_oauth_scopes)
     if (scopes.length > 0) out['oauth-scopes'] = [...scopes].sort().join(',')
-    if (values.generate_secret !== undefined) out['generate-secret'] = String(values.generate_secret)
+    // generate_secret defaults to false when omitted, so an explicit `false` and an omitted value
+    // describe the same client and must read identically rather than as present-vs-absent.
+    out['generate-secret'] = String(values.generate_secret ?? false)
   }
   if (kind === 'apigateway-authorizer') {
     const type = asString(values.type)
@@ -109,6 +113,12 @@ const collectValues = (kind: string, values: Record<string, unknown>): Record<st
     if (identitySource !== undefined) out['authorizer-identity-source'] = identitySource.split('.').pop() ?? identitySource
     const apiKeySource = asString(values.api_key_source)
     if (apiKeySource !== undefined) out['authorizer-api-key-source'] = apiKeySource
+  }
+  if (kind === 'cognito-resource-server') {
+    const scopeNames = asArray(values.scope)
+      .map((scope) => asString(asRecord(scope).scope_name))
+      .filter((name): name is string => name !== undefined)
+    out['resource-server-scopes'] = [...new Set(scopeNames)].sort().join(',')
   }
   return out
 }
@@ -132,11 +142,26 @@ const collectSecrets = (values: Record<string, unknown>): SecretRef[] => {
     }))
 }
 
-const oauthFrom = (values: Record<string, unknown>): OAuthConfig | undefined => {
+const oauthFrom = (values: Record<string, unknown>, discovery?: OidcDiscovery): OAuthConfig | undefined => {
   const flows = asStringArray(values.allowed_oauth_flows)
   const scopes = asStringArray(values.allowed_oauth_scopes)
   if (flows.length === 0 && scopes.length === 0) return undefined
-  return { flows: [...flows].sort(), scopes: [...scopes].sort() }
+  return { flows: [...flows].sort(), scopes: [...scopes].sort(), ...(discovery !== undefined ? { discovery } : {}) }
+}
+
+/**
+ * The OIDC discovery document for a Cognito user pool, derived from the channel-stable pool ref, the
+ * deployed region, and the hosted-UI domain prefix when an `aws_cognito_user_pool_domain` is planned
+ * alongside. Mirrors the CloudFormation reducer's derivation so the two channels' discovery documents
+ * compare equal for an equivalent pool, and {@link checkDiscovery} runs against the real channel.
+ */
+const cognitoDiscovery = (poolName: string, region: string | undefined, domainPrefix: string | undefined): OidcDiscovery => {
+  const regionToken = region ?? REGION_TOKEN
+  const issuer = `https://cognito-idp.${regionToken}.amazonaws.com/${poolName}`
+  const base = { issuer, jwksUri: `${issuer}/.well-known/jwks.json`, bearerMethod: 'header' as const }
+  if (domainPrefix === undefined) return base
+  const hosted = `https://${domainPrefix}.auth.${regionToken}.amazoncognito.com`
+  return { ...base, authorizationEndpoint: `${hosted}/oauth2/authorize`, tokenEndpoint: `${hosted}/oauth2/token` }
 }
 
 const lambdaPermissionGrant = (values: Record<string, unknown>, region: string | undefined): PermissionGrant => {
@@ -164,17 +189,24 @@ const referencedAddress = (reference: string, addresses: ReadonlySet<string>): {
 }
 
 const referencesOf = (expression: unknown, addresses: ReadonlySet<string>): { address: string; attr: string }[] => {
-  const seen = new Set<string>()
-  const hits: { address: string; attr: string }[] = []
+  // A reference list names both `<addr>.<attr>` and the bare `<addr>`, in no guaranteed order; keep
+  // one edge per address, preferring the named attribute over the bare `ref` so the edge attribute
+  // does not flip with the array order. Among named attributes the longest (most specific) wins.
+  const attrByAddress = new Map<string, string>()
+  const order: string[] = []
   for (const reference of asStringArray(asRecord(expression).references)) {
     const hit = referencedAddress(reference, addresses)
-    // A reference list names both `<addr>.<attr>` and the bare `<addr>`; keep one edge per address.
-    if (hit !== undefined && !seen.has(hit.address)) {
-      seen.add(hit.address)
-      hits.push(hit)
+    if (hit === undefined) continue
+    const current = attrByAddress.get(hit.address)
+    if (current === undefined) {
+      order.push(hit.address)
+      attrByAddress.set(hit.address, hit.attr)
+      continue
     }
+    if (current === 'ref' && hit.attr !== 'ref') attrByAddress.set(hit.address, hit.attr)
+    else if (hit.attr !== 'ref' && current !== 'ref' && hit.attr.length > current.length) attrByAddress.set(hit.address, hit.attr)
   }
-  return hits
+  return order.map((address) => ({ address, attr: attrByAddress.get(address) ?? 'ref' }))
 }
 
 /** Reduce parsed `terraform show -json` output into a {@link ChannelModel}. */
@@ -201,6 +233,32 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     refToNode.set(res.address, nodeRef(kind, discriminatorFor(kind, res.values, region)))
   }
 
+  // A plan leaves a computed user_pool_id unknown in planned_values, so the cognito reference graph
+  // (and the pool a client's discovery document is derived from) is read from the configuration's
+  // reference expressions, the same source the role/function edges already come from.
+  const configResources = asArray(asRecord(asRecord(root.configuration).root_module).resources)
+  const poolRefByClientAddress = new Map<string, string>()
+  const domainPrefixByPoolRef = new Map<string, string>()
+  for (const entry of configResources) {
+    const record = asRecord(entry)
+    const address = asString(record.address)
+    if (address === undefined || !addresses.has(address)) continue
+    const kind = kindByAddress.get(address)
+    const expressions = asRecord(record.expressions)
+    if (kind === 'cognito-user-pool-client') {
+      const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
+      if (poolTarget !== undefined) poolRefByClientAddress.set(address, refToNode.get(poolTarget.address) ?? poolTarget.address)
+    }
+    if (kind === 'cognito-user-pool-domain') {
+      const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
+      const domainResource = resources.find((candidate) => candidate.address === address)
+      const domain = domainResource !== undefined ? asString(domainResource.values.domain) : undefined
+      if (poolTarget !== undefined && domain !== undefined) {
+        domainPrefixByPoolRef.set(refToNode.get(poolTarget.address) ?? poolTarget.address, domain)
+      }
+    }
+  }
+
   const nodes: ResourceNode[] = []
   const edges: ResourceEdge[] = []
   let values: Record<string, string> = {}
@@ -208,6 +266,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const grants: PermissionGrant[] = []
   const secrets: SecretRef[] = []
   let oauth: OAuthConfig | undefined
+  const oauthByClient: Record<string, OAuthConfig> = {}
 
   for (const res of resources) {
     const kind = kindByAddress.get(res.address) ?? res.type
@@ -227,21 +286,52 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       grants.push(...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline'))
     }
     if (kind === 'lambda-permission') grants.push(lambdaPermissionGrant(res.values, region))
-    const clientOauth = kind === 'cognito-user-pool-client' ? oauthFrom(res.values) : undefined
-    if (clientOauth !== undefined) oauth = clientOauth
+    if (kind === 'cognito-user-pool-client') {
+      const poolRef = poolRefByClientAddress.get(res.address)
+      const poolName = poolRef !== undefined && poolRef.startsWith('cognito-user-pool:') ? poolRef.slice('cognito-user-pool:'.length) : poolRef ?? 'pool'
+      const clientOauth = oauthFrom(res.values, cognitoDiscovery(poolName, region, poolRef !== undefined ? domainPrefixByPoolRef.get(poolRef) : undefined))
+      if (clientOauth !== undefined) {
+        oauthByClient[ref] = clientOauth
+        oauth = clientOauth
+      }
+    }
   }
 
   // Edges + output nodes come from the configuration's reference expressions.
-  const configResources = asArray(asRecord(asRecord(root.configuration).root_module).resources)
   for (const entry of configResources) {
     const record = asRecord(entry)
     const address = asString(record.address)
     if (address === undefined || !addresses.has(address)) continue
+    const kind = canonicalTfKind(asString(record.type) ?? '')
     const expressions = asRecord(record.expressions)
     const from = refToNode.get(address) ?? address
-    const relation = canonicalTfKind(asString(record.type) ?? '') === 'iam-inline-policy' ? 'attached-to-role' : 'depends-on'
+    const relation = kind === 'iam-inline-policy' ? 'attached-to-role' : 'depends-on'
     for (const target of referencesOf(expressions.role ?? expressions.function_name, addresses)) {
       edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation })
+    }
+    // The cognito reference edges: a client/resource-server→pool, a pool→pre-token function, and an
+    // authorizer→rest-api/pool binding, so a resource bound to a different (or no) pool diverges.
+    if (kind === 'cognito-user-pool-client' || kind === 'cognito-resource-server') {
+      for (const target of referencesOf(expressions.user_pool_id, addresses)) {
+        edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'bound-to-pool' })
+      }
+    }
+    if (kind === 'cognito-user-pool') {
+      const lambdaConfig = block(expressions.lambda_config)
+      // The legacy `pre_token_generation` carries the function reference directly; the versioned
+      // `pre_token_generation_config` nests it under `lambda_arn` (itself a single-element block).
+      const preTokenRef = lambdaConfig.pre_token_generation ?? block(lambdaConfig.pre_token_generation_config).lambda_arn
+      for (const target of referencesOf(preTokenRef, addresses)) {
+        edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'pre-token-generation' })
+      }
+    }
+    if (kind === 'apigateway-authorizer') {
+      for (const target of referencesOf(expressions.rest_api_id, addresses)) {
+        edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'authorizes-api' })
+      }
+      for (const target of referencesOf(expressions.provider_arns, addresses)) {
+        edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'bound-to-pool' })
+      }
     }
   }
 
@@ -255,5 +345,15 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     edges.push({ from: outputRef, to: refToNode.get(target.address) ?? target.address, relation: `exports:${target.attr}` })
   }
 
-  return { channel, wellFormed, graph: { nodes, edges }, values, grants, secrets, oauth, cosmetics }
+  return {
+    channel,
+    wellFormed,
+    graph: { nodes, edges },
+    values,
+    grants,
+    secrets,
+    oauth,
+    ...(Object.keys(oauthByClient).length > 0 ? { oauthByClient } : {}),
+    cosmetics,
+  }
 }

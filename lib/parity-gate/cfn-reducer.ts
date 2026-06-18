@@ -15,6 +15,7 @@ import {
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
+  OidcDiscovery,
   PermissionGrant,
   REGION_TOKEN,
   ResourceEdge,
@@ -128,7 +129,9 @@ const collectValues = (kind: string, props: Record<string, unknown>): Record<str
     if (flows.length > 0) values['oauth-flows'] = [...flows].sort().join(',')
     const scopes = asStringArray(props.AllowedOAuthScopes)
     if (scopes.length > 0) values['oauth-scopes'] = [...scopes].sort().join(',')
-    if (props.GenerateSecret !== undefined) values['generate-secret'] = String(props.GenerateSecret)
+    // GenerateSecret defaults to false when omitted, so an explicit `false` and an omitted value
+    // describe the same client and must read identically rather than as present-vs-absent.
+    values['generate-secret'] = String(props.GenerateSecret ?? false)
   }
   if (kind === 'apigateway-authorizer') {
     const type = asString(props.Type)
@@ -137,6 +140,12 @@ const collectValues = (kind: string, props: Record<string, unknown>): Record<str
     if (identitySource !== undefined) values['authorizer-identity-source'] = identitySource.split('.').pop() ?? identitySource
     const apiKeySource = asString(props.ApiKeySource ?? props.AuthorizerApiKeySource)
     if (apiKeySource !== undefined) values['authorizer-api-key-source'] = apiKeySource
+  }
+  if (kind === 'cognito-resource-server') {
+    const scopeNames = asArray(props.Scopes)
+      .map((scope) => asString(asRecord(scope).ScopeName))
+      .filter((name): name is string => name !== undefined)
+    values['resource-server-scopes'] = [...new Set(scopeNames)].sort().join(',')
   }
   return values
 }
@@ -160,11 +169,28 @@ const collectSecrets = (props: Record<string, unknown>): SecretRef[] => {
     }))
 }
 
-const oauthFrom = (props: Record<string, unknown>): OAuthConfig | undefined => {
+const oauthFrom = (props: Record<string, unknown>, discovery?: OidcDiscovery): OAuthConfig | undefined => {
   const flows = asStringArray(props.AllowedOAuthFlows)
   const scopes = asStringArray(props.AllowedOAuthScopes)
   if (flows.length === 0 && scopes.length === 0) return undefined
-  return { flows: [...flows].sort(), scopes: [...scopes].sort() }
+  return { flows: [...flows].sort(), scopes: [...scopes].sort(), ...(discovery !== undefined ? { discovery } : {}) }
+}
+
+/**
+ * The OIDC discovery document for a Cognito user pool, derived from the channel-stable pool ref,
+ * the deployed region, and the hosted-UI domain prefix when a {@link AWS::Cognito::UserPoolDomain}
+ * is published alongside. The issuer is the Cognito IdP endpoint for the pool; the authorize/token
+ * endpoints are the hosted-UI domain's; the JWKS is the issuer's well-known path. Returning it for
+ * a real client makes {@link checkDiscovery} run against the channel's own configuration rather than
+ * only a synthetic fixture.
+ */
+const cognitoDiscovery = (poolRef: string, region: string | undefined, domainPrefix: string | undefined): OidcDiscovery => {
+  const regionToken = region ?? REGION_TOKEN
+  const issuer = `https://cognito-idp.${regionToken}.amazonaws.com/${poolRef}`
+  const base = { issuer, jwksUri: `${issuer}/.well-known/jwks.json`, bearerMethod: 'header' as const }
+  if (domainPrefix === undefined) return base
+  const hosted = `https://${domainPrefix}.auth.${regionToken}.amazoncognito.com`
+  return { ...base, authorizationEndpoint: `${hosted}/oauth2/authorize`, tokenEndpoint: `${hosted}/oauth2/token` }
 }
 
 const lambdaPermissionGrant = (
@@ -211,6 +237,18 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     refToNode.set(id, nodeRef(kind, discriminatorFor(kind, res.properties, resolve, region)))
   }
 
+  // The hosted-UI domain prefix per pool node ref, so a client's discovery document can carry the
+  // pool's authorize/token endpoints. A UserPoolDomain references its pool via UserPoolId.
+  const domainByPoolRef = new Map<string, string>()
+  for (const res of Object.values(resources)) {
+    if (canonicalCfnKind(res.type) !== 'cognito-user-pool-domain') continue
+    const domain = asString(res.properties.Domain)
+    if (domain === undefined) continue
+    for (const target of resourceRefsIn(res.properties.UserPoolId, resourceIds)) {
+      domainByPoolRef.set(refToNode.get(target.id) ?? target.id, domain)
+    }
+  }
+
   const nodes: ResourceNode[] = []
   const edges: ResourceEdge[] = []
   let values: Record<string, string> = {}
@@ -218,6 +256,16 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
   const grants: PermissionGrant[] = []
   const secrets: SecretRef[] = []
   let oauth: OAuthConfig | undefined
+  const oauthByClient: Record<string, OAuthConfig> = {}
+
+  // The cognito reference edges, alongside the inline-policy / lambda-permission / output edges: a
+  // pool→pre-token function, a client/resource-server→pool, and an authorizer→rest-api binding all
+  // become graph edges, so a resource bound to a different (or no) pool diverges on the graph tier.
+  const cognitoEdge = (from: string, attribute: unknown, relation: string): void => {
+    for (const target of resourceRefsIn(attribute, resourceIds)) {
+      edges.push({ from, to: refToNode.get(target.id) ?? target.id, relation })
+    }
+  }
 
   for (const [id, res] of Object.entries(resources)) {
     const kind = canonicalCfnKind(res.type)
@@ -247,8 +295,30 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
         edges.push({ from: ref, to: refToNode.get(target.id) ?? target.id, relation: 'invokes' })
       }
     }
-    const clientOauth = kind === 'cognito-user-pool-client' ? oauthFrom(res.properties) : undefined
-    if (clientOauth !== undefined) oauth = clientOauth
+    if (kind === 'cognito-user-pool') {
+      cognitoEdge(ref, asRecord(res.properties.LambdaConfig).PreTokenGeneration, 'pre-token-generation')
+      cognitoEdge(ref, asRecord(asRecord(res.properties.LambdaConfig).PreTokenGenerationConfig).LambdaArn, 'pre-token-generation')
+    }
+    if (kind === 'cognito-user-pool-client') {
+      cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
+    }
+    if (kind === 'cognito-resource-server') {
+      cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
+    }
+    if (kind === 'apigateway-authorizer') {
+      cognitoEdge(ref, res.properties.RestApiId, 'authorizes-api')
+      cognitoEdge(ref, res.properties.ProviderARNs, 'bound-to-pool')
+    }
+    if (kind === 'cognito-user-pool-client') {
+      const poolTargets = resourceRefsIn(res.properties.UserPoolId, resourceIds)
+      const poolRef = poolTargets.length > 0 ? refToNode.get(poolTargets[0].id) ?? poolTargets[0].id : nodeRef('cognito-user-pool', 'pool')
+      const poolName = poolRef.startsWith('cognito-user-pool:') ? poolRef.slice('cognito-user-pool:'.length) : poolRef
+      const clientOauth = oauthFrom(res.properties, cognitoDiscovery(poolName, region, domainByPoolRef.get(poolRef)))
+      if (clientOauth !== undefined) {
+        oauthByClient[ref] = clientOauth
+        oauth = clientOauth
+      }
+    }
   }
 
   for (const [name, spec] of Object.entries(asRecord(root.Outputs))) {
@@ -262,5 +332,15 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     void name
   }
 
-  return { channel, wellFormed, graph: { nodes, edges }, values, grants, secrets, oauth, cosmetics }
+  return {
+    channel,
+    wellFormed,
+    graph: { nodes, edges },
+    values,
+    grants,
+    secrets,
+    oauth,
+    ...(Object.keys(oauthByClient).length > 0 ? { oauthByClient } : {}),
+    cosmetics,
+  }
 }

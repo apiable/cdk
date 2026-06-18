@@ -16,6 +16,20 @@ const RFC6749_GRANT_FLOWS: ReadonlySet<string> = new Set([
   'refresh_token',
 ])
 
+/**
+ * Cognito's `AllowedOAuthFlows` vocabulary mapped to the RFC 6749 grant-type names: `code` is the
+ * authorization-code grant and `implicit` the implicit grant. The value tier compares the raw
+ * emitted spelling (both channels emit `code`, so they still match by value); this mapping runs only
+ * at the conformance boundary so a real Cognito authorization-code client is recognised as a
+ * registered grant type rather than false-flagged. A flow already in the RFC spelling passes through.
+ */
+const COGNITO_FLOW_TO_RFC6749: Readonly<Record<string, string>> = {
+  code: 'authorization_code',
+  implicit: 'implicit',
+}
+
+const toRfc6749Flow = (flow: string): string => COGNITO_FLOW_TO_RFC6749[flow] ?? flow
+
 export interface ConformanceIssue {
   readonly rule: 'RFC6749' | 'RFC6750' | 'OIDC1.0'
   readonly detail: string
@@ -56,7 +70,7 @@ export const checkOAuthConformance = (oauth: OAuthConfig): ConformanceIssue[] =>
     issues.push({ rule: 'RFC6749', detail: 'no OAuth2 flow is declared' })
   }
   for (const flow of oauth.flows) {
-    if (!RFC6749_GRANT_FLOWS.has(flow)) {
+    if (!RFC6749_GRANT_FLOWS.has(toRfc6749Flow(flow))) {
       issues.push({ rule: 'RFC6749', detail: `"${flow}" is not a registered OAuth2 grant type` })
     }
   }

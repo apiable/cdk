@@ -117,6 +117,13 @@ export interface ChannelModel {
   readonly grants: readonly PermissionGrant[]
   readonly secrets: readonly SecretRef[]
   readonly oauth?: OAuthConfig
+  /**
+   * Every OAuth client's emitted configuration, keyed by the client's channel-stable ref, so a
+   * channel that declares more than one client runs the conformance check on each — a single
+   * {@link oauth} slot would conformance-check only the last client reduced. The value-tier
+   * `oauth-flows`/`oauth-scopes` rows are already namespaced per client ref independently.
+   */
+  readonly oauthByClient?: Readonly<Record<string, OAuthConfig>>
   /** Cosmetic settings — descriptions, runtime patch revisions, log retention — only ever warn. */
   readonly cosmetics: Readonly<Record<string, string>>
 }

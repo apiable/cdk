@@ -83,7 +83,20 @@ const tfCognitoPoolLegacy = (): unknown => ({
       ],
     },
   },
-  configuration: { root_module: { resources: [], outputs: {} } },
+  // The pool references the in-stack function (the same edge the CDK/CFN channels build via GetAtt),
+  // so all three attach the customisation function and only the legacy VERSION value diverges.
+  configuration: {
+    root_module: {
+      resources: [
+        {
+          address: 'aws_cognito_user_pool.authz',
+          type: 'aws_cognito_user_pool',
+          expressions: { lambda_config: [{ pre_token_generation: { references: ['aws_lambda_function.pretokengen.arn', 'aws_lambda_function.pretokengen'] } }] },
+        },
+      ],
+      outputs: {},
+    },
+  },
 })
 
 // ── A lambda carrying a wired secret, for the secret-handling boundary ────────────────────────

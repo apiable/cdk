@@ -94,6 +94,30 @@ jobs:
           fi
           grep -q '12-digit' plan-err.log
 
+      # F1 — ground-truth the Terraform leg: regenerate `terraform show -json` from a fresh plan and
+      # assert it reduces to the SAME parity model as the committed fixture (by meaning, not a byte
+      # diff). A credential-less plan needs the provider's configure-time validation skipped, injected
+      # here as a CI-only override so the committed module stays clean; the harness fails the gate if
+      # the committed fixture has drifted from the fresh plan.
+      - name: terraform regen ground-truths the committed fixture (gateway-role)
+        working-directory: terraform/apiable-gateway-role
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: |
+          cat > ci_provider_override.tf <<'EOF'
+          provider "aws" {
+            region                      = "eu-central-1"
+            skip_credentials_validation = true
+            skip_requesting_account_id  = true
+            skip_metadata_api_check     = true
+          }
+          EOF
+          terraform plan -input=false -refresh=false -var region=${{ env.AWS_REGION }} -var trust_account=034444869755 -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f ci_provider_override.tf tfplan.bin
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-gateway-role-show.json ${{ env.AWS_REGION }}
+
       - name: terraform validate (logs-bucket module)
         working-directory: terraform/apiable-logs-bucket
         run: |
