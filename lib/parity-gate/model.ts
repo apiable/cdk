@@ -126,6 +126,13 @@ export interface ChannelModel {
   readonly oauthByClient?: Readonly<Record<string, OAuthConfig>>
   /** Cosmetic settings — descriptions, runtime patch revisions, log retention — only ever warn. */
   readonly cosmetics: Readonly<Record<string, string>>
+  /**
+   * The node refs more than one DISTINCT primary resource collapsed onto WITHIN this channel — an
+   * internal identity collision that clobbers the losers' load-bearing values last-write-wins. Empty
+   * (and so omitted) in a sound channel; a non-empty entry is turned into an explicit divergence by
+   * the gate so the collision can never pass as parity. Optional so a hand-built model carries none.
+   */
+  readonly identityCollisions?: readonly string[]
 }
 
 /** The tier a divergence was found on, for the report. */
@@ -214,6 +221,23 @@ export const accountIdsIn = (value: string): readonly string[] => value.match(AC
  */
 export const namespaceByRef = (values: LoadBearingValues, ref: string): LoadBearingValues =>
   Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}:${ref}`, value]))
+
+/**
+ * The within-channel identity collisions among a channel's primary resources: a node ref that more
+ * than one DISTINCT primary resolved to. Because a primary's value rows are keyed by its ref
+ * ({@link namespaceByRef}), a collision clobbers the losers' load-bearing values last-write-wins, so
+ * the gate surfaces each as an explicit divergence — a widening hidden behind the clobber can never
+ * pass as parity. The caller supplies one ref per primary resource (the pooled attached kinds are
+ * excluded, they share a parent-anchored node by design); a ref appearing more than once collides.
+ */
+export const identityCollisionsOf = (primaryNodeRefs: readonly string[]): string[] => {
+  const countByRef = new Map<string, number>()
+  for (const ref of primaryNodeRefs) countByRef.set(ref, (countByRef.get(ref) ?? 0) + 1)
+  return [...countByRef.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([ref, count]) => `${ref} (${count} resources)`)
+    .sort()
+}
 
 const POOL_KIND_PREFIX = 'cognito-user-pool:'
 

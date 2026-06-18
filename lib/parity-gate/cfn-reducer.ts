@@ -14,6 +14,7 @@ import {
   ChannelModel,
   cognitoDiscovery,
   grantedAccountsValue,
+  identityCollisionsOf,
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
@@ -34,6 +35,7 @@ import {
   missingDeclaredId,
   nodeRef,
   policyServices,
+  PRIMARY_KINDS,
 } from './canonical'
 import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asString, asStringArray, isRecord } from './narrow'
@@ -348,6 +350,15 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     }
   }
 
+  // The within-channel primary identity collisions: two distinct primaries that resolved to one node
+  // ref clobber each other's load-bearing values, so the gate must fail on the collision itself rather
+  // than silently certify the surviving (last-written) value as parity.
+  const identityCollisions = identityCollisionsOf(
+    Object.entries(resources)
+      .filter(([, res]) => PRIMARY_KINDS.has(canonicalCfnKind(res.type)))
+      .map(([id]) => refToNode.get(id) ?? ''),
+  )
+
   // The hosted-UI domain prefix per pool node ref, so a client's discovery document can carry the
   // pool's authorize/token endpoints. A UserPoolDomain references its pool via UserPoolId.
   const domainByPoolRef = new Map<string, string>()
@@ -478,5 +489,6 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     oauth,
     ...(Object.keys(oauthByClient).length > 0 ? { oauthByClient } : {}),
     cosmetics,
+    ...(identityCollisions.length > 0 ? { identityCollisions } : {}),
   }
 }

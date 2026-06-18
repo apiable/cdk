@@ -11,7 +11,7 @@ const TAG = 'apiable:logical-id'
 const refsOfKind = (model: ChannelModel, kind: string): string[] =>
   model.graph.nodes.filter((node) => node.kind === kind).map((node) => node.ref)
 
-describe('013-1-18 TA — declared-id read mechanics per channel', () => {
+describe('declared-id identity (TA) — read mechanics per channel', () => {
   it('reads a user pool id from the UserPoolTags map (CFN) and a function id from the Tags list', () => {
     const model = reduceCloudFormation(
       {
@@ -38,6 +38,20 @@ describe('013-1-18 TA — declared-id read mechanics per channel', () => {
     expect(refsOfKind(model, 's3-bucket')).toEqual(['s3-bucket:logs-bucket'])
   })
 
+  it('reads the declared id from tags_all per-tag even when the resource carries an empty tags block', () => {
+    // an empty `tags: {}` is present-but-without-the-key; a whole-map fallback would miss the id, so the
+    // read is per-tag and still reaches tags_all
+    const model = reduceTerraformShowJson(
+      {
+        planned_values: { root_module: { resources: [{ address: 'aws_s3_bucket.b', type: 'aws_s3_bucket', values: { bucket: 'apiable-logs-acme', tags: {}, tags_all: { [TAG]: 'logs-bucket' } } }] } },
+        configuration: { root_module: { resources: [], outputs: {} } },
+      },
+      'terraform',
+      'eu-central-1',
+    )
+    expect(refsOfKind(model, 's3-bucket')).toEqual(['s3-bucket:logs-bucket'])
+  })
+
   it('treats a present-but-empty declared id as missing on an enforced primary (no bare-kind collapse)', () => {
     const model = reduceCloudFormation(
       { Resources: { Role: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'r', Tags: [{ Key: TAG, Value: '' }] } } } },
@@ -47,7 +61,7 @@ describe('013-1-18 TA — declared-id read mechanics per channel', () => {
   })
 })
 
-describe('013-1-18 TA — enforcement scope and the missing sentinel', () => {
+describe('declared-id identity (TA) — enforcement scope and the missing sentinel', () => {
   it('gives two tag-less enforced roles in one channel distinct per-local-id sentinels, never one collapsed node', () => {
     const model = reduceCloudFormation(
       {
@@ -71,7 +85,7 @@ describe('013-1-18 TA — enforcement scope and the missing sentinel', () => {
   })
 })
 
-describe('013-1-18 TA — bucket primary value clobber closed by the declared id', () => {
+describe('declared-id identity (TA) — bucket primary value clobber closed by the declared id', () => {
   it('catches a widened write grant on the second of two buckets that collide by tenant name', () => {
     const arnRoot = (account: string): string => `arn:aws:iam::${account}:root`
     // two buckets whose names differ only by tenant segment, each with its own resource policy; the

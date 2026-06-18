@@ -39,6 +39,21 @@ const oauthDivergences = (models: readonly ChannelModel[]): Divergence[] =>
     ),
   )
 
+/**
+ * A within-channel identity collision — two distinct primaries reduced to one node ref — makes that
+ * channel's load-bearing values unreliable: the loser's value was clobbered last-write-wins, so a
+ * widening on it is invisible. Each is surfaced as an explicit divergence the gate fails on, naming
+ * the colliding ref and the channel, rather than letting the surviving value certify a false parity.
+ */
+const identityCollisionDivergences = (models: readonly ChannelModel[]): Divergence[] =>
+  models.flatMap((model) =>
+    (model.identityCollisions ?? []).map((collision) => ({
+      tier: 'graph' as const,
+      detail: `duplicate declared identity ${collision} in channel ${model.channel}`,
+      channels: [model.channel],
+    })),
+  )
+
 /** Every distribution channel the parity gate must compare; a set missing any of them is incomplete. */
 const REQUIRED_CHANNELS: readonly ChannelModel['channel'][] = ['cdk', 'cfn', 'terraform']
 
@@ -75,6 +90,7 @@ export const gate = (models: readonly ChannelModel[]): GateResult => {
   }
 
   const divergences: Divergence[] = [
+    ...identityCollisionDivergences(models),
     ...compareGraph(models),
     ...compareValues(models),
     ...compareGrants(models),

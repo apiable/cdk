@@ -158,6 +158,8 @@ describe('013-1-18 parity check — declared-identity discriminator', () => {
       reduceCloudFormation(twoPermissions(false), 'terraform'), // the second (events) permission left unscoped
     ])
     expect(result.passed).toBe(false)
+    // the unscoped second permission is caught on the permission (grant) tier — each invoke grant is
+    // keyed by its principal, so the divergence surfaces there, not through the node-ref parent anchoring
     const divergence = result.divergences.find((entry) => entry.tier === 'permission' && entry.detail.includes('events.amazonaws.com'))
     expect(divergence?.channels).toEqual(['terraform'])
   })

@@ -342,3 +342,103 @@ describe('parity gate — mixed AWS + federated trust in one statement', () => {
     expect(model.values[TRUST_ACCOUNT_KEY]).toBe('111111111111,222222222222')
   })
 })
+
+describe('parity gate — within-channel identity collision (a primary id must be unique per channel)', () => {
+  it('fails when two roles share one declared id and the clobbered loser is widened to a foreign trust account', () => {
+    // Two distinct roles carry the SAME declared id, so both reduce to iam-role:dup and the second
+    // (last-written) clobbers the first's role-trust-account value last-write-wins. RoleA is processed
+    // first, so it is the loser; widening RoleA in terraform is hidden behind RoleB's safe value (and
+    // the grant principal tokenises the account, so the permission tier sees nothing). Only catching the
+    // within-channel collision itself surfaces the escalation, which would otherwise ship parity-OK.
+    const twoRolesOneId = (roleATrust: string): unknown => ({
+      Resources: {
+        RoleA: {
+          Type: 'AWS::IAM::Role',
+          Properties: {
+            Tags: [{ Key: 'apiable:logical-id', Value: 'dup' }],
+            AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${roleATrust}:root` }, Action: 'sts:AssumeRole' }] },
+          },
+        },
+        RoleB: {
+          Type: 'AWS::IAM::Role',
+          Properties: {
+            Tags: [{ Key: 'apiable:logical-id', Value: 'dup' }],
+            AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::222222222222:root' }, Action: 'sts:AssumeRole' }] },
+          },
+        },
+      },
+    })
+    const result = gate([
+      reduceCloudFormation(twoRolesOneId('111111111111'), 'cdk'),
+      reduceCloudFormation(twoRolesOneId('111111111111'), 'cfn'),
+      reduceCloudFormation(twoRolesOneId('999988887777'), 'terraform'), // RoleA — the clobbered loser — widened
+    ])
+    expect(result.passed).toBe(false)
+    const collision = result.divergences.find((entry) => entry.detail.includes('iam-role:dup'))
+    expect(collision).toBeDefined()
+  })
+
+  it('fails when two resource-servers share one Identifier on different pools and the clobbered loser is scope-widened', () => {
+    // Same-Identifier resource-servers on different pools are two distinct resources, but the engine keys
+    // a resource-server by its Identifier alone, so they collapse onto one node and the second clobbers
+    // the first's resource-server-scopes. RsA (the loser) is scope-widened in terraform but hidden behind
+    // RsB's value; the within-channel collision guard is what catches it.
+    const twoResourceServers = (firstScopes: readonly string[]): unknown => ({
+      Resources: {
+        PoolA: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-a' } },
+        PoolB: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-b' } },
+        RsA: {
+          Type: 'AWS::Cognito::UserPoolResourceServer',
+          Properties: { UserPoolId: { Ref: 'PoolA' }, Identifier: 'https://api.apiable.io', Name: 'api', Scopes: firstScopes.map((scope) => ({ ScopeName: scope, ScopeDescription: scope })) },
+        },
+        RsB: {
+          Type: 'AWS::Cognito::UserPoolResourceServer',
+          Properties: { UserPoolId: { Ref: 'PoolB' }, Identifier: 'https://api.apiable.io', Name: 'api', Scopes: [{ ScopeName: 'read', ScopeDescription: 'read' }] },
+        },
+      },
+    })
+    const result = gate([
+      reduceCloudFormation(twoResourceServers(['read']), 'cdk'),
+      reduceCloudFormation(twoResourceServers(['read']), 'cfn'),
+      reduceCloudFormation(twoResourceServers(['read', 'admin']), 'terraform'), // RsA — the clobbered loser — scope-widened
+    ])
+    expect(result.passed).toBe(false)
+    const collision = result.divergences.find((entry) => entry.detail.includes('cognito-resource-server:https://api.apiable.io'))
+    expect(collision).toBeDefined()
+  })
+
+  it('fails on two user-pool clients that collapse onto one name within a channel (the other primary kind)', () => {
+    const twoClients: unknown = {
+      Resources: {
+        PoolA: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-a' } },
+        PoolB: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-b' } },
+        ClientA: { Type: 'AWS::Cognito::UserPoolClient', Properties: { UserPoolId: { Ref: 'PoolA' }, ClientName: 'web' } },
+        ClientB: { Type: 'AWS::Cognito::UserPoolClient', Properties: { UserPoolId: { Ref: 'PoolB' }, ClientName: 'web' } },
+      },
+    }
+    const result = gate([
+      reduceCloudFormation(twoClients, 'cdk'),
+      reduceCloudFormation(twoClients, 'cfn'),
+      reduceCloudFormation(twoClients, 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    expect(result.divergences.some((entry) => entry.detail.includes('cognito-user-pool-client:web'))).toBe(true)
+  })
+
+  it('does not flag the legitimate case where each channel carries the same id exactly once', () => {
+    // the same declared id appearing once per channel is the normal cross-channel identity, never a
+    // within-channel collision — the guard must stay silent so it raises no false divergence
+    const oneRole: unknown = {
+      Resources: {
+        Role: { Type: 'AWS::IAM::Role', Properties: { Tags: [{ Key: 'apiable:logical-id', Value: 'unique' }], AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } } },
+      },
+    }
+    const result = gate([
+      reduceCloudFormation(oneRole, 'cdk'),
+      reduceCloudFormation(oneRole, 'cfn'),
+      reduceCloudFormation(oneRole, 'terraform'),
+    ])
+    expect(result.passed).toBe(true)
+    expect(result.divergences.some((entry) => entry.detail.includes('duplicate declared identity'))).toBe(false)
+  })
+})

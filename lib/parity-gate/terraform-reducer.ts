@@ -15,6 +15,7 @@ import {
   ChannelModel,
   cognitoDiscovery,
   grantedAccountsValue,
+  identityCollisionsOf,
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
@@ -34,6 +35,7 @@ import {
   missingDeclaredId,
   nodeRef,
   policyServices,
+  PRIMARY_KINDS,
 } from './canonical'
 import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asScalarString, asString, asStringArray, isRecord } from './narrow'
@@ -65,11 +67,13 @@ interface TfResource {
   readonly values: Record<string, unknown>
 }
 
-/** The author-declared `apiable:logical-id` for a taggable primary, read from the resource's tags
- * (falling back to the provider-merged `tags_all`), or undefined when the tag is absent. */
+/** The author-declared `apiable:logical-id` for a taggable primary, read per-tag from the resource's
+ * own `tags` and falling back to the provider-merged `tags_all` for that one key — so an empty `tags: {}`
+ * block still reaches the id in `tags_all`. Undefined (an empty value included) when neither carries it. */
 const declaredLogicalId = (values: Record<string, unknown>): string | undefined => {
-  const tags = asRecord(values.tags ?? values.tags_all)
-  return asString(tags[DECLARED_ID_TAG]) || undefined
+  const tags = asRecord(values.tags)
+  const tagsAll = asRecord(values.tags_all)
+  return (asString(tags[DECLARED_ID_TAG]) ?? asString(tagsAll[DECLARED_ID_TAG])) || undefined
 }
 
 /** The sorted IAM service set an inline policy grants on — its channel-stable per-parent local key. */
@@ -377,6 +381,15 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     }
   }
 
+  // The within-channel primary identity collisions: two distinct primaries that resolved to one node
+  // ref clobber each other's load-bearing values, so the gate must fail on the collision itself rather
+  // than silently certify the surviving (last-written) value as parity.
+  const identityCollisions = identityCollisionsOf(
+    resources
+      .filter((res) => PRIMARY_KINDS.has(kindByAddress.get(res.address) ?? ''))
+      .map((res) => refToNode.get(res.address) ?? ''),
+  )
+
   // A grant resource that is one of this plan's S3 bucket ARNs reduces to that bucket's channel-stable
   // node ref (keeping any trailing object path), so a self-referential bucket ARN reconciles with the
   // CloudFormation `Fn::GetAtt` form instead of comparing a resolved literal against a logical id.
@@ -508,5 +521,6 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     oauth,
     ...(Object.keys(oauthByClient).length > 0 ? { oauthByClient } : {}),
     cosmetics,
+    ...(identityCollisions.length > 0 ? { identityCollisions } : {}),
   }
 }

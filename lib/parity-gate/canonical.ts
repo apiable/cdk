@@ -83,6 +83,21 @@ export const DECLARED_ID_KINDS: ReadonlySet<string> = new Set([
  */
 export const ENFORCED_DECLARED_ID_KINDS: ReadonlySet<string> = new Set(['iam-role', 's3-bucket'])
 
+/**
+ * The primary kinds whose node ref must be UNIQUE within a channel. A primary carries its own
+ * load-bearing value rows keyed by that ref, so two distinct primaries collapsing onto one ref would
+ * clobber each other last-write-wins and hide a widening on the loser. These are the taggable
+ * {@link DECLARED_ID_KINDS} plus the two cognito kinds identified by an author-declared natural key
+ * (the resource-server's Identifier, the client's name). The pooled attached kinds — inline policy,
+ * lambda permission, bucket policy, user-pool domain — are excluded: they legitimately share one
+ * parent-anchored node and carry no load-bearing value of their own to clobber.
+ */
+export const PRIMARY_KINDS: ReadonlySet<string> = new Set<string>([
+  ...DECLARED_ID_KINDS,
+  'cognito-resource-server',
+  'cognito-user-pool-client',
+])
+
 /** A sentinel marking a taggable primary that should carry a declared id but does not in this channel. */
 export const MISSING_DECLARED_ID = '∅:no-declared-logical-id'
 
