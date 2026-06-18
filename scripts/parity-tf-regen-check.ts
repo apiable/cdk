@@ -2,8 +2,8 @@
  * F1 — the Terraform leg's independent ground-truth. CI regenerates `terraform show -json` from a
  * fresh plan and this harness asserts it reduces to the SAME parity model as the committed reference
  * fixture — by meaning (the reduced graph + values + grants + oauth), never a byte-for-byte diff, so
- * tf/provider-version churn or resource reordering never trips it. A stale committed fixture (a model
- * that no longer matches the fresh plan) fails the gate, so the only independent-implementation
+ * tf/provider-version churn or resource reordering never trips it. A stale committed fixture (one
+ * whose model diverges from the fresh plan) fails the gate, so the only independent-implementation
  * channel cannot ship silently stale.
  *
  * Usage: ts-node scripts/parity-tf-regen-check.ts <fresh-show.json> <committed-fixture.json> [region]
