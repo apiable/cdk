@@ -9,16 +9,26 @@
  * The kinds of resource the explainer enumerates. A kind drives both how a resource is grouped in the
  * audit document and whether it has an AWS Console representation (see {@link consoleService}).
  *
+ * `bucket-policy` is a resource policy on a bucket — security-load-bearing because it carries the
+ * cross-account write grant the parity gate compares by value; the explainer models it as its own kind.
+ *
  * `resource-output` is a synthesized stack output (such as a role ARN) — an identifier the deployment
  * surfaces, not a console-addressable resource of its own.
+ *
+ * `other` carries a resource of a CloudFormation type the explainer does not model by name. It surfaces
+ * the raw `AWS::*` type (see {@link ResourceDescriptor.cfnType}) so an unmapped resource still appears
+ * in the audit rather than silently vanishing — the audit's accuracy guarantee is that nothing the
+ * construct creates is dropped.
  */
 export type ResourceKind =
   | 'iam-role'
   | 'iam-policy'
   | 'bucket'
+  | 'bucket-policy'
   | 'stream'
   | 'ssm-parameter'
   | 'resource-output'
+  | 'other'
 
 /**
  * A console deep-link shape derived from a resource's own kind and identity — never hand-written.
@@ -42,6 +52,14 @@ export interface ConsoleDeepLink {
 export interface ResourceDescriptor {
   /** What kind of resource this is. */
   readonly kind: ResourceKind
+  /**
+   * The raw CloudFormation type the descriptor was derived from (e.g. `AWS::S3::BucketPolicy`),
+   * carried for a resource of an unmodelled type so the audit names what it is even when {@link kind}
+   * is the generic `other`. Present on every resource derived from a synthesized CFN resource; absent
+   * on a {@link ResourceKind.resource-output} descriptor, which derives from a stack output, not a
+   * resource.
+   */
+  readonly cfnType?: string
   /**
    * Stable identity of the resource within the construct — its physical resource name where one is
    * fixed (e.g. an IAM role name), otherwise its synthesized logical id. Stable enough for the content

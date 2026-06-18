@@ -17,11 +17,12 @@ interface SynthesizedTemplate {
   readonly Outputs?: Record<string, { Value?: unknown; Description?: unknown }>
 }
 
-/** CloudFormation resource types the explainer enumerates, mapped to the descriptor kind. */
+/** CloudFormation resource types the explainer models by name; an unmapped type surfaces as `other`. */
 const RESOURCE_KIND_BY_CFN_TYPE: Record<string, ResourceKind> = {
   'AWS::IAM::Role': 'iam-role',
   'AWS::IAM::Policy': 'iam-policy',
   'AWS::S3::Bucket': 'bucket',
+  'AWS::S3::BucketPolicy': 'bucket-policy',
   'AWS::KinesisFirehose::DeliveryStream': 'stream',
   'AWS::SSM::Parameter': 'ssm-parameter',
 }
@@ -31,11 +32,26 @@ const CONSOLE_SERVICE_BY_KIND: Partial<Record<ResourceKind, string>> = {
   'iam-role': 'iam',
   'iam-policy': 'iam',
   bucket: 's3',
+  'bucket-policy': 's3',
   stream: 'firehose',
   'ssm-parameter': 'systems-manager',
 }
 
 const KEY_SEGMENT_PATTERN = /[^a-z0-9]+/g
+
+const COMPONENT_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/**
+ * Validate the kit-component segment the content keys are namespaced under. A malformed component would
+ * silently produce wrong, unaddressable content keys, so it fails loudly here — mirroring the
+ * `assertSegment` guard the ssm-composition key builder applies to its path segments.
+ */
+const assertComponent = (component: string): string => {
+  if (!COMPONENT_PATTERN.test(component)) {
+    throw new Error(`component "${component}" must be a non-empty lower-kebab path segment`)
+  }
+  return component
+}
 
 /** Lower-kebab a value into a single content-key segment. */
 const toKeySegment = (value: string): string =>
@@ -88,14 +104,18 @@ const describeResource = (
   logicalId: string,
   cfnType: string,
   properties: Record<string, unknown>,
-): ResourceDescriptor | undefined => {
-  const kind = RESOURCE_KIND_BY_CFN_TYPE[cfnType]
-  if (!kind) return undefined
+): ResourceDescriptor => {
+  // An unmapped CFN type surfaces as a generic `other` descriptor carrying the raw type rather than
+  // vanishing — the audit's accuracy guarantee is that nothing the construct creates is dropped. This
+  // mirrors the raw-name fallback in parity-gate canonical.ts and the per-resource keying in
+  // umbrella cfn-equivalence.ts.
+  const kind = RESOURCE_KIND_BY_CFN_TYPE[cfnType] ?? 'other'
   const identity = resourceIdentity(logicalId, kind, properties)
   const hasFixedName = identity !== logicalId
   const consoleDeepLink = deriveConsoleDeepLink(kind, identity, hasFixedName)
   return {
     kind,
+    cfnType,
     identity,
     contentKey: `${component}/${kind}/${toKeySegment(identity)}`,
     // the optional key is omitted entirely when absent, never present-but-undefined, so a resource
@@ -104,15 +124,6 @@ const describeResource = (
   }
 }
 
-/**
- * Enumerate the resources a synthesized stack creates as typed descriptors, one per resource, derived
- * from the synthesized CloudFormation rather than a hand-maintained list. Each construct's enumeration
- * is namespaced under `component`. A synthesized stack output is enumerated as a `resource-output`
- * descriptor (an identifier the deployment surfaces, with no console representation of its own).
- *
- * The stable interface Epic 4 iterates: any stack that synthesizes is enumerated the same way, so a
- * newly added construct is adopted with no change on the consuming side.
- */
 /**
  * Guard that content keys are unique within the construct. A clean key is built by kebab-collapsing a
  * unique identity, which is lossy, so a collision is possible in principle; surfacing it here fails the
@@ -128,15 +139,27 @@ const assertUniqueContentKeys = (resources: readonly ResourceDescriptor[]): void
   }
 }
 
+/**
+ * Enumerate the resources a synthesized stack creates as typed descriptors, one per resource, derived
+ * from the synthesized CloudFormation rather than a hand-maintained list. Each construct's enumeration
+ * is namespaced under `component`. EVERY synthesized resource surfaces: a resource of a modelled CFN
+ * type carries its mapped kind, and one of an unmapped type surfaces as `other` carrying the raw type,
+ * so the audit never silently drops a resource the construct creates. A synthesized stack output is
+ * enumerated as a `resource-output` descriptor (an identifier the deployment surfaces, with no console
+ * representation of its own).
+ *
+ * The stable interface Epic 4 iterates: any stack that synthesizes is enumerated the same way, so a
+ * newly added construct is adopted with no change on the consuming side.
+ */
 export const describeResources = (stack: cdk.Stack, component: string): ResourceEnumeration => {
+  assertComponent(component)
   const template = Template.fromStack(stack).toJSON() as SynthesizedTemplate
 
   const resources: ResourceDescriptor[] = []
 
   for (const [logicalId, resource] of Object.entries(template.Resources ?? {})) {
     const properties = isRecord(resource.Properties) ? resource.Properties : {}
-    const descriptor = describeResource(component, logicalId, resource.Type, properties)
-    if (descriptor) resources.push(descriptor)
+    resources.push(describeResource(component, logicalId, resource.Type, properties))
   }
 
   for (const logicalId of Object.keys(template.Outputs ?? {})) {

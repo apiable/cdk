@@ -30,12 +30,20 @@ describe('multi-resource construct (logs-bucket)', () => {
     describeResources(new LogsBucketStack(new cdk.App(), 'LB', { name: 'staging', env: ENV }), LOGS_BUCKET_COMPONENT)
       .resources
 
-  it('enumerates the bucket, the write role, the inline write policy, and all three outputs', () => {
+  it('enumerates the bucket, its resource policy, the write role, the inline write policy, and all three outputs', () => {
     const byKind = enumeration().reduce<Record<string, number>>((acc, d) => {
       acc[d.kind] = (acc[d.kind] ?? 0) + 1
       return acc
     }, {})
-    expect(byKind).toEqual({ bucket: 1, 'iam-role': 1, 'iam-policy': 1, 'resource-output': 3 })
+    // the bucket's resource policy (the cross-account write grant) surfaces as its own kind — it is
+    // security-load-bearing and must not silently drop from the audit
+    expect(byKind).toEqual({ bucket: 1, 'bucket-policy': 1, 'iam-role': 1, 'iam-policy': 1, 'resource-output': 3 })
+  })
+
+  it('surfaces the bucket policy carrying its raw CFN type', () => {
+    const bucketPolicy = enumeration().find((d) => d.kind === 'bucket-policy')
+    expect(bucketPolicy).toBeDefined()
+    expect(bucketPolicy?.cfnType).toBe('AWS::S3::BucketPolicy')
   })
 
   it('derives an s3 deep-link for the bucket and an iam deep-link for the write role, by physical name', () => {
@@ -68,16 +76,20 @@ describe('content-key collision guard', () => {
 })
 
 describe('unmapped resource types', () => {
-  it('skips a synthesized resource of a kind the explainer does not model — never invents a descriptor for it', () => {
+  it('surfaces a synthesized resource of an unmodelled type as a generic descriptor carrying its raw CFN type — never drops it', () => {
     const descriptors = describeResources(
       stackOf((scope) => {
         new sns.Topic(scope, 'Topic', { topicName: 'unmodelled' })
       }),
       'misc',
     ).resources
-    // an SNS topic is not an enumerated kind and the stack has no outputs, so nothing is enumerated —
-    // the topic is skipped, never turned into a guessed descriptor
-    expect(descriptors).toEqual([])
+    // an SNS topic is not a kind the explainer models by name, but it must still appear in the audit —
+    // it surfaces as `other` carrying the raw AWS::* type, never silently vanishing
+    const topic = descriptors.find((d) => d.cfnType === 'AWS::SNS::Topic')
+    expect(topic).toBeDefined()
+    expect(topic?.kind).toBe('other')
+    // no console deep-link is fabricated for a kind the explainer has no console mapping for
+    expect(topic).not.toHaveProperty('consoleDeepLink')
   })
 })
 
@@ -116,5 +128,23 @@ describe('empty stack', () => {
     const enumeration = describeResources(stackOf(() => undefined), 'empty')
     expect(enumeration.component).toBe('empty')
     expect(enumeration.resources).toEqual([])
+  })
+})
+
+describe('component validation', () => {
+  it('fails loudly on a malformed component segment rather than producing unaddressable content keys', () => {
+    const build = (scope: Construct): void => {
+      new iam.Role(scope, 'R', { assumedBy: new iam.AccountPrincipal('222222222222'), roleName: 'a-role' })
+    }
+    for (const bad of ['', 'Has Space', 'UPPER', 'slash/inside', '-leading', 'trailing-']) {
+      expect(() => describeResources(stackOf(build), bad)).toThrow(/component/)
+    }
+  })
+
+  it('accepts a well-formed lower-kebab component', () => {
+    const build = (scope: Construct): void => {
+      new iam.Role(scope, 'R', { assumedBy: new iam.AccountPrincipal('222222222222'), roleName: 'a-role' })
+    }
+    expect(() => describeResources(stackOf(build), 'gateway-role')).not.toThrow()
   })
 })
