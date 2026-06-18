@@ -12,10 +12,12 @@ import {
   ACCOUNT_TOKEN,
   Channel,
   ChannelModel,
+  cognitoDiscovery,
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
   OidcDiscovery,
+  poolNameFromRef,
   PermissionGrant,
   REGION_TOKEN,
   ResourceEdge,
@@ -176,23 +178,6 @@ const oauthFrom = (props: Record<string, unknown>, discovery?: OidcDiscovery): O
   return { flows: [...flows].sort(), scopes: [...scopes].sort(), ...(discovery !== undefined ? { discovery } : {}) }
 }
 
-/**
- * The OIDC discovery document for a Cognito user pool, derived from the channel-stable pool ref,
- * the deployed region, and the hosted-UI domain prefix when a {@link AWS::Cognito::UserPoolDomain}
- * is published alongside. The issuer is the Cognito IdP endpoint for the pool; the authorize/token
- * endpoints are the hosted-UI domain's; the JWKS is the issuer's well-known path. Returning it for
- * a real client makes {@link checkDiscovery} run against the channel's own configuration rather than
- * only a synthetic fixture.
- */
-const cognitoDiscovery = (poolRef: string, region: string | undefined, domainPrefix: string | undefined): OidcDiscovery => {
-  const regionToken = region ?? REGION_TOKEN
-  const issuer = `https://cognito-idp.${regionToken}.amazonaws.com/${poolRef}`
-  const base = { issuer, jwksUri: `${issuer}/.well-known/jwks.json`, bearerMethod: 'header' as const }
-  if (domainPrefix === undefined) return base
-  const hosted = `https://${domainPrefix}.auth.${regionToken}.amazoncognito.com`
-  return { ...base, authorizationEndpoint: `${hosted}/oauth2/authorize`, tokenEndpoint: `${hosted}/oauth2/token` }
-}
-
 const lambdaPermissionGrant = (
   props: Record<string, unknown>,
   resolve: (v: unknown) => string,
@@ -299,9 +284,6 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       cognitoEdge(ref, asRecord(res.properties.LambdaConfig).PreTokenGeneration, 'pre-token-generation')
       cognitoEdge(ref, asRecord(asRecord(res.properties.LambdaConfig).PreTokenGenerationConfig).LambdaArn, 'pre-token-generation')
     }
-    if (kind === 'cognito-user-pool-client') {
-      cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
-    }
     if (kind === 'cognito-resource-server') {
       cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
     }
@@ -310,10 +292,10 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       cognitoEdge(ref, res.properties.ProviderARNs, 'bound-to-pool')
     }
     if (kind === 'cognito-user-pool-client') {
+      cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
       const poolTargets = resourceRefsIn(res.properties.UserPoolId, resourceIds)
       const poolRef = poolTargets.length > 0 ? refToNode.get(poolTargets[0].id) ?? poolTargets[0].id : nodeRef('cognito-user-pool', 'pool')
-      const poolName = poolRef.startsWith('cognito-user-pool:') ? poolRef.slice('cognito-user-pool:'.length) : poolRef
-      const clientOauth = oauthFrom(res.properties, cognitoDiscovery(poolName, region, domainByPoolRef.get(poolRef)))
+      const clientOauth = oauthFrom(res.properties, cognitoDiscovery(poolNameFromRef(poolRef), region, domainByPoolRef.get(poolRef)))
       if (clientOauth !== undefined) {
         oauthByClient[ref] = clientOauth
         oauth = clientOauth

@@ -13,12 +13,13 @@
 import {
   Channel,
   ChannelModel,
+  cognitoDiscovery,
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
   OidcDiscovery,
+  poolNameFromRef,
   PermissionGrant,
-  REGION_TOKEN,
   ResourceEdge,
   ResourceNode,
   SecretRef,
@@ -149,21 +150,6 @@ const oauthFrom = (values: Record<string, unknown>, discovery?: OidcDiscovery): 
   return { flows: [...flows].sort(), scopes: [...scopes].sort(), ...(discovery !== undefined ? { discovery } : {}) }
 }
 
-/**
- * The OIDC discovery document for a Cognito user pool, derived from the channel-stable pool ref, the
- * deployed region, and the hosted-UI domain prefix when an `aws_cognito_user_pool_domain` is planned
- * alongside. Mirrors the CloudFormation reducer's derivation so the two channels' discovery documents
- * compare equal for an equivalent pool, and {@link checkDiscovery} runs against the real channel.
- */
-const cognitoDiscovery = (poolName: string, region: string | undefined, domainPrefix: string | undefined): OidcDiscovery => {
-  const regionToken = region ?? REGION_TOKEN
-  const issuer = `https://cognito-idp.${regionToken}.amazonaws.com/${poolName}`
-  const base = { issuer, jwksUri: `${issuer}/.well-known/jwks.json`, bearerMethod: 'header' as const }
-  if (domainPrefix === undefined) return base
-  const hosted = `https://${domainPrefix}.auth.${regionToken}.amazoncognito.com`
-  return { ...base, authorizationEndpoint: `${hosted}/oauth2/authorize`, tokenEndpoint: `${hosted}/oauth2/token` }
-}
-
 const lambdaPermissionGrant = (values: Record<string, unknown>, region: string | undefined): PermissionGrant => {
   const principal = normaliseLogical(tfResolve(values.principal), region)
   const rawSource = asScalarString(values.source_arn)
@@ -288,7 +274,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     if (kind === 'lambda-permission') grants.push(lambdaPermissionGrant(res.values, region))
     if (kind === 'cognito-user-pool-client') {
       const poolRef = poolRefByClientAddress.get(res.address)
-      const poolName = poolRef !== undefined && poolRef.startsWith('cognito-user-pool:') ? poolRef.slice('cognito-user-pool:'.length) : poolRef ?? 'pool'
+      const poolName = poolRef !== undefined ? poolNameFromRef(poolRef) : 'pool'
       const clientOauth = oauthFrom(res.values, cognitoDiscovery(poolName, region, poolRef !== undefined ? domainPrefixByPoolRef.get(poolRef) : undefined))
       if (clientOauth !== undefined) {
         oauthByClient[ref] = clientOauth

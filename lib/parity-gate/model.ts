@@ -184,3 +184,26 @@ export const accountIdsIn = (value: string): readonly string[] => value.match(AC
  */
 export const namespaceByRef = (values: LoadBearingValues, ref: string): LoadBearingValues =>
   Object.fromEntries(Object.entries(values).map(([key, value]) => [`${key}:${ref}`, value]))
+
+const POOL_KIND_PREFIX = 'cognito-user-pool:'
+
+/** The pool's channel-stable discriminator from its node ref (`cognito-user-pool:authz` → `authz`). */
+export const poolNameFromRef = (poolRef: string): string =>
+  poolRef.startsWith(POOL_KIND_PREFIX) ? poolRef.slice(POOL_KIND_PREFIX.length) : poolRef
+
+/**
+ * The OIDC discovery document for a Cognito user pool, single-sourced so both channel reducers derive
+ * an identical document for an equivalent pool (a divergence in the derivation, not the artifact, would
+ * false-fail or false-pass parity). The issuer is the Cognito IdP endpoint keyed by the channel-stable
+ * pool name; the JWKS is the issuer's well-known path; the authorize/token endpoints come from the
+ * hosted-UI domain prefix when one is published. Returning it for a real client makes the gate's
+ * discovery conformance run against the channel's own configuration rather than only a synthetic fixture.
+ */
+export const cognitoDiscovery = (poolName: string, region: string | undefined, domainPrefix: string | undefined): OidcDiscovery => {
+  const regionToken = region ?? REGION_TOKEN
+  const issuer = `https://cognito-idp.${regionToken}.amazonaws.com/${poolName}`
+  const base = { issuer, jwksUri: `${issuer}/.well-known/jwks.json`, bearerMethod: 'header' as const }
+  if (domainPrefix === undefined) return base
+  const hosted = `https://${domainPrefix}.auth.${regionToken}.amazoncognito.com`
+  return { ...base, authorizationEndpoint: `${hosted}/oauth2/authorize`, tokenEndpoint: `${hosted}/oauth2/token` }
+}
