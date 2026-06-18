@@ -13,19 +13,38 @@ import { asArray, asRecord, asString, isRecord } from './narrow'
 const toList = (value: unknown): readonly unknown[] =>
   Array.isArray(value) ? value : value === undefined ? [] : [value]
 
+/**
+ * A statement's `Principal` reduced to a stable string capturing WHO is granted, by value. A
+ * principal entry can be a bare string, an `{ AWS | Service | Federated }` object, or — the case a
+ * resource policy (an S3 bucket policy) relies on — a LIST of principal ARNs under one of those keys.
+ * Every named principal is normalised (deploy-account/region tokens applied, the bounded
+ * cross-account writer left by value) and the set is sorted and joined, so an extra, widened, or
+ * wildcard principal enlarges the signature and diverges instead of collapsing to one value or, worse,
+ * to an empty string (the fail-OPEN a single `resolve` of a principal list produced). A wildcard `*`
+ * is preserved verbatim — it reads as "any principal" and must never compare equal to a bounded set.
+ */
 const principalOf = (
   principal: unknown,
   resolve: (v: unknown) => string,
   region: string | undefined,
 ): string | undefined => {
-  if (principal === undefined) return undefined
-  if (typeof principal === 'string') return normaliseLogical(principal, region)
-  if (isRecord(principal)) {
-    const aws = principal.AWS ?? principal.Service ?? principal.Federated
-    return normaliseLogical(resolve(aws), region)
-  }
-  return undefined
+  const named = namedPrincipals(principal)
+  if (named.length === 0) return undefined
+  return [...new Set(named.map((entry) => normaliseLogical(resolve(entry), region)))].sort().join(',')
 }
+
+/** Every principal entry named by a statement's `Principal`, flattening the AWS/Service/Federated lists. */
+const namedPrincipals = (principal: unknown): readonly unknown[] => {
+  if (principal === undefined) return []
+  if (typeof principal === 'string') return [principal]
+  if (isRecord(principal)) {
+    return PRINCIPAL_KEYS.flatMap((key) => toList(principal[key]))
+  }
+  return []
+}
+
+/** The principal-identity keys a statement's `Principal` can carry; all are flattened together. */
+const PRINCIPAL_KEYS = ['AWS', 'Service', 'Federated'] as const
 
 /**
  * A statement's `Condition` reduced to a stable string, with account ids and regions left by value
@@ -44,26 +63,48 @@ const conditionOf = (condition: unknown, resolve: (v: unknown) => string): strin
   return canonical.length > 0 ? JSON.stringify(canonical) : undefined
 }
 
+/** Identity resource canonicaliser — the default when a reducer maps no resource ARN to a node ref. */
+const identityResource = (resource: string): string => resource
+
 /**
  * Build the grants for one policy document. `kind` distinguishes a role's trust (assume-role)
  * policy from an attached permission policy so the grant carries a channel-stable ref.
+ *
+ * `canonicaliseResource` reconciles a resource ARN that names a resource declared in the same
+ * artifact to that resource's channel-stable node ref. Without it a self-referential ARN compares a
+ * CloudFormation `Fn::GetAtt` (a channel-local logical id) against a Terraform-resolved literal ARN
+ * and false-diverges; with it both sides reduce to the one canonical node ref. It defaults to the
+ * identity so a grant on an external/literal ARN (the gateway-role pilot's apigateway resource) is
+ * left exactly as resolved.
  */
 export const grantsFromPolicyDocument = (
   doc: unknown,
   resolve: (v: unknown) => string,
   region: string | undefined,
   kind: 'trust' | 'inline',
+  canonicaliseResource: (resource: string) => string = identityResource,
 ): PermissionGrant[] =>
   asArray(asRecord(doc).Statement).map((stmtUnknown) => {
     const statement = asRecord(stmtUnknown)
     const actions = [...new Set(toList(statement.Action).map(resolve))].sort()
-    const resources = [...new Set(toList(statement.Resource).map((r) => normaliseLogical(resolve(r), region)))].sort()
+    const resources = [...new Set(toList(statement.Resource).map((r) => canonicaliseResource(normaliseLogical(resolve(r), region))))].sort()
     const effect = asString(statement.Effect) ?? 'Allow'
     const principal = principalOf(statement.Principal, resolve, region)
     const condition = conditionOf(statement.Condition, resolve)
     const ref = kind === 'trust' ? 'grant:assume-role' : `grant:${policyServices(actions)}`
     return { ref, effect, actions, resources, principal, condition }
   })
+
+/**
+ * Every statement's principals across a policy document, channel-resolved but NOT logical-normalised,
+ * so account literals survive for a by-value comparison. The resource-policy (bucket-policy) write
+ * grant is read this way: who may write is load-bearing, the same way {@link trustedAccountsOf} reads
+ * who may assume a role — the by-value account set, not the account-tokenised grant principal.
+ */
+export const resolvedPrincipalsOf = (doc: unknown, resolve: (v: unknown) => string): string[] =>
+  asArray(asRecord(doc).Statement).flatMap((stmtUnknown) =>
+    namedPrincipals(asRecord(stmtUnknown).Principal).map((entry) => (typeof entry === 'string' ? entry : resolve(entry))),
+  )
 
 /** Principal keys whose identifier names an AWS account — the direct account-root and a federated
  * provider ARN (`arn:aws:iam::<acct>:saml-provider/X`, an OIDC-provider ARN). A `Service` principal

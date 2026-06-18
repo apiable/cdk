@@ -13,6 +13,7 @@ import {
   Channel,
   ChannelModel,
   cognitoDiscovery,
+  grantedAccountsValue,
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
@@ -25,7 +26,7 @@ import {
   SecretRef,
 } from './model'
 import { canonicalCfnKind, nodeRef, policyServices } from './canonical'
-import { grantsFromPolicyDocument, trustedAccountsOf } from './iam'
+import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asString, asStringArray, isRecord } from './narrow'
 
 interface CfnResource {
@@ -109,9 +110,23 @@ const discriminatorFor = (
       return normaliseLogical(resolve(props.Name), region) || 'authorizer'
     case 'lambda-function':
       return normaliseLogical(resolve(props.FunctionName), region) || 'function'
+    case 's3-bucket':
+      return normaliseLogical(resolve(props.BucketName), region) || 'bucket'
     default:
       return undefined
   }
+}
+
+/**
+ * The normalised name of the bucket a bucket-policy secures — the channel-stable discriminator for
+ * the policy node and the key its write grant is filed under. The policy references its bucket by a
+ * channel-local logical id, so the stable identity is the referenced bucket node's discriminator
+ * (its normalised name), not the raw ref. Absent when the bucket cannot be resolved from the graph.
+ */
+const securedBucketName = (bucketNodeRef: string | undefined): string | undefined => {
+  if (bucketNodeRef === undefined) return undefined
+  const prefix = 's3-bucket:'
+  return bucketNodeRef.startsWith(prefix) ? bucketNodeRef.slice(prefix.length) : undefined
 }
 
 const collectValues = (kind: string, props: Record<string, unknown>): Record<string, string> => {
@@ -196,8 +211,33 @@ const lambdaPermissionGrant = (
   }
 }
 
-/** Reduce a parsed CloudFormation template into a {@link ChannelModel} for `channel`. */
-export const reduceCloudFormation = (template: unknown, channel: Channel, region?: string): ChannelModel => {
+/**
+ * The write grants a bucket-policy confers, keyed per secured bucket so a multi-statement policy is
+ * compared as the multiset of its statements (a widened or extra principal enlarges the set, never
+ * silently collapses). One grant per statement carries the principals BY VALUE — the cross-account
+ * write grant the storage tier exists to police — so a channel that widens who may write to the
+ * bucket diverges on the permission tier. The policy document is the same `{ Statement: [] }` shape
+ * an IAM policy carries, so the shared {@link grantsFromPolicyDocument} extracts it; only the ref is
+ * re-filed under the bucket-policy key.
+ */
+const bucketPolicyGrants = (
+  doc: unknown,
+  resolve: (v: unknown) => string,
+  region: string | undefined,
+  bucketName: string | undefined,
+  canonicaliseResource: (resource: string) => string,
+): PermissionGrant[] => {
+  const ref = `grant:bucket-policy:${bucketName ?? 'bucket'}`
+  return grantsFromPolicyDocument(doc, resolve, region, 'inline', canonicaliseResource).map((grant) => ({ ...grant, ref }))
+}
+
+/**
+ * Reduce a parsed CloudFormation template into a {@link ChannelModel} for `channel`. `deployAccount`
+ * is the concrete account a non-published synth resolved `AWS::AccountId` into; supplied so the
+ * incidental deploying account drops out of the bucket-policy by-value write-grant exactly as the
+ * published channel's `AWS::AccountId` pseudo-parameter (a token, no digits) already does.
+ */
+export const reduceCloudFormation = (template: unknown, channel: Channel, region?: string, deployAccount?: string): ChannelModel => {
   const root = asRecord(template)
   const resourcesRecord = asRecord(root.Resources)
   const wellFormed = isRecord(template) && isRecord(root.Resources) && Object.keys(resourcesRecord).length > 0
@@ -221,6 +261,14 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     const kind = canonicalCfnKind(res.type)
     refToNode.set(id, nodeRef(kind, discriminatorFor(kind, res.properties, resolve, region)))
   }
+  // A bucket-policy carries no name of its own; its channel-stable identity is the bucket it secures,
+  // so re-key its node by the referenced bucket's discriminator once every bucket node ref is known.
+  for (const [id, res] of Object.entries(resources)) {
+    if (canonicalCfnKind(res.type) !== 's3-bucket-policy') continue
+    const bucketTarget = resourceRefsIn(res.properties.Bucket, resourceIds)[0]
+    const bucketName = securedBucketName(bucketTarget !== undefined ? refToNode.get(bucketTarget.id) : undefined)
+    refToNode.set(id, nodeRef('s3-bucket-policy', bucketName))
+  }
 
   // The hosted-UI domain prefix per pool node ref, so a client's discovery document can carry the
   // pool's authorize/token endpoints. A UserPoolDomain references its pool via UserPoolId.
@@ -232,6 +280,16 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     for (const target of resourceRefsIn(res.properties.UserPoolId, resourceIds)) {
       domainByPoolRef.set(refToNode.get(target.id) ?? target.id, domain)
     }
+  }
+
+  // A grant resource that is a `Fn::GetAtt` to a resource in this template resolves to `@getatt:<id>:<attr>`
+  // with the channel-local logical id; map it back to that resource's channel-stable node ref (keeping any
+  // trailing object path) so a self-referential ARN reconciles with the Terraform-resolved literal.
+  const canonicaliseResource = (resource: string): string => {
+    const match = /^@getatt:([^:]+):[^/]*(.*)$/.exec(resource)
+    if (match === null) return resource
+    const node = refToNode.get(match[1])
+    return node === undefined ? resource : `${node}${match[2]}`
   }
 
   const nodes: ResourceNode[] = []
@@ -262,14 +320,14 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
 
     if (kind === 'iam-role') {
       grants.push(
-        ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust'),
+        ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust', canonicaliseResource),
       )
       values[`role-name:${ref}`] = normaliseLogical(resolve(res.properties.RoleName), region)
       const trustAccount = trustedAccountsOf(res.properties.AssumeRolePolicyDocument, resolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
-      grants.push(...grantsFromPolicyDocument(res.properties.PolicyDocument, resolve, region, 'inline'))
+      grants.push(...grantsFromPolicyDocument(res.properties.PolicyDocument, resolve, region, 'inline', canonicaliseResource))
       for (const target of resourceRefsIn(res.properties.Roles, resourceIds)) {
         edges.push({ from: ref, to: refToNode.get(target.id) ?? target.id, relation: 'attached-to-role' })
       }
@@ -278,6 +336,18 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       grants.push(lambdaPermissionGrant(res.properties, resolve, region))
       for (const target of resourceRefsIn(res.properties.FunctionName, resourceIds)) {
         edges.push({ from: ref, to: refToNode.get(target.id) ?? target.id, relation: 'invokes' })
+      }
+    }
+    if (kind === 's3-bucket-policy') {
+      const bucketTarget = resourceRefsIn(res.properties.Bucket, resourceIds)[0]
+      const bucketNodeRef = bucketTarget !== undefined ? refToNode.get(bucketTarget.id) : undefined
+      grants.push(...bucketPolicyGrants(res.properties.PolicyDocument, resolve, region, securedBucketName(bucketNodeRef), canonicaliseResource))
+      // Who may write to the bucket across accounts — the load-bearing cross-account write grant — read
+      // by value (the deploying account dropped) so a widened or different writer diverges on the value tier.
+      const writeAccounts = grantedAccountsValue(resolvedPrincipalsOf(res.properties.PolicyDocument, resolve), deployAccount)
+      if (writeAccounts !== undefined) values[`bucket-policy-write-accounts:${ref}`] = writeAccounts
+      if (bucketTarget !== undefined) {
+        edges.push({ from: ref, to: bucketNodeRef ?? bucketTarget.id, relation: 'secures-bucket' })
       }
     }
     if (kind === 'cognito-user-pool') {

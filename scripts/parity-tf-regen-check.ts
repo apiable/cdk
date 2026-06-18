@@ -6,7 +6,11 @@
  * whose model diverges from the fresh plan) fails the gate, so the only independent-implementation
  * channel cannot ship silently stale.
  *
- * Usage: ts-node scripts/parity-tf-regen-check.ts <fresh-show.json> <committed-fixture.json> [region]
+ * Usage: ts-node scripts/parity-tf-regen-check.ts <fresh-show.json> <committed-fixture.json> [region] [deployAccount]
+ *
+ * `deployAccount` is the account a credentialed plan resolved its caller identity into; supplied so a
+ * module whose resource policy names the deploying account (the logs bucket's bucket-policy) reduces it
+ * to a token on both sides, making the model comparison stable across whichever account CI ran the plan in.
  */
 import * as fs from 'fs'
 import { reduceTerraformShowJson, ChannelModel } from '../lib/parity-gate'
@@ -24,17 +28,17 @@ const meaningOf = (model: ChannelModel): unknown => ({
 })
 
 const main = (): void => {
-  const [freshPath, committedPath, region = process.env.AWS_REGION ?? 'eu-central-1'] = process.argv.slice(2)
+  const [freshPath, committedPath, region = process.env.AWS_REGION ?? 'eu-central-1', deployAccount] = process.argv.slice(2)
   if (freshPath === undefined || committedPath === undefined) {
-    process.stderr.write('usage: parity-tf-regen-check.ts <fresh-show.json> <committed-fixture.json> [region]\n')
+    process.stderr.write('usage: parity-tf-regen-check.ts <fresh-show.json> <committed-fixture.json> [region] [deployAccount]\n')
     process.exit(2)
   }
 
   const fresh = JSON.parse(fs.readFileSync(freshPath, 'utf8'))
   const committed = JSON.parse(fs.readFileSync(committedPath, 'utf8'))
 
-  const freshModel = reduceTerraformShowJson(fresh, 'terraform', region)
-  const committedModel = reduceTerraformShowJson(committed, 'terraform', region)
+  const freshModel = reduceTerraformShowJson(fresh, 'terraform', region, deployAccount)
+  const committedModel = reduceTerraformShowJson(committed, 'terraform', region, deployAccount)
 
   if (!freshModel.wellFormed) {
     process.stderr.write('the freshly regenerated terraform show -json did not reduce to a well-formed model\n')
@@ -47,7 +51,7 @@ const main = (): void => {
     process.stderr.write(
       'the committed terraform fixture is STALE — its model does not match the freshly regenerated plan.\n' +
         `  fresh:     ${freshMeaning}\n  committed: ${committedMeaning}\n` +
-        'refresh test/fixtures/parity-gate/terraform-gateway-role-show.json from the fresh plan.\n',
+        `refresh the committed fixture (${committedPath}) from the fresh plan.\n`,
     )
     process.exit(1)
   }

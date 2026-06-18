@@ -16,6 +16,8 @@ const CFN_KIND: Readonly<Record<string, string>> = {
   'AWS::Lambda::Permission': 'lambda-permission',
   'AWS::ApiGateway::RestApi': 'apigateway-rest-api',
   'AWS::ApiGateway::Authorizer': 'apigateway-authorizer',
+  'AWS::S3::Bucket': 's3-bucket',
+  'AWS::S3::BucketPolicy': 's3-bucket-policy',
 }
 
 const TF_KIND: Readonly<Record<string, string>> = {
@@ -30,6 +32,8 @@ const TF_KIND: Readonly<Record<string, string>> = {
   aws_lambda_permission: 'lambda-permission',
   aws_api_gateway_rest_api: 'apigateway-rest-api',
   aws_api_gateway_authorizer: 'apigateway-authorizer',
+  aws_s3_bucket: 's3-bucket',
+  aws_s3_bucket_policy: 's3-bucket-policy',
 }
 
 /** Canonical kind for a CloudFormation resource type; an unmapped type keeps its raw name so an unexpected resource still surfaces in the graph rather than vanishing. */

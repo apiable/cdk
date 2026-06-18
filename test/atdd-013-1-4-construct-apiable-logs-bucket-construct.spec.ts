@@ -22,6 +22,7 @@ import {
   launchStackTemplateKey,
   launchStackTemplateS3Uri,
 } from '@apiable/cdk-logs-bucket'
+import { gate, reduceCloudFormation } from '@apiable/parity-gate'
 
 const PARTNER_ACCOUNT = DEFAULT_APIABLE_PARTNER_ACCOUNT
 const REGION = 'eu-central-1'
@@ -111,6 +112,17 @@ describe('013-1-4 apiable-logs-bucket — synth + parity contract', () => {
     pub.resourceCountIs('AWS::S3::Bucket', 1)
     pub.resourceCountIs('AWS::S3::BucketPolicy', 1)
     pub.resourceCountIs('AWS::IAM::Role', 1)
+
+    // The published channel's bucket-policy is now proven by the real parity engine, not a bare count:
+    // it reduces to the same bucket-policy write grant as the CDK-synth channel (the deploying account
+    // tokenised on each side, so only the bounded cross-account writer compares), so the one-click
+    // template cannot ship a divergent write principal. (013-1-15 subsumes the count-only interim.)
+    const enginePub = reduceCloudFormation(publishedTemplate().toJSON(), 'cfn', REGION)
+    const engineCdk = reduceCloudFormation(concreteTemplate().toJSON(), 'cdk', REGION, TENANT_ACCOUNT)
+    const bucketPolicyComparison = gate([engineCdk, enginePub, { ...enginePub, channel: 'terraform' }]).divergences.filter(
+      (entry) => entry.detail.includes('bucket-policy') || entry.detail.includes('s3-bucket-policy'),
+    )
+    expect(bucketPolicyComparison).toEqual([])
 
     // ── Terraform channel — the hand-rolled module source ────────────────────────────────────────
     const main = tfModule('main.tf')

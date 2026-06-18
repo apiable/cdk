@@ -14,6 +14,7 @@ import {
   Channel,
   ChannelModel,
   cognitoDiscovery,
+  grantedAccountsValue,
   namespaceByRef,
   normaliseLogical,
   OAuthConfig,
@@ -25,7 +26,7 @@ import {
   SecretRef,
 } from './model'
 import { canonicalTfKind, nodeRef, policyServices } from './canonical'
-import { grantsFromPolicyDocument, trustedAccountsOf } from './iam'
+import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asScalarString, asString, asStringArray, isRecord } from './narrow'
 
 const SECRET_KEY = /(secret|password|private_?key|signing_?key|token|api_?key)/i
@@ -81,9 +82,23 @@ const discriminatorFor = (
       return normaliseLogical(tfResolve(values.name), region) || 'authorizer'
     case 'lambda-function':
       return normaliseLogical(tfResolve(values.function_name), region) || 'function'
+    case 's3-bucket':
+      return normaliseLogical(tfResolve(values.bucket), region) || 'bucket'
     default:
       return undefined
   }
+}
+
+/**
+ * The normalised name of the bucket a bucket-policy secures — the channel-stable discriminator for
+ * the policy node and the key its write grant is filed under, mirroring the CloudFormation side. The
+ * policy references its bucket by a channel-local address, so the stable identity is the referenced
+ * bucket node's discriminator. Absent when the bucket cannot be resolved from the configuration.
+ */
+const securedBucketName = (bucketNodeRef: string | undefined): string | undefined => {
+  if (bucketNodeRef === undefined) return undefined
+  const prefix = 's3-bucket:'
+  return bucketNodeRef.startsWith(prefix) ? bucketNodeRef.slice(prefix.length) : undefined
 }
 
 const collectValues = (kind: string, values: Record<string, unknown>): Record<string, string> => {
@@ -164,6 +179,23 @@ const lambdaPermissionGrant = (values: Record<string, unknown>, region: string |
   }
 }
 
+/**
+ * The write grants a bucket-policy confers, keyed per secured bucket — the Terraform counterpart of
+ * the CloudFormation reducer's bucket-policy grants. The `policy` is a `jsonencode`d `{ Statement: [] }`
+ * document, so the shared {@link grantsFromPolicyDocument} extracts each statement's principals BY
+ * VALUE; only the ref is re-filed under the bucket-policy key so the cross-account write grant
+ * compares as a multiset and a widened principal diverges instead of collapsing.
+ */
+const bucketPolicyGrants = (
+  policy: unknown,
+  region: string | undefined,
+  bucketName: string | undefined,
+  canonicaliseResource: (resource: string) => string,
+): PermissionGrant[] => {
+  const ref = `grant:bucket-policy:${bucketName ?? 'bucket'}`
+  return grantsFromPolicyDocument(parseJson(policy), tfResolve, region, 'inline', canonicaliseResource).map((grant) => ({ ...grant, ref }))
+}
+
 /** The resource address a Terraform reference points at, e.g. `aws_iam_role.this.arn` → `aws_iam_role.this`. */
 const referencedAddress = (reference: string, addresses: ReadonlySet<string>): { address: string; attr: string } | undefined => {
   const parts = reference.split('.')
@@ -195,8 +227,13 @@ const referencesOf = (expression: unknown, addresses: ReadonlySet<string>): { ad
   return order.map((address) => ({ address, attr: attrByAddress.get(address) ?? 'ref' }))
 }
 
-/** Reduce parsed `terraform show -json` output into a {@link ChannelModel}. */
-export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terraform', region?: string): ChannelModel => {
+/**
+ * Reduce parsed `terraform show -json` output into a {@link ChannelModel}. `deployAccount` is the
+ * account a credentialed plan resolved `data.aws_caller_identity` into; supplied so the incidental
+ * deploying account drops out of the bucket-policy by-value write-grant, matching the published CFN
+ * channel where the deploying account is the digit-less `AWS::AccountId` token.
+ */
+export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terraform', region?: string, deployAccount?: string): ChannelModel => {
   const root = asRecord(plan)
   const plannedResources = asArray(asRecord(asRecord(root.planned_values).root_module).resources)
   const wellFormed = isRecord(plan) && isRecord(root.planned_values) && plannedResources.length > 0
@@ -225,6 +262,10 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const configResources = asArray(asRecord(asRecord(root.configuration).root_module).resources)
   const poolRefByClientAddress = new Map<string, string>()
   const domainPrefixByPoolRef = new Map<string, string>()
+  // The bucket a bucket-policy secures, read from the configuration's reference expressions (the
+  // bucket id is computed and absent from planned_values), so the policy node and its grant carry the
+  // bucket's channel-stable identity.
+  const securedBucketByPolicyAddress = new Map<string, string>()
   for (const entry of configResources) {
     const record = asRecord(entry)
     const address = asString(record.address)
@@ -243,6 +284,33 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
         domainPrefixByPoolRef.set(refToNode.get(poolTarget.address) ?? poolTarget.address, domain)
       }
     }
+    if (kind === 's3-bucket-policy') {
+      const bucketTarget = referencesOf(expressions.bucket, addresses)[0]
+      if (bucketTarget !== undefined) securedBucketByPolicyAddress.set(address, refToNode.get(bucketTarget.address) ?? bucketTarget.address)
+    }
+  }
+  // Re-key each bucket-policy node by the bucket it secures (its name is channel-stable; the policy's
+  // own address is not), so the policy node matches across channels.
+  for (const res of resources) {
+    if (kindByAddress.get(res.address) !== 's3-bucket-policy') continue
+    refToNode.set(res.address, nodeRef('s3-bucket-policy', securedBucketName(securedBucketByPolicyAddress.get(res.address))))
+  }
+
+  // A grant resource that is one of this plan's S3 bucket ARNs reduces to that bucket's channel-stable
+  // node ref (keeping any trailing object path), so a self-referential bucket ARN reconciles with the
+  // CloudFormation `Fn::GetAtt` form instead of comparing a resolved literal against a logical id.
+  const bucketArnToNode = new Map<string, string>()
+  for (const res of resources) {
+    if (kindByAddress.get(res.address) !== 's3-bucket') continue
+    const bucketName = normaliseLogical(tfResolve(res.values.bucket), region)
+    if (bucketName !== '') bucketArnToNode.set(`arn:aws:s3:::${bucketName}`, refToNode.get(res.address) ?? res.address)
+  }
+  const canonicaliseResource = (resource: string): string => {
+    for (const [arn, node] of bucketArnToNode) {
+      if (resource === arn) return node
+      if (resource.startsWith(`${arn}/`)) return `${node}${resource.slice(arn.length)}`
+    }
+    return resource
   }
 
   const nodes: ResourceNode[] = []
@@ -263,13 +331,20 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     secrets.push(...collectSecrets(res.values))
     if (kind === 'iam-role') {
       const assumePolicy = parseJson(res.values.assume_role_policy)
-      grants.push(...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust'))
+      grants.push(...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust', canonicaliseResource))
       values[`role-name:${ref}`] = normaliseLogical(tfResolve(res.values.name), region)
       const trustAccount = trustedAccountsOf(assumePolicy, tfResolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
-      grants.push(...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline'))
+      grants.push(...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline', canonicaliseResource))
+    }
+    if (kind === 's3-bucket-policy') {
+      grants.push(...bucketPolicyGrants(res.values.policy, region, securedBucketName(securedBucketByPolicyAddress.get(res.address)), canonicaliseResource))
+      // Who may write to the bucket across accounts, by value (the deploying account dropped) so a
+      // widened or different writer diverges on the value tier — the same load-bearing read as the CFN side.
+      const writeAccounts = grantedAccountsValue(resolvedPrincipalsOf(parseJson(res.values.policy), tfResolve), deployAccount)
+      if (writeAccounts !== undefined) values[`bucket-policy-write-accounts:${ref}`] = writeAccounts
     }
     if (kind === 'lambda-permission') grants.push(lambdaPermissionGrant(res.values, region))
     if (kind === 'cognito-user-pool-client') {
@@ -317,6 +392,11 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       }
       for (const target of referencesOf(expressions.provider_arns, addresses)) {
         edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'bound-to-pool' })
+      }
+    }
+    if (kind === 's3-bucket-policy') {
+      for (const target of referencesOf(expressions.bucket, addresses)) {
+        edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'secures-bucket' })
       }
     }
   }

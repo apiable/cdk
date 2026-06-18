@@ -1,0 +1,97 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "_comment": "Reference `terraform show -json` for the apiable-logs-bucket module, captured from a CREDENTIALED plan in the apiable-logging account (so data.aws_caller_identity resolves the deploying tenant-root principal). The deploying account here is a placeholder; CI regenerates this from a fresh credentialed plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts, passing the deploying account so the incidental tenant root tokenises on both sides. An uncredentialed or hand-fabricated capture mis-models the tenant grant and cannot pass. The env-less dev box cannot verify this leg; its correctness is provable only in the credentialed CI job. Plan vars: name=ci, partner_account=034444869755.",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_s3_bucket.this",
+          "type": "aws_s3_bucket",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "bucket": "apiable-logs-ci",
+            "force_destroy": false
+          }
+        },
+        {
+          "address": "aws_s3_bucket_policy.this",
+          "type": "aws_s3_bucket_policy",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"Permissions\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"arn:aws:iam::111111111111:root\",\"arn:aws:iam::034444869755:root\"]},\"Action\":\"s3:*\",\"Resource\":[\"arn:aws:s3:::apiable-logs-ci\",\"arn:aws:s3:::apiable-logs-ci/*\"]}]}"
+          }
+        },
+        {
+          "address": "aws_iam_role.this",
+          "type": "aws_iam_role",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-logs-ci-s3-role",
+            "description": "Role for partner account to Access the S3 Bucket",
+            "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::034444869755:root\"},\"Action\":\"sts:AssumeRole\"}]}"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.s3_access",
+          "type": "aws_iam_role_policy",
+          "name": "s3_access",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "s3-access",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:*\",\"Resource\":[\"arn:aws:s3:::apiable-logs-ci\",\"arn:aws:s3:::apiable-logs-ci/*\"]}]}"
+          }
+        }
+      ]
+    }
+  },
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_s3_bucket.this",
+          "type": "aws_s3_bucket",
+          "name": "this",
+          "expressions": {
+            "bucket": { "references": ["var.name"] }
+          }
+        },
+        {
+          "address": "aws_s3_bucket_policy.this",
+          "type": "aws_s3_bucket_policy",
+          "name": "this",
+          "expressions": {
+            "bucket": { "references": ["aws_s3_bucket.this.id", "aws_s3_bucket.this"] },
+            "policy": { "references": ["data.aws_caller_identity.current.account_id", "var.partner_account", "aws_s3_bucket.this.arn", "aws_s3_bucket.this"] }
+          }
+        },
+        {
+          "address": "aws_iam_role.this",
+          "type": "aws_iam_role",
+          "name": "this",
+          "expressions": {
+            "name": { "references": ["var.name"] },
+            "assume_role_policy": { "references": ["var.partner_account"] }
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.s3_access",
+          "type": "aws_iam_role_policy",
+          "name": "s3_access",
+          "expressions": {
+            "role": { "references": ["aws_iam_role.this.id", "aws_iam_role.this"] },
+            "policy": { "references": ["aws_s3_bucket.this.arn", "aws_s3_bucket.this"] }
+          }
+        }
+      ],
+      "outputs": {
+        "bucket_name": { "expression": { "references": ["aws_s3_bucket.this.bucket", "aws_s3_bucket.this"] } },
+        "bucket_arn": { "expression": { "references": ["aws_s3_bucket.this.arn", "aws_s3_bucket.this"] } },
+        "s3_assume_role_arn": { "expression": { "references": ["aws_iam_role.this.arn", "aws_iam_role.this"] } }
+      }
+    }
+  }
+}

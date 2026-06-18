@@ -139,6 +139,28 @@ jobs:
           fi
           grep -q '12-digit' plan-err.log
 
+      # S3-4 — ground-truth the logs-bucket Terraform leg under GENUINE credentials. The bucket policy
+      # grants the deploying account (resolved from data.aws_caller_identity), so only a credentialed
+      # plan in the apiable-logging account models the tenant-root write principal faithfully. This step
+      # runs only when the logging-account credential is present (the credentialed job); the default
+      # per-PR gate has no such secret and skips it — a hand-fabricated or uncredentialed fixture cannot
+      # pass. The fresh plan must reduce to the SAME parity MODEL as the committed fixture (never a byte
+      # diff). The deploying account is read at runtime and passed so the incidental tenant root tokenises
+      # on both sides, keeping the model comparison stable across whichever account ran the plan.
+      - name: terraform regen ground-truths the committed fixture (logs-bucket, credentialed)
+        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        working-directory: terraform/apiable-logs-bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.APIABLE_LOGGING_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          terraform plan -input=false -refresh=false -var name=ci -var partner_account=034444869755 -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f tfplan.bin
+          DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-logs-bucket-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
+
       # The static three-tier diff + OAuth2/OIDC conformance specs are the gate itself: a CDK ↔ CFN
       # ↔ Terraform divergence fails the build with a report naming the divergent piece. The
       # Terraform side diffs the committed `terraform show -json` fixture; refreshing that fixture
