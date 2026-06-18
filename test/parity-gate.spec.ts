@@ -230,3 +230,90 @@ describe('parity gate — report', () => {
     expect(report).toContain('authorizer-type')
   })
 })
+
+// ── Supplementary grant/trust edge coverage beyond the contract scenarios ──────────────────────
+
+const cfnInlinePolicy = (statements: readonly unknown[]): unknown => ({
+  Resources: {
+    Policy: {
+      Type: 'AWS::IAM::RolePolicy',
+      Properties: { PolicyName: 'p', RoleName: 'r', PolicyDocument: { Version: '2012-10-17', Statement: statements } },
+    },
+  },
+})
+
+describe('parity gate — grant multiset (count and inline policies)', () => {
+  it('fails when one channel repeats an identical trust statement (a count difference, same content)', () => {
+    const single = cfnRoleWithStatements([
+      { Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::034444869755:root' }, Action: 'sts:AssumeRole' },
+    ])
+    const doubled = cfnRoleWithStatements([
+      { Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::034444869755:root' }, Action: 'sts:AssumeRole' },
+      { Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::034444869755:root' }, Action: 'sts:AssumeRole' },
+    ])
+    const result = gate([
+      reduceCloudFormation(single, 'cdk'),
+      reduceCloudFormation(single, 'cfn'),
+      reduceCloudFormation(doubled, 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    expect(result.divergences.find((entry) => entry.tier === 'permission')?.channels).toEqual(['terraform'])
+  })
+
+  it('catches a second inline-policy statement on a shared service ref that one channel widens', () => {
+    const narrow = cfnInlinePolicy([{ Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::bucket/scoped/*' }])
+    const widened = cfnInlinePolicy([
+      { Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::bucket/scoped/*' },
+      { Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::bucket/*' },
+    ])
+    const result = gate([
+      reduceCloudFormation(narrow, 'cdk'),
+      reduceCloudFormation(narrow, 'cfn'),
+      reduceCloudFormation(widened, 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    // Both statements share the s3 service ref; the multiset (not the first match) surfaces the widening.
+    expect(result.divergences.find((entry) => entry.tier === 'permission')?.detail).toContain('grant:s3')
+  })
+
+  it('agrees when several inline statements on a shared ref match across channels (order-insensitive)', () => {
+    const orderA = cfnInlinePolicy([
+      { Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::bucket/a/*' },
+      { Effect: 'Allow', Action: 's3:PutObject', Resource: 'arn:aws:s3:::bucket/b/*' },
+    ])
+    const orderB = cfnInlinePolicy([
+      { Effect: 'Allow', Action: 's3:PutObject', Resource: 'arn:aws:s3:::bucket/b/*' },
+      { Effect: 'Allow', Action: 's3:GetObject', Resource: 'arn:aws:s3:::bucket/a/*' },
+    ])
+    const result = gate([
+      reduceCloudFormation(orderA, 'cdk'),
+      reduceCloudFormation(orderA, 'cfn'),
+      reduceCloudFormation(orderB, 'terraform'),
+    ])
+    expect(result.passed).toBe(true)
+  })
+})
+
+describe('parity gate — per-resource value keys (the role-name sibling of role-trust-account)', () => {
+  it('keys each role name by its own node so a two-role artifact does not collapse to one role-name', () => {
+    const twoRoles: unknown = {
+      Resources: {
+        RoleA: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'apiable-role-a' } },
+        RoleB: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'apiable-role-b' } },
+      },
+    }
+    const model = reduceCloudFormation(twoRoles, 'cfn')
+    expect(model.values['role-name:iam-role:apiable-role-a']).toBe('apiable-role-a')
+    expect(model.values['role-name:iam-role:apiable-role-b']).toBe('apiable-role-b')
+  })
+})
+
+describe('parity gate — mixed AWS + federated trust in one statement', () => {
+  it('reads both the direct and the federated account from a single trust statement', () => {
+    const model = reduceCloudFormation(
+      cfnRole({ AWS: 'arn:aws:iam::111111111111:root', Federated: 'arn:aws:iam::222222222222:saml-provider/corp' }),
+      'cfn',
+    )
+    expect(model.values[TRUST_ACCOUNT_KEY]).toBe('111111111111,222222222222')
+  })
+})
