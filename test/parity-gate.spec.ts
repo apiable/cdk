@@ -307,6 +307,32 @@ describe('parity gate — per-resource identity by declared id (two roles do not
   })
 })
 
+describe('parity gate — declared-id collision forcing (two attached policies kept distinct by parent)', () => {
+  it('anchors two same-service inline policies to their own role, so they do not collapse onto one shared service key', () => {
+    const role = (id: string): unknown => ({
+      Type: 'AWS::IAM::Role',
+      Properties: { Tags: [{ Key: 'apiable:logical-id', Value: id }], AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } },
+    })
+    const policy = (name: string, role: string, resource: string): unknown => ({
+      Type: 'AWS::IAM::Policy',
+      Properties: { PolicyName: name, Roles: [{ Ref: role }], PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 's3:GetObject', Resource: resource }] } },
+    })
+    const artifact: unknown = {
+      Resources: {
+        RoleA: role('role-a'),
+        PolicyA: policy('pa', 'RoleA', 'arn:aws:s3:::bucket-a/*'),
+        RoleB: role('role-b'),
+        PolicyB: policy('pb', 'RoleB', 'arn:aws:s3:::bucket-b/*'),
+      },
+    }
+    const model = reduceCloudFormation(artifact, 'cfn')
+    // both policies grant the same s3 service: the inferred discriminator collapsed them onto one
+    // iam-inline-policy:s3 node; the parent anchor keeps each filed under its own role.
+    const policyRefs = new Set(model.graph.nodes.filter((node) => node.kind === 'iam-inline-policy').map((node) => node.ref))
+    expect(policyRefs).toEqual(new Set(['iam-inline-policy:policy-of:role-a:s3', 'iam-inline-policy:policy-of:role-b:s3']))
+  })
+})
+
 describe('parity gate — mixed AWS + federated trust in one statement', () => {
   it('reads both the direct and the federated account from a single trust statement', () => {
     const model = reduceCloudFormation(
