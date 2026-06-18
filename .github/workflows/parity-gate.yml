@@ -139,14 +139,12 @@ jobs:
           fi
           grep -q '12-digit' plan-err.log
 
-      # S3-4 — ground-truth the logs-bucket Terraform leg under GENUINE credentials. The bucket policy
-      # grants the deploying account (resolved from data.aws_caller_identity), so only a credentialed
-      # plan in the apiable-logging account models the tenant-root write principal faithfully. This step
-      # runs only when the logging-account credential is present (the credentialed job); the default
-      # per-PR gate has no such secret and skips it — a hand-fabricated or uncredentialed fixture cannot
-      # pass. The fresh plan must reduce to the SAME parity MODEL as the committed fixture (never a byte
-      # diff). The deploying account is read at runtime and passed so the incidental tenant root tokenises
-      # on both sides, keeping the model comparison stable across whichever account ran the plan.
+      # S3-4 — ground-truth the logs-bucket Terraform leg under genuine credentials: the bucket policy
+      # grants the deploying account (data.aws_caller_identity), which only a credentialed plan in the
+      # apiable-logging account resolves. Fenced on the logging-account credential, so the default
+      # per-PR gate (no such secret) skips it; the fresh plan must reduce to the committed parity MODEL,
+      # not a byte diff. The deploying account is passed so the incidental tenant root tokenises on both
+      # sides — see scripts/parity-tf-regen-check.ts.
       - name: terraform regen ground-truths the committed fixture (logs-bucket, credentialed)
         if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
         working-directory: terraform/apiable-logs-bucket
