@@ -93,6 +93,15 @@ export type ReadUpstreamOutputProps = CompositionKey
  * key, never an `Fn::ImportValue` cross-stack export or a `DescribeStacks` wait on the upstream's
  * deployment status. A missing or malformed key fails fast here (via the key validation); a key that
  * resolves to no parameter fails the deployment, so a downstream never reads a silent default.
+ *
+ * Resolution semantics: the value is resolved once, at the reader's own deploy time, and is
+ * unversioned (`valueForStringParameter` reads the parameter's latest value rather than pinning a
+ * version — pinning would freeze this reader to a single stale upstream value). So at the moment a
+ * downstream deploys it sees the current value or the deploy fails — never an empty/stale literal.
+ * The flip side is propagation: an upstream that rewrites its parameter after a downstream has
+ * deployed does not push the new value into that downstream until the downstream is redeployed. This
+ * is the AR10 loose-coupling trade-off, not a defect; coordinated redeploys carry forward upstream
+ * changes.
  */
 export const readUpstreamOutput = (scope: Construct, props: ReadUpstreamOutputProps): string =>
   ssm.StringParameter.valueForStringParameter(scope, compositionParameterName(props))

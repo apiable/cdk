@@ -8,7 +8,7 @@
  * real composition module + the real construct opt-in seam — no policy logic is re-declared here.
  */
 import * as cdk from 'aws-cdk-lib'
-import { Template, Match } from 'aws-cdk-lib/assertions'
+import { Template } from 'aws-cdk-lib/assertions'
 import { GatewayRoleStack, GATEWAY_ROLE_COMPONENT } from '@apiable/cdk-gateway-role'
 import { LogsBucketStack, LOGS_BUCKET_COMPONENT } from '@apiable/cdk-logs-bucket'
 import {
