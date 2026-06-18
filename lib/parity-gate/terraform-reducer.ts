@@ -69,7 +69,7 @@ interface TfResource {
  * (falling back to the provider-merged `tags_all`), or undefined when the tag is absent. */
 const declaredLogicalId = (values: Record<string, unknown>): string | undefined => {
   const tags = asRecord(values.tags ?? values.tags_all)
-  return asString(tags[DECLARED_ID_TAG])
+  return asString(tags[DECLARED_ID_TAG]) || undefined
 }
 
 /** The sorted IAM service set an inline policy grants on — its channel-stable per-parent local key. */

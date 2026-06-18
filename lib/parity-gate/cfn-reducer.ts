@@ -94,10 +94,10 @@ const resourceRefsIn = (value: unknown, resourceIds: ReadonlySet<string>): { id:
 /** The author-declared `apiable:logical-id` for a taggable primary, or undefined when the tag is absent.
  * A user pool carries it in the `UserPoolTags` map; every other taggable kind in the standard `Tags` list. */
 const declaredLogicalId = (kind: string, props: Record<string, unknown>): string | undefined => {
-  if (kind === 'cognito-user-pool') return asString(asRecord(props.UserPoolTags)[DECLARED_ID_TAG])
+  if (kind === 'cognito-user-pool') return asString(asRecord(props.UserPoolTags)[DECLARED_ID_TAG]) || undefined
   for (const entry of asArray(props.Tags)) {
     const tag = asRecord(entry)
-    if (asString(tag.Key) === DECLARED_ID_TAG) return asString(tag.Value)
+    if (asString(tag.Key) === DECLARED_ID_TAG) return asString(tag.Value) || undefined
   }
   return undefined
 }
