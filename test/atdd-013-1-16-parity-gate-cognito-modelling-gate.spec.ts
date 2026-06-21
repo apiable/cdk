@@ -215,20 +215,19 @@ describe('013-1-16 parity check — cognito modelling + CI', () => {
     expect(result.divergences).toEqual([])
   })
 
-  // contract: S2 — a divergent resource-server scope set is caught (M1)
+  // contract: S2 — a divergent resource-server scope set is caught (M1), including the two-pool forcing
+  // fixture: same-identifier resource-servers on different pools must not falsely collapse, and a widening
+  // on one must be caught on its own pool-anchored key.
   it('S2: a resource-server exposing a different named-scope set across channels → the check FAILS on the divergent scope set', () => {
+    // Single-pool: a divergent scope set across channels fails on the scope-set value.
     const result = gateOf(cfnCognitoStack({ scopes: ['read', 'write'] }), cfnCognitoStack({ scopes: ['read', 'write'] }), tfCognitoStack({ scopes: ['read'] }))
     expect(result.passed).toBe(false)
     const divergence = divergenceOn(result, 'value', 'resource-server-scopes')
     expect(divergence).toBeDefined()
     expect(divergence?.channels).toEqual(['terraform'])
-  })
 
-  // contract: S2 (M1 forcing fixture) — two pools each exposing an `apiable` resource-server are NOT
-  // falsely collapsed, AND a widening on one pool's resource-server is caught on its own pool-anchored key.
-  it('S2/M1: two same-identifier resource-servers on different pools are distinct (no false collision); a scope widening on one is caught precisely', () => {
-    // Equivalent across all three channels → PARITY OK (the two `apiable` resource-servers anchor to
-    // distinct pools, so they never clobber each other the way Identifier-only keying did).
+    // M1 forcing fixture: two pools each exposing an `apiable` resource-server anchor to distinct pools, so
+    // they never clobber each other the way Identifier-only keying did → equivalent channels are PARITY OK.
     const equivalent = gateOf(cfnTwoPools(['admin']), cfnTwoPools(['admin']), tfTwoPools(['admin']))
     expect(equivalent.passed).toBe(true)
     expect(equivalent.divergences).toEqual([])
@@ -237,9 +236,9 @@ describe('013-1-16 parity check — cognito modelling + CI', () => {
     // caught on its own pool-anchored key, not hidden behind the authentication pool's resource-server.
     const widened = gateOf(cfnTwoPools(['admin']), cfnTwoPools(['admin']), tfTwoPools(['admin', 'superadmin']))
     expect(widened.passed).toBe(false)
-    const divergence = divergenceOn(widened, 'value', `resource-server-scopes:cognito-resource-server:of-pool:${AUTHZ_POOL}:apiable`)
-    expect(divergence).toBeDefined()
-    expect(divergence?.channels).toEqual(['terraform'])
+    const widenedDivergence = divergenceOn(widened, 'value', `resource-server-scopes:cognito-resource-server:of-pool:${AUTHZ_POOL}:apiable`)
+    expect(widenedDivergence).toBeDefined()
+    expect(widenedDivergence?.channels).toEqual(['terraform'])
   })
 
   // contract: S3 — a resource bound to a different or no pool is caught (M3)
