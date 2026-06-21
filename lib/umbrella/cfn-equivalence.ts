@@ -5,10 +5,18 @@
  * logical ids while their real (physical) names are held constant. So "no observable change" is
  * proven by resource property + published-export equivalence with logical-id renames tolerated — a
  * raw whole-template comparison is the wrong oracle because it false-fails on the rename.
+ *
+ * A cross-resource reference is normalised by *what it points at* — the target resource's shape, not
+ * its renameable logical id — so a consistent rename is tolerated while a reference re-pointed at a
+ * different resource (a policy re-attached to another role, a stream re-wired to another bucket) reads
+ * as drift. By-value identity (a trusted account, an ARN, a principal) is compared as the literal it
+ * is, so an IAM trust/principal re-target is a property change the whole-shape comparison reports.
  */
 
+type CfnResource = { Type: string; Properties?: unknown; [k: string]: unknown }
+
 type CfnTemplate = {
-  Resources?: Record<string, { Type: string; Properties?: unknown; [k: string]: unknown }>
+  Resources?: Record<string, CfnResource>
   Outputs?: Record<string, { Value?: unknown; Export?: { Name?: unknown }; [k: string]: unknown }>
   Parameters?: Record<string, unknown>
 }
@@ -48,54 +56,116 @@ const canonical = (value: unknown): string => {
 }
 
 /**
- * Rewrite every cross-resource logical-id reference (`{Ref}`, `{Fn::GetAtt}`, `DependsOn`) and the
- * CDK default-policy `PolicyName` (which echoes the role's logical id) to a single placeholder, so a
- * pure logical-id rename of a referenced resource does not register as a property difference. The
- * referent's own identity is still compared via its type + (placeholder-normalised) properties.
+ * Resolves a logical-id reference to a token that encodes *what the reference points at* — the target
+ * resource's shape (its type + recursively reference-normalised properties), never its renameable
+ * logical-id identity. Two references to differently-shaped targets get different tokens, so a
+ * re-target (a policy re-attached to another role, a stream re-wired to another bucket) changes the
+ * referrer's canonical shape and registers as drift; a consistent logical-id rename leaves the
+ * target's shape unchanged, so the token is stable and the rename is tolerated.
  */
-const normaliseLogicalRefs = (value: unknown, logicalIds: Set<string>): unknown => {
-  const PLACEHOLDER = '__logical-ref__'
-  const walk = (v: unknown): unknown => {
-    if (Array.isArray(v)) return v.map(walk)
-    if (v && typeof v === 'object') {
-      const obj = v as Record<string, unknown>
-      const keys = Object.keys(obj)
-      if (keys.length === 1 && obj.Ref !== undefined && typeof obj.Ref === 'string' && logicalIds.has(obj.Ref)) {
-        return { Ref: PLACEHOLDER }
-      }
-      if (keys.length === 1 && Array.isArray(obj['Fn::GetAtt'])) {
-        const [target, ...rest] = obj['Fn::GetAtt'] as unknown[]
-        if (typeof target === 'string' && logicalIds.has(target)) {
-          return { 'Fn::GetAtt': [PLACEHOLDER, ...rest.map(walk)] }
-        }
-      }
-      const out: Record<string, unknown> = {}
-      for (const k of keys) {
-        if (k === 'PolicyName' && typeof obj[k] === 'string' && logicalIds.has(obj[k] as string)) {
-          out[k] = PLACEHOLDER
-        } else if (k === 'DependsOn') {
-          const dep = obj[k]
-          out[k] = (Array.isArray(dep) ? dep : [dep]).map((d) => (typeof d === 'string' && logicalIds.has(d) ? PLACEHOLDER : d))
-        } else {
-          out[k] = walk(obj[k])
-        }
-      }
-      return out
-    }
-    return v
+const targetTokenResolver = (resources: Record<string, CfnResource>) => {
+  const logicalIds = new Set(Object.keys(resources))
+  const cache = new Map<string, string>()
+
+  // `resolving` breaks reference cycles (a target whose own properties reference back to the referrer):
+  // a target already on the resolution stack anchors on its type alone, which terminates while keeping
+  // the cycle's shape distinct from an acyclic target of the same type.
+  const shapeToken = (id: string, resolving: Set<string>): string => {
+    const cached = cache.get(id)
+    if (cached !== undefined) return cached
+    const target = resources[id]
+    if (!target) return 'ref→<unknown>'
+    if (resolving.has(id)) return `ref-cycle→${target.Type}`
+    const nextResolving = new Set(resolving).add(id)
+    const properties = normalise(target.Properties ?? null, nextResolving)
+    const token = `ref→${canonical({ type: target.Type, properties })}`
+    cache.set(id, token)
+    return token
   }
-  return walk(value)
+
+  /**
+   * Rewrites every cross-resource logical-id reference to its target-shape token, across every form a
+   * CloudFormation template can express one: `{Ref}`, array- and string-form `{Fn::GetAtt}`,
+   * `Fn::Sub`-embedded `${LogicalId}`, `DependsOn`, and the CDK default-policy `PolicyName` echo.
+   */
+  const normalise = (value: unknown, resolving: Set<string>): unknown => {
+    const walk = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(walk)
+      if (v && typeof v === 'object') {
+        const obj = v as Record<string, unknown>
+        const keys = Object.keys(obj)
+        if (keys.length === 1 && typeof obj.Ref === 'string' && logicalIds.has(obj.Ref)) {
+          return { Ref: shapeToken(obj.Ref, resolving) }
+        }
+        if (keys.length === 1 && obj['Fn::GetAtt'] !== undefined) {
+          const getAtt = obj['Fn::GetAtt']
+          if (Array.isArray(getAtt)) {
+            const [target, ...rest] = getAtt as unknown[]
+            if (typeof target === 'string' && logicalIds.has(target)) {
+              return { 'Fn::GetAtt': [shapeToken(target, resolving), ...rest.map(walk)] }
+            }
+          } else if (typeof getAtt === 'string') {
+            const dot = getAtt.indexOf('.')
+            const target = dot >= 0 ? getAtt.slice(0, dot) : getAtt
+            if (dot >= 0 && logicalIds.has(target)) {
+              return { 'Fn::GetAtt': `${shapeToken(target, resolving)}${getAtt.slice(dot)}` }
+            }
+          }
+        }
+        if (keys.length === 1 && obj['Fn::Sub'] !== undefined) {
+          return { 'Fn::Sub': normaliseSub(obj['Fn::Sub'], resolving) }
+        }
+        const out: Record<string, unknown> = {}
+        for (const k of keys) {
+          if (k === 'PolicyName' && typeof obj[k] === 'string' && logicalIds.has(obj[k] as string)) {
+            out[k] = shapeToken(obj[k] as string, resolving)
+          } else if (k === 'DependsOn') {
+            const dep = obj[k]
+            out[k] = (Array.isArray(dep) ? dep : [dep]).map((d) =>
+              typeof d === 'string' && logicalIds.has(d) ? shapeToken(d, resolving) : walk(d),
+            )
+          } else {
+            out[k] = walk(obj[k])
+          }
+        }
+        return out
+      }
+      return v
+    }
+    return walk(value)
+  }
+
+  // `Fn::Sub` is either a string or `[template, { var: value }]`; embedded `${LogicalId}` references
+  // (not `${Logical.Attr}` pseudo-params or `${!Literal}` escapes) rewrite to the target-shape token.
+  const normaliseSub = (sub: unknown, resolving: Set<string>): unknown => {
+    const rewriteString = (s: string): string =>
+      s.replace(/\$\{([^}]+)\}/g, (match, inner: string) => {
+        const id = inner.trim()
+        return logicalIds.has(id) ? `\${${shapeToken(id, resolving)}}` : match
+      })
+    if (typeof sub === 'string') return rewriteString(sub)
+    if (Array.isArray(sub)) {
+      const [template, vars, ...rest] = sub as unknown[]
+      const head = typeof template === 'string' ? rewriteString(template) : normalise(template, resolving)
+      return [head, normalise(vars, resolving), ...rest.map((r) => normalise(r, resolving))]
+    }
+    return normalise(sub, resolving)
+  }
+
+  return (value: unknown): unknown => normalise(value, new Set<string>())
 }
 
 /**
- * The multiset of resource shapes, keyed by type + logical-id-normalised properties so that a rename
- * of a resource's logical id (and of any reference to it) does not register as a change.
+ * The multiset of resource shapes, keyed by type + reference-normalised properties so that a rename of
+ * a resource's logical id (and of any reference to it) does not register as a change, while a
+ * reference re-pointed at a different resource does (its target-shape token changes).
  */
 export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
-  const logicalIds = new Set(Object.keys(template.Resources ?? {}))
+  const resources = template.Resources ?? {}
+  const normaliseRefs = targetTokenResolver(resources)
   const counts = new Map<string, number>()
-  for (const resource of Object.values(template.Resources ?? {})) {
-    const properties = normaliseLogicalRefs(resource.Properties ?? null, logicalIds)
+  for (const resource of Object.values(resources)) {
+    const properties = normaliseRefs(resource.Properties ?? null)
     const key = canonical({ type: resource.Type, properties })
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
@@ -104,12 +174,12 @@ export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
 
 /** Published exports keyed by export name — the contract dependent stacks import via `Fn::ImportValue`. */
 export const publishedExports = (template: CfnTemplate): Map<string, string> => {
-  const logicalIds = new Set(Object.keys(template.Resources ?? {}))
+  const normaliseRefs = targetTokenResolver(template.Resources ?? {})
   const exports = new Map<string, string>()
   for (const output of Object.values(template.Outputs ?? {})) {
     const exportName = output.Export?.Name
     if (typeof exportName === 'string') {
-      exports.set(exportName, canonical(normaliseLogicalRefs(output.Value, logicalIds)))
+      exports.set(exportName, canonical(normaliseRefs(output.Value)))
     }
   }
   return exports
