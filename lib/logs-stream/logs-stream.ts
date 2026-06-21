@@ -10,6 +10,12 @@ import { BUCKET_ARN_PATTERN_SOURCE, CONSTRUCT_NAME } from './launch-stack-url'
 /** Logical id of the storage-location parameter the published template scopes the stream's destination by. */
 export const LOGS_BUCKET_ARN_PARAMETER = 'LogsBucketArn'
 
+/** Logical id of the stream-name parameter the published template scopes the stream's physical names by. */
+export const STREAM_NAME_PARAMETER = 'StreamName'
+
+/** Logical id of the destination-prefix parameter the published template routes records under. */
+export const PREFIX_PARAMETER = 'DestinationPrefix'
+
 /** Kebab kit-component segment the usage-log distribution publishes its outputs under. */
 export const USAGELOGS_STREAM_COMPONENT = 'usagelogs-stream'
 
@@ -74,13 +80,17 @@ export class LogsStreamConstruct extends Construct {
 
     const { logsBucketArn, name } = props
     const prefix = props.prefix ?? DEFAULT_USAGELOGS_PREFIX
+    // A construct id may not contain a token, so a parameterised (published one-click) name falls back
+    // to a static id while the physical names keep the full `${name}` interpolation (a CFN Sub). A
+    // concrete name (the standalone/umbrella path) embeds in the id exactly as the existing deploy expects.
+    const idSuffix = cdk.Token.isUnresolved(name) ? '' : `-${name}`
 
-    const log = new logs.LogGroup(this, `firehose-log-${name}`, {
+    const log = new logs.LogGroup(this, `firehose-log${idSuffix}`, {
       logGroupName: `/aws/firehose/logs-${name}`,
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: RemovalPolicy.DESTROY,
     })
-    const stream = new logs.LogStream(this, `firehose-log-stream-${name}`, {
+    const stream = new logs.LogStream(this, `firehose-log-stream${idSuffix}`, {
       logGroup: log,
       logStreamName: `firehose-log-stream-${name}`,
       removalPolicy: RemovalPolicy.DESTROY,
@@ -116,7 +126,10 @@ export class LogsStreamConstruct extends Construct {
     // declared id rather than its name-derived discriminator. 'apiable:logical-id' is the gate's tag key.
     cdk.Tags.of(this.deliveryRole).add('apiable:logical-id', FIREHOSE_ROLE_LOGICAL_ID)
 
-    this.deliveryStream = new kinesisfirehose.CfnDeliveryStream(this, `${GATEWAY_STREAM_NAME_PREFIX}${name}`, {
+    const streamConstructId = cdk.Token.isUnresolved(name)
+      ? GATEWAY_STREAM_NAME_PREFIX.replace(/-$/, '')
+      : `${GATEWAY_STREAM_NAME_PREFIX}${name}`
+    this.deliveryStream = new kinesisfirehose.CfnDeliveryStream(this, streamConstructId, {
       deliveryStreamName: `${GATEWAY_STREAM_NAME_PREFIX}${name}`, // the name MUST start with amazon-apigateway-
       deliveryStreamType: 'DirectPut',
       s3DestinationConfiguration: {
@@ -231,10 +244,37 @@ export class LogsStreamStack extends cdk.Stack {
       logsBucketArn = logsBucketArnParameter.valueAsString
     }
 
+    // The stream name + destination prefix are deploy-time named values too; omitting them keeps the
+    // usage-log defaults, so a one-click deploy with only the storage location reproduces the existing
+    // usage-log stream while a customer can still override either.
+    let name = props.name
+    if (name === undefined) {
+      const streamNameParameter = new CfnParameter(this, STREAM_NAME_PARAMETER, {
+        type: 'String',
+        default: DEFAULT_USAGELOGS_NAME,
+        minLength: 1,
+        description: 'Resource-name token the usage-log stream is scoped by (amazon-apigateway-<name>)',
+      })
+      streamNameParameter.overrideLogicalId(STREAM_NAME_PARAMETER)
+      name = streamNameParameter.valueAsString
+    }
+
+    let prefix = props.prefix
+    if (prefix === undefined) {
+      const prefixParameter = new CfnParameter(this, PREFIX_PARAMETER, {
+        type: 'String',
+        default: DEFAULT_USAGELOGS_PREFIX,
+        minLength: 1,
+        description: 'S3 key prefix the stream writes its logs/ and errors/ records under',
+      })
+      prefixParameter.overrideLogicalId(PREFIX_PARAMETER)
+      prefix = prefixParameter.valueAsString
+    }
+
     this.logsStream = new LogsStreamConstruct(this, 'LogsStream', {
       logsBucketArn,
-      name: props.name ?? DEFAULT_USAGELOGS_NAME,
-      prefix: props.prefix ?? DEFAULT_USAGELOGS_PREFIX,
+      name,
+      prefix,
       tenant: props.tenant,
       publishComposition: props.publishComposition,
       compositionComponent: props.compositionComponent,

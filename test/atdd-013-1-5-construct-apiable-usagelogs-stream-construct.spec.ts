@@ -25,6 +25,8 @@ import {
   LogsStreamStackProps,
   buildPublishedStack,
   LOGS_BUCKET_ARN_PARAMETER,
+  STREAM_NAME_PARAMETER,
+  PREFIX_PARAMETER,
   FIREHOSE_ROLE_LOGICAL_ID,
   DEFAULT_USAGELOGS_PREFIX,
   launchStackTemplateKey,
@@ -111,8 +113,12 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
   // S3 — storage location / prefix / name are deploy-time Parameters (not literals); own resources only
   it('S3: storage location is a deploy-time Parameter (a Ref, never a baked literal); published artifact carries only its own resources', () => {
     const pub = publishedTemplate()
-    // logsBucketArn surfaced as a required CFN Parameter
+    // storage location, stream name, and destination prefix are all surfaced as deploy-time CFN
+    // Parameters (not fixed inside the artifact); the storage location is required, name/prefix default
+    // to the usage-log values
     pub.hasParameter(LOGS_BUCKET_ARN_PARAMETER, Match.objectLike({ Type: 'String' }))
+    pub.hasParameter(STREAM_NAME_PARAMETER, Match.objectLike({ Default: 'usagelogs' }))
+    pub.hasParameter(PREFIX_PARAMETER, Match.objectLike({ Default: DEFAULT_USAGELOGS_PREFIX }))
 
     // the destination BucketARN is a { Ref: <param> }, never a baked literal
     const dest = firstResource(pub, 'AWS::KinesisFirehose::DeliveryStream').Properties
@@ -174,22 +180,31 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
     )
     cdkT.hasResourceProperties('AWS::IAM::Role', Match.objectLike({ RoleName: EXPECTED_ROLE_NAME }))
 
-    // ── published one-click (CFN) channel — same resource shape ──────────────────────────────────
+    // ── published one-click (CFN) channel — same resource shape, name/prefix as deploy-time params ──
     const pub = publishedTemplate()
     pub.resourceCountIs('AWS::KinesisFirehose::DeliveryStream', 1)
     pub.resourceCountIs('AWS::IAM::Role', 1)
     pub.hasResourceProperties(
       'AWS::KinesisFirehose::DeliveryStream',
       Match.objectLike({
-        DeliveryStreamName: Match.stringLikeRegexp('^amazon-apigateway-'),
+        DeliveryStreamType: 'DirectPut',
         S3DestinationConfiguration: Match.objectLike({
-          Prefix: `${DEFAULT_USAGELOGS_PREFIX}/logs/`,
-          ErrorOutputPrefix: `${DEFAULT_USAGELOGS_PREFIX}/errors/`,
           BufferingHints: { IntervalInSeconds: 300, SizeInMBs: 5 },
           CompressionFormat: 'UNCOMPRESSED',
         }),
       }),
     )
+    // the gateway-recognised name prefix survives parameterisation: the stream name joins the literal
+    // `amazon-apigateway-` prefix with the StreamName parameter, and the destination prefix routes the
+    // DestinationPrefix parameter under /logs/ + /errors/
+    const pubStream = firstResource(pub, 'AWS::KinesisFirehose::DeliveryStream').Properties as {
+      DeliveryStreamName: unknown
+      S3DestinationConfiguration: { Prefix: unknown; ErrorOutputPrefix: unknown }
+    }
+    expect(JSON.stringify(pubStream.DeliveryStreamName)).toContain('amazon-apigateway-')
+    expect(JSON.stringify(pubStream.S3DestinationConfiguration.Prefix)).toContain('/logs/')
+    expect(JSON.stringify(pubStream.S3DestinationConfiguration.Prefix)).toContain(PREFIX_PARAMETER)
+    expect(JSON.stringify(pubStream.S3DestinationConfiguration.ErrorOutputPrefix)).toContain('/errors/')
 
     // ── Terraform channel — the hand-rolled module source ────────────────────────────────────────
     const main = tfModule('main.tf')
