@@ -5,6 +5,8 @@ export {
   PARTNER_ACCOUNT_PARAMETER,
   TENANT_NAME_PARAMETER,
   LOGS_BUCKET_COMPONENT,
+  LOGS_BUCKET_LOGICAL_ID,
+  LOGS_WRITE_ROLE_LOGICAL_ID,
 } from './logs-bucket'
 export type { LogsBucketProps, LogsBucketStackProps } from './logs-bucket'
 export {

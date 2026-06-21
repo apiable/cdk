@@ -52,6 +52,16 @@ export const discriminatorOf = (ref: string): string => {
   return separator === -1 ? ref : ref.slice(separator + 1)
 }
 
+/**
+ * Canonicalise the attribute an output exports so a resource's primary identifier reconciles across
+ * channels. A CloudFormation `Ref` of an S3 bucket resolves to the bucket name — the same value the
+ * Terraform `bucket` attribute carries — so an output exporting the bucket name reduces to one `name`
+ * attr in every channel rather than `ref` (CloudFormation) versus `bucket` (Terraform). Every other
+ * attribute (an `arn`) already shares one label across channels and is left exactly as read.
+ */
+export const canonicalOutputAttr = (kind: string, attr: string): string =>
+  kind === 's3-bucket' && (attr === 'ref' || attr === 'bucket') ? 'name' : attr
+
 /** The IAM service prefixes in an action set, sorted and de-duplicated — a channel-stable discriminator for an inline policy whose generated name differs per channel. */
 export const policyServices = (actions: readonly string[]): string => {
   const services = new Set(actions.map((a) => a.split(':')[0]))

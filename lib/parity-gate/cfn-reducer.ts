@@ -28,6 +28,7 @@ import {
 } from './model'
 import {
   canonicalCfnKind,
+  canonicalOutputAttr,
   DECLARED_ID_KINDS,
   DECLARED_ID_TAG,
   discriminatorOf,
@@ -441,10 +442,9 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       const bucketTarget = resourceRefsIn(res.properties.Bucket, resourceIds)[0]
       const bucketNodeRef = bucketTarget !== undefined ? refToNode.get(bucketTarget.id) : undefined
       grants.push(...bucketPolicyGrants(res.properties.PolicyDocument, resolve, region, securedBucketName(bucketNodeRef), canonicaliseResource))
-      // Who may write to the bucket across accounts — the load-bearing cross-account write grant — read
-      // by value (the deploying account dropped) so a widened or different writer diverges on the value tier.
-      const writeAccounts = grantedAccountsValue(resolvedPrincipalsOf(res.properties.PolicyDocument, resolve), deployAccount)
-      if (writeAccounts !== undefined) values[`bucket-policy-write-accounts:${ref}`] = writeAccounts
+      // The cross-account write grant by value (the deploying account dropped); always emitted — {none}
+      // when no external writer — so a deploy-only narrowing compares present-vs-present, never an absent key.
+      values[`bucket-policy-write-accounts:${ref}`] = grantedAccountsValue(resolvedPrincipalsOf(res.properties.PolicyDocument, resolve), deployAccount)
       if (bucketTarget !== undefined) {
         edges.push({ from: ref, to: bucketNodeRef ?? bucketTarget.id, relation: 'secures-bucket' })
       }
@@ -477,9 +477,10 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     if (targets.length === 0) continue
     const target = targets[0]
     const targetKind = canonicalCfnKind(resources[target.id].type)
-    const outputRef = nodeRef('output', `${targetKind}.${target.attr}`)
+    const attr = canonicalOutputAttr(targetKind, target.attr)
+    const outputRef = nodeRef('output', `${targetKind}.${attr}`)
     nodes.push({ ref: outputRef, kind: 'output' })
-    edges.push({ from: outputRef, to: refToNode.get(target.id) ?? target.id, relation: `exports:${target.attr}` })
+    edges.push({ from: outputRef, to: refToNode.get(target.id) ?? target.id, relation: `exports:${attr}` })
     void name
   }
 

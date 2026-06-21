@@ -60,9 +60,11 @@ describe('S3 bucket-policy grant extraction', () => {
     expect(model.values[`bucket-policy-write-accounts:s3-bucket-policy:${BUCKET_ID}`]).toBe('*')
   })
 
-  it('emits no write-account value when the policy grants only the deploying account itself', () => {
+  it('emits the {none} sentinel when the policy grants only the deploying account itself', () => {
     const model = reduceCloudFormation(cfnBucketPolicy({ AWS: arnRoot(DEPLOY) }), 'cfn', REGION, DEPLOY)
-    expect(model.values[`bucket-policy-write-accounts:s3-bucket-policy:${BUCKET_ID}`]).toBeUndefined()
+    // No external writer: the key is still emitted as an explicit {none}, never dropped, so a deploy-only
+    // narrowing compares present-vs-present against a channel that grants a partner.
+    expect(model.values[`bucket-policy-write-accounts:s3-bucket-policy:${BUCKET_ID}`]).toBe('{none}')
   })
 })
 
@@ -135,9 +137,9 @@ describe('S3 reducer edge inputs', () => {
     expect(model.grants.filter((entry) => entry.ref.startsWith('grant:bucket-policy'))).toEqual([])
   })
 
-  it('does not mistake a Service principal in a bucket policy for an account grant', () => {
+  it('treats a Service principal as no external account grant — the {none} sentinel, not a real account', () => {
     const model = reduceCloudFormation(cfnBucketPolicy({ Service: 'logging.s3.amazonaws.com' }), 'cfn', REGION, DEPLOY)
-    expect(model.values[`bucket-policy-write-accounts:s3-bucket-policy:${BUCKET_ID}`]).toBeUndefined()
+    expect(model.values[`bucket-policy-write-accounts:s3-bucket-policy:${BUCKET_ID}`]).toBe('{none}')
   })
 
   it('keys the bucket-policy node by the bucket even when the bucket reference cannot be resolved', () => {

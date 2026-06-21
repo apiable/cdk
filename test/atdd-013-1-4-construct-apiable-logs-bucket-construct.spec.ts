@@ -22,7 +22,7 @@ import {
   launchStackTemplateKey,
   launchStackTemplateS3Uri,
 } from '@apiable/cdk-logs-bucket'
-import { gate, reduceCloudFormation } from '@apiable/parity-gate'
+import { gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
 
 const PARTNER_ACCOUNT = DEFAULT_APIABLE_PARTNER_ACCOUNT
 const REGION = 'eu-central-1'
@@ -113,13 +113,17 @@ describe('013-1-4 apiable-logs-bucket — synth + parity contract', () => {
     pub.resourceCountIs('AWS::S3::BucketPolicy', 1)
     pub.resourceCountIs('AWS::IAM::Role', 1)
 
-    // The published channel's bucket-policy is now proven by the real parity engine, not a bare count:
-    // it reduces to the same bucket-policy write grant as the CDK-synth channel (the deploying account
-    // tokenised on each side, so only the bounded cross-account writer compares), so the one-click
-    // template cannot ship a divergent write principal. (013-1-15 subsumes the count-only interim.)
+    // The bucket-policy is proven by the real parity engine across all three real channels, not a bare
+    // count: the CDK synth, the published one-click template, AND the committed hand-rolled Terraform
+    // fixture reduce to the same bucket-policy write grant (the deploying account tokenised on each side,
+    // so only the bounded cross-account writer compares), so no channel — including the independently
+    // implemented Terraform module — can ship a divergent write principal. (013-1-15 subsumes the
+    // count-only interim and feeds the real Terraform leg, not a CFN clone.)
     const enginePub = reduceCloudFormation(publishedTemplate().toJSON(), 'cfn', REGION)
     const engineCdk = reduceCloudFormation(concreteTemplate().toJSON(), 'cdk', REGION, TENANT_ACCOUNT)
-    const bucketPolicyComparison = gate([engineCdk, enginePub, { ...enginePub, channel: 'terraform' }]).divergences.filter(
+    const tfFixture = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-logs-bucket-show.json'), 'utf8'))
+    const engineTf = reduceTerraformShowJson(tfFixture, 'terraform', REGION, TENANT_ACCOUNT)
+    const bucketPolicyComparison = gate([engineCdk, enginePub, engineTf]).divergences.filter(
       (entry) => entry.detail.includes('bucket-policy') || entry.detail.includes('s3-bucket-policy'),
     )
     expect(bucketPolicyComparison).toEqual([])

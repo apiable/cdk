@@ -183,6 +183,14 @@ export const normaliseLogical = (value: string, region?: string): string => {
 export const WILDCARD_PRINCIPAL = '*'
 
 /**
+ * The sentinel for a bucket policy that grants no external writer at all — only the deploying account.
+ * Emitted as an explicit value so a policy narrowed to deploy-only is compared by value against a
+ * present writer set (present-vs-present), never dropped to a silently-absent key a presence vote can
+ * mis-read. A 12-digit account set can never equal it.
+ */
+export const NO_EXTERNAL_GRANTEE = '{none}'
+
+/**
  * The accounts a resource policy grants to, BY VALUE, minus the incidental deploying account. A
  * bucket policy names the deploying (tenant) account — the `AWS::AccountId` pseudo-parameter on the
  * published channel (already a token, no digits), the concrete deploy account elsewhere — and the
@@ -192,9 +200,10 @@ export const WILDCARD_PRINCIPAL = '*'
  * and a missing one shrinks. A wildcard collapses to {@link WILDCARD_PRINCIPAL} so "any account" never
  * compares equal to a bounded set. The principals are the channel-resolved (not logical-normalised)
  * values, so account literals survive to be compared. Returns a stable sorted comma-joined key, or
- * undefined when the policy grants no external account (only the deploying account itself).
+ * {@link NO_EXTERNAL_GRANTEE} when the policy grants no external account (only the deploying account
+ * itself), so an empty external-writer set is still compared by value rather than dropped to absence.
  */
-export const grantedAccountsValue = (resolvedPrincipals: readonly string[], deployAccount?: string): string | undefined => {
+export const grantedAccountsValue = (resolvedPrincipals: readonly string[], deployAccount?: string): string => {
   const grantees = new Set<string>()
   for (const principal of resolvedPrincipals) {
     if (principal.includes(WILDCARD_PRINCIPAL)) grantees.add(WILDCARD_PRINCIPAL)
@@ -202,7 +211,7 @@ export const grantedAccountsValue = (resolvedPrincipals: readonly string[], depl
       if (account !== deployAccount) grantees.add(account)
     }
   }
-  return grantees.size > 0 ? [...grantees].sort().join(',') : undefined
+  return grantees.size > 0 ? [...grantees].sort().join(',') : NO_EXTERNAL_GRANTEE
 }
 
 /**

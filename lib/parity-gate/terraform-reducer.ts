@@ -28,6 +28,7 @@ import {
 } from './model'
 import {
   canonicalTfKind,
+  canonicalOutputAttr,
   DECLARED_ID_KINDS,
   DECLARED_ID_TAG,
   discriminatorOf,
@@ -447,10 +448,9 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     }
     if (kind === 's3-bucket-policy') {
       grants.push(...bucketPolicyGrants(res.values.policy, region, securedBucketName(securedBucketByPolicyAddress.get(res.address)), canonicaliseResource))
-      // Who may write to the bucket across accounts, by value (the deploying account dropped) so a
-      // widened or different writer diverges on the value tier — the same load-bearing read as the CFN side.
-      const writeAccounts = grantedAccountsValue(resolvedPrincipalsOf(parseJson(res.values.policy), tfResolve), deployAccount)
-      if (writeAccounts !== undefined) values[`bucket-policy-write-accounts:${ref}`] = writeAccounts
+      // The cross-account write grant by value (the deploying account dropped); always emitted — {none}
+      // when no external writer — so a deploy-only narrowing compares present-vs-present, never an absent key.
+      values[`bucket-policy-write-accounts:${ref}`] = grantedAccountsValue(resolvedPrincipalsOf(parseJson(res.values.policy), tfResolve), deployAccount)
     }
     if (kind === 'lambda-permission') grants.push(lambdaPermissionGrant(res.values, region))
     if (kind === 'cognito-user-pool-client') {
@@ -512,9 +512,10 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     const target = referencesOf(asRecord(spec).expression, addresses)[0]
     if (target === undefined) continue
     const targetKind = kindByAddress.get(target.address) ?? 'resource'
-    const outputRef = nodeRef('output', `${targetKind}.${target.attr}`)
+    const attr = canonicalOutputAttr(targetKind, target.attr)
+    const outputRef = nodeRef('output', `${targetKind}.${attr}`)
     nodes.push({ ref: outputRef, kind: 'output' })
-    edges.push({ from: outputRef, to: refToNode.get(target.address) ?? target.address, relation: `exports:${target.attr}` })
+    edges.push({ from: outputRef, to: refToNode.get(target.address) ?? target.address, relation: `exports:${attr}` })
   }
 
   return {
