@@ -8,6 +8,7 @@ module.exports = {
   moduleNameMapper: {
     '^@apiable/cdk-gateway-role$': '<rootDir>/lib/gateway-role/index.ts',
     '^@apiable/cdk-logs-bucket$': '<rootDir>/lib/logs-bucket/index.ts',
+    '^@apiable/cdk-usagelogs-stream$': '<rootDir>/lib/logs-stream/index.ts',
     '^@apiable/parity-gate$': '<rootDir>/lib/parity-gate/index.ts',
     '^@apiable/umbrella$': '<rootDir>/lib/umbrella/index.ts',
     '^@apiable/cdk-ssm-composition$': '<rootDir>/lib/ssm-composition/index.ts',

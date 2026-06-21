@@ -1,0 +1,14 @@
+{
+  "name": "@apiable/cdk-usagelogs-stream",
+  "version": "1.0.0",
+  "description": "Apiable CDK construct kit: gateway usage-log Kinesis Firehose delivery stream with one-click CloudFormation provisioning.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "peerDependencies": {
+    "aws-cdk-lib": "2.137.0",
+    "constructs": "^10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

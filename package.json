@@ -11,8 +11,10 @@
     "test:live": "jest --config jest.live.config.js",
     "synth:launchstack": "bash synth-launchstack.sh",
     "synth:launchstack:logs-bucket": "bash synth-launchstack.sh apiable-logs-bucket",
+    "synth:launchstack:usagelogs-stream": "bash synth-launchstack.sh apiable-usagelogs-stream",
     "publish:terraform": "bash publish-terraform.sh",
     "publish:terraform:logs-bucket": "bash publish-terraform.sh apiable-logs-bucket",
+    "publish:terraform:usagelogs-stream": "bash publish-terraform.sh apiable-usagelogs-stream",
     "cdk": "cdk"
   },
   "devDependencies": {
