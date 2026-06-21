@@ -133,6 +133,19 @@ const everyReferenceForm = (): Tmpl => ({
   },
 })
 
+/**
+ * A reference cycle: two resources each reference the other (Alpha→Beta via Ref, Beta→Alpha via
+ * DependsOn). The shape-token resolver must terminate on the cycle and still tell two distinct cyclic
+ * graphs apart — so a rename of the cycle is tolerated while a re-target into the cycle is caught.
+ */
+const cyclicPair = (extraTarget: 'Beta' | 'Gamma'): Tmpl => ({
+  Resources: {
+    Alpha: { Type: 'AWS::IAM::Role', DependsOn: 'Beta', Properties: { RoleName: 'alpha', Peer: { Ref: extraTarget } } },
+    Beta: { Type: 'AWS::IAM::Policy', Properties: { PolicyName: 'beta', Roles: [{ Ref: 'Alpha' }] } },
+    Gamma: { Type: 'AWS::SQS::Queue', Properties: { QueueName: 'gamma' } },
+  },
+})
+
 /** Consistently rename a logical id and every reference to it (keys, Ref, GetAtt, Sub, DependsOn, PolicyName echo). */
 const renameAll = (template: Tmpl, oldId: string, newId: string): Tmpl =>
   JSON.parse(JSON.stringify(template).split(oldId).join(newId)) as Tmpl
@@ -167,6 +180,13 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       const renamed = renameAll(before as Tmpl, oldId, `Refactored${oldId}`)
       expect(renamed.Resources).not.toEqual(before.Resources)
       expect(cfnDifferences(before, renamed)).toEqual([])
+    })
+
+    it('a consistent rename across a reference cycle is tolerated (the resolver terminates on the cycle)', () => {
+      const baseline = cyclicPair('Beta')
+      const candidate = renameAll(baseline, 'Alpha', 'RenamedAlpha')
+      expect(candidate.Resources).not.toEqual(baseline.Resources)
+      expect(cfnDifferences(baseline, candidate)).toEqual([])
     })
   })
 
@@ -210,6 +230,12 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       const consumer = (candidate.Resources as Record<string, { Properties: { Environment: { Variables: { BucketUri: unknown } } } }>).Consumer
       // the Sub-embedded ${TargetBucket} re-pointed at ${TargetRole} (a differently-shaped resource)
       consumer.Properties.Environment.Variables.BucketUri = { 'Fn::Sub': 'arn:aws:s3:::${TargetRole}/data' }
+      expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+    })
+
+    it('a re-target INTO a reference cycle (a cyclic member re-pointed at a different resource) → drift', () => {
+      const baseline = cyclicPair('Beta')
+      const candidate = cyclicPair('Gamma') // Alpha.Peer re-pointed from Beta (Policy) to Gamma (Queue)
       expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
     })
   })

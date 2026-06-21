@@ -69,17 +69,20 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
 
   // `resolving` breaks reference cycles (a target whose own properties reference back to the referrer):
   // a target already on the resolution stack anchors on its type alone, which terminates while keeping
-  // the cycle's shape distinct from an acyclic target of the same type.
+  // the cycle's shape distinct from an acyclic target of the same type. Only the full token computed
+  // with an empty stack is cached — a token computed inside a cycle is truncated to its referrer's
+  // context, so caching it would leak that context's `ref-cycle` truncation into an unrelated resolve.
   const shapeToken = (id: string, resolving: Set<string>): string => {
-    const cached = cache.get(id)
-    if (cached !== undefined) return cached
+    if (resolving.size === 0) {
+      const cached = cache.get(id)
+      if (cached !== undefined) return cached
+    }
     const target = resources[id]
     if (!target) return 'ref→<unknown>'
     if (resolving.has(id)) return `ref-cycle→${target.Type}`
-    const nextResolving = new Set(resolving).add(id)
-    const properties = normalise(target.Properties ?? null, nextResolving)
+    const properties = normalise(target.Properties ?? null, new Set(resolving).add(id))
     const token = `ref→${canonical({ type: target.Type, properties })}`
-    cache.set(id, token)
+    if (resolving.size === 0) cache.set(id, token)
     return token
   }
 
