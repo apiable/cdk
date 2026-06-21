@@ -75,13 +75,14 @@ describe('declared-id identity (TA) — enforcement scope and the missing sentin
     expect(new Set(refsOfKind(model, 'iam-role')).size).toBe(2)
   })
 
-  it('keeps a tag-less cognito pool on its name-based discriminator (forward-compatible kind, not yet enforced)', () => {
-    // a pool is a declared-id kind but not enforced here, so a tag-less one is unchanged (no sentinel)
+  it('gives a tag-less enforced cognito pool the per-local-id missing sentinel, not a name-based fall-back', () => {
+    // the cognito pool is an enforced declared-id kind (its resource-servers, clients, and domain anchor
+    // their identity to it), so a tag-less one surfaces the missing sentinel rather than keying by its name
     const model = reduceCloudFormation(
       { Resources: { Pool: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'authz' } } } },
       'cfn',
     )
-    expect(refsOfKind(model, 'cognito-user-pool')).toEqual(['cognito-user-pool:authz'])
+    expect(refsOfKind(model, 'cognito-user-pool')[0]).toContain('no-declared-logical-id')
   })
 })
 

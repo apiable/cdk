@@ -60,6 +60,7 @@ const cfnCognitoPool = (lambdaVersion: string): unknown => ({
       Properties: {
         UserPoolName: 'authz',
         UserPoolTier: 'ESSENTIALS',
+        UserPoolTags: { 'apiable:logical-id': 'authz-pool' },
         LambdaConfig: { PreTokenGenerationConfig: { LambdaVersion: lambdaVersion, LambdaArn: { 'Fn::GetAtt': ['PreTokenFn', 'Arn'] } } },
       },
     },
@@ -76,6 +77,7 @@ const tfCognitoPoolLegacy = (): unknown => ({
           type: 'aws_cognito_user_pool',
           values: {
             name: 'authz',
+            tags: { 'apiable:logical-id': 'authz-pool' },
             lambda_config: [{ pre_token_generation: 'arn:aws:lambda:eu-central-1:034444869755:function:pretokengen' }],
           },
         },
@@ -251,8 +253,10 @@ describe('parity gate — static three-tier diff contract', () => {
   it('S8: emitted OAuth2 config checked vs RFC 6749 / 6750 / OIDC 1.0 statically, same check all three channels', () => {
     expect(checkOAuthConformance(conformantOAuth)).toEqual([])
     expect(checkOAuthConformance({ ...conformantOAuth, flows: ['magic_link'] }).map((issue) => issue.rule)).toContain('RFC6749')
+    // The hosted-UI token endpoint is required when a client signs in interactively (authorization-code);
+    // an interactive client whose discovery omits it is non-conformant.
     expect(
-      checkOAuthConformance({ ...conformantOAuth, discovery: { ...conformantOAuth.discovery, tokenEndpoint: undefined } }).map(
+      checkOAuthConformance({ ...conformantOAuth, flows: ['code'], discovery: { ...conformantOAuth.discovery, tokenEndpoint: undefined } }).map(
         (issue) => issue.rule,
       ),
     ).toContain('OIDC1.0')

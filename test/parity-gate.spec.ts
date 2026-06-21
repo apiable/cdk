@@ -49,6 +49,7 @@ const tfPoolBothForms = (): unknown => ({
           values: {
             name: 'authz',
             user_pool_tier: 'ESSENTIALS',
+            tags: { 'apiable:logical-id': 'authz-pool' },
             lambda_config: [
               {
                 pre_token_generation: 'arn:aws:lambda:eu-central-1:034444869755:function:pretokengen',
@@ -79,7 +80,7 @@ describe('parity gate — reducer well-formedness and version precedence', () =>
 
   it('prefers the explicit pre_token_generation_config version over the legacy attribute', () => {
     const model = reduceTerraformShowJson(tfPoolBothForms(), 'terraform', 'eu-central-1')
-    expect(model.values['pretokengen-version:cognito-user-pool:authz']).toBe('V3_0')
+    expect(model.values['pretokengen-version:cognito-user-pool:authz-pool']).toBe('V3_0')
   })
 })
 
@@ -470,15 +471,14 @@ describe('parity gate — within-channel identity collision (a primary id must b
     expect(collision).toBeDefined()
   })
 
-  it('fails when two resource-servers share one Identifier on different pools and the clobbered loser is scope-widened', () => {
-    // Same-Identifier resource-servers on different pools are two distinct resources, but the engine keys
-    // a resource-server by its Identifier alone, so they collapse onto one node and the second clobbers
-    // the first's resource-server-scopes. RsA (the loser) is scope-widened in terraform but hidden behind
-    // RsB's value; the within-channel collision guard is what catches it.
+  it('keys two same-Identifier resource-servers on different pools as distinct (no clobber), catching a widening on the right one', () => {
+    // Same-Identifier resource-servers on different pools are two distinct resources; anchoring each to its
+    // bound pool's declared id keeps them distinct, so a widening on one is caught on its own pool-anchored
+    // key instead of being clobbered last-write-wins behind the other's value.
     const twoResourceServers = (firstScopes: readonly string[]): unknown => ({
       Resources: {
-        PoolA: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-a' } },
-        PoolB: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-b' } },
+        PoolA: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-a', UserPoolTags: { 'apiable:logical-id': 'pool-a' } } },
+        PoolB: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'pool-b', UserPoolTags: { 'apiable:logical-id': 'pool-b' } } },
         RsA: {
           Type: 'AWS::Cognito::UserPoolResourceServer',
           Properties: { UserPoolId: { Ref: 'PoolA' }, Identifier: 'https://api.apiable.io', Name: 'api', Scopes: firstScopes.map((scope) => ({ ScopeName: scope, ScopeDescription: scope })) },
@@ -489,14 +489,25 @@ describe('parity gate — within-channel identity collision (a primary id must b
         },
       },
     })
+    // Equivalent across channels → no false collision and no resource-server divergence.
+    const equivalent = gate([
+      reduceCloudFormation(twoResourceServers(['read']), 'cdk'),
+      reduceCloudFormation(twoResourceServers(['read']), 'cfn'),
+      reduceCloudFormation(twoResourceServers(['read']), 'terraform'),
+    ])
+    expect(equivalent.passed).toBe(true)
+
+    // RsA (on pool-a) is scope-widened in terraform → caught on its own pool-anchored key, not hidden.
     const result = gate([
       reduceCloudFormation(twoResourceServers(['read']), 'cdk'),
       reduceCloudFormation(twoResourceServers(['read']), 'cfn'),
-      reduceCloudFormation(twoResourceServers(['read', 'admin']), 'terraform'), // RsA — the clobbered loser — scope-widened
+      reduceCloudFormation(twoResourceServers(['read', 'admin']), 'terraform'),
     ])
     expect(result.passed).toBe(false)
-    const collision = result.divergences.find((entry) => entry.detail.includes('cognito-resource-server:https://api.apiable.io'))
-    expect(collision).toBeDefined()
+    const widened = result.divergences.find(
+      (entry) => entry.tier === 'value' && entry.detail.includes('resource-server-scopes:cognito-resource-server:of-pool:pool-a:https://api.apiable.io'),
+    )
+    expect(widened?.channels).toEqual(['terraform'])
   })
 
   it('fails on two user-pool clients that collapse onto one name within a channel (the other primary kind)', () => {

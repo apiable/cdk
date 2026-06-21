@@ -86,12 +86,14 @@ export const DECLARED_ID_KINDS: ReadonlySet<string> = new Set([
 
 /**
  * The taggable primaries the construct kit emits the declared id on today — the gateway role, the
- * logs bucket, and its write role. A missing id on one of these is an explicit divergence (it has no
- * channel-stable identity to compare), never a silent fall-back to the name. The remaining
- * {@link DECLARED_ID_KINDS} adopt the id when their constructs are retrofitted; until then a tag-less
- * one keeps its prior name-derived discriminator so an existing verdict is unchanged.
+ * logs bucket and its write role, and both cognito user pools (the authentication and authorization
+ * pools the resource-servers, clients, and domain anchor their channel-stable identity to). A missing
+ * id on one of these is an explicit divergence (it has no channel-stable identity to compare), never a
+ * silent fall-back to the name. The remaining {@link DECLARED_ID_KINDS} — the pre-token lambda-function —
+ * adopt the id when their constructs are retrofitted; until then a tag-less one keeps its prior
+ * name-derived discriminator so an existing verdict is unchanged.
  */
-export const ENFORCED_DECLARED_ID_KINDS: ReadonlySet<string> = new Set(['iam-role', 's3-bucket'])
+export const ENFORCED_DECLARED_ID_KINDS: ReadonlySet<string> = new Set(['iam-role', 's3-bucket', 'cognito-user-pool'])
 
 /**
  * The kinds whose node ref must be UNIQUE within a channel: every kind that namespaces a load-bearing

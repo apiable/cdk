@@ -14,6 +14,7 @@ import {
   Channel,
   ChannelModel,
   cognitoDiscovery,
+  discoveryValueRows,
   grantedAccountsValue,
   identityCollisionsOf,
   namespaceByRef,
@@ -316,6 +317,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   // reference expressions, the same source the role/function edges already come from.
   const configResources = asArray(asRecord(asRecord(root.configuration).root_module).resources)
   const poolRefByClientAddress = new Map<string, string>()
+  const poolRefByResourceServerAddress = new Map<string, string>()
   const domainPrefixByPoolRef = new Map<string, string>()
   // The parent each attached resource is anchored to, read from the configuration's reference
   // expressions (the parent id is computed and absent from planned_values), so the attached node and
@@ -333,6 +335,10 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     if (kind === 'cognito-user-pool-client') {
       const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
       if (poolTarget !== undefined) poolRefByClientAddress.set(address, refToNode.get(poolTarget.address) ?? poolTarget.address)
+    }
+    if (kind === 'cognito-resource-server') {
+      const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
+      if (poolTarget !== undefined) poolRefByResourceServerAddress.set(address, refToNode.get(poolTarget.address) ?? poolTarget.address)
     }
     if (kind === 'cognito-user-pool-domain') {
       const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
@@ -379,6 +385,15 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     if (kind === 'cognito-user-pool-domain') {
       const poolRef = poolRefByDomainAddress.get(res.address)
       if (poolRef !== undefined) refToNode.set(res.address, nodeRef('cognito-user-pool-domain', `of-pool:${discriminatorOf(poolRef)}`))
+    }
+    // Anchor the resource-server to its bound pool's channel-stable identity plus its Identifier, so two
+    // pools each exposing an `apiable` resource-server stay distinct refs (mirrors the CloudFormation side).
+    if (kind === 'cognito-resource-server') {
+      const poolRef = poolRefByResourceServerAddress.get(res.address)
+      if (poolRef !== undefined) {
+        const identifier = asString(res.values.identifier) ?? 'resource-server'
+        refToNode.set(res.address, nodeRef('cognito-resource-server', `of-pool:${discriminatorOf(poolRef)}:${identifier}`))
+      }
     }
   }
 
@@ -452,12 +467,19 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       values[`bucket-policy-write-accounts:${ref}`] = grantedAccountsValue(resolvedPrincipalsOf(parseJson(res.values.policy), tfResolve), deployAccount)
     }
     if (kind === 'lambda-permission') grants.push(lambdaPermissionGrant(res.values, region))
+    if (kind === 'cognito-user-pool') {
+      // The pool's discovery endpoints as load-bearing value rows, so a divergent issuer or sign-in/token
+      // host is caught cross-channel by the value comparison, not merely checked per channel for conformance.
+      values = { ...values, ...discoveryValueRows(ref, region, domainPrefixByPoolRef.get(ref)) }
+    }
     if (kind === 'cognito-user-pool-client') {
       const poolRef = poolRefByClientAddress.get(res.address)
       const poolName = poolRef !== undefined ? poolNameFromRef(poolRef) : 'pool'
       const clientOauth = oauthFrom(res.values, cognitoDiscovery(poolName, region, poolRef !== undefined ? domainPrefixByPoolRef.get(poolRef) : undefined))
       if (clientOauth !== undefined) {
-        oauthByClient[ref] = clientOauth
+        // Key by the channel-local address, not the de-duplicating node ref: two same-named or nameless
+        // clients share a ref, so ref-keying would drop one client's conformance check.
+        oauthByClient[res.address] = clientOauth
         oauth = clientOauth
       }
     }

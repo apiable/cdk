@@ -118,10 +118,12 @@ export interface ChannelModel {
   readonly secrets: readonly SecretRef[]
   readonly oauth?: OAuthConfig
   /**
-   * Every OAuth client's emitted configuration, keyed by the client's channel-stable ref, so a
-   * channel that declares more than one client runs the conformance check on each — a single
-   * {@link oauth} slot would conformance-check only the last client reduced. The value-tier
-   * `oauth-flows`/`oauth-scopes` rows are already namespaced per client ref independently.
+   * Every OAuth client's emitted configuration, keyed by the client's channel-local id (unique within
+   * the channel), so a channel that declares more than one client runs the conformance check on each —
+   * a single {@link oauth} slot would conformance-check only the last client reduced, and the
+   * de-duplicating node ref would drop one of two same-named or nameless clients. The keys are read
+   * only internally ({@link gate} consumes the values), so a channel-local id is sufficient; the
+   * value-tier `oauth-flows`/`oauth-scopes` rows stay namespaced per client node ref independently.
    */
   readonly oauthByClient?: Readonly<Record<string, OAuthConfig>>
   /** Cosmetic settings — descriptions, runtime patch revisions, log retention — only ever warn. */
@@ -269,4 +271,29 @@ export const cognitoDiscovery = (poolName: string, region: string | undefined, d
   if (domainPrefix === undefined) return base
   const hosted = `https://${domainPrefix}.auth.${regionToken}.amazoncognito.com`
   return { ...base, authorizationEndpoint: `${hosted}/oauth2/authorize`, tokenEndpoint: `${hosted}/oauth2/token` }
+}
+
+/**
+ * A pool's derived discovery endpoints as load-bearing value rows keyed per pool ref, so a channel
+ * that mints or redeems tokens at a different host than its peers diverges on the value tier — the
+ * discovery document is compared CROSS-channel, not only checked per channel for conformance. The
+ * issuer and key set are always emitted; the sign-in/token endpoints only when the pool publishes a
+ * hosted sign-in domain. Single-sourced so both reducers emit identical rows for an equivalent pool.
+ * The deploy region collapses to {@link REGION_TOKEN} (as it does for every other identity here), so
+ * channels reduced with and without a concrete region still read the same issuer host.
+ */
+export const discoveryValueRows = (
+  poolRef: string,
+  region: string | undefined,
+  domainPrefix: string | undefined,
+): Record<string, string> => {
+  const discovery = cognitoDiscovery(poolNameFromRef(poolRef), region, domainPrefix)
+  const stable = (endpoint: string | undefined): string => normaliseLogical(endpoint ?? '', region)
+  const rows: Record<string, string> = {
+    [`oauth-discovery-issuer:${poolRef}`]: stable(discovery.issuer),
+    [`oauth-discovery-jwks:${poolRef}`]: stable(discovery.jwksUri),
+  }
+  if (discovery.authorizationEndpoint !== undefined) rows[`oauth-discovery-authorize:${poolRef}`] = stable(discovery.authorizationEndpoint)
+  if (discovery.tokenEndpoint !== undefined) rows[`oauth-discovery-token:${poolRef}`] = stable(discovery.tokenEndpoint)
+  return rows
 }

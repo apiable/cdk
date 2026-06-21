@@ -7,6 +7,16 @@ import { fromContextOrDefault, fromContextOrError } from './utils'
 import * as path from 'path'
 import {CfnOutput} from "aws-cdk-lib";
 
+/**
+ * Author-declared, channel-identical identities the release-time parity gate keys the cognito pools and
+ * the pre-token function on (the `apiable:logical-id` tag), so each compares equal across the CDK,
+ * published-CFN, and Terraform channels regardless of its generated name, account, region, or tenant
+ * segment. The hand-rolled Terraform module declares the identical literals; an enforced pool that omits
+ * the tag surfaces as an explicit parity divergence rather than being inferred from its name.
+ */
+export const AUTHN_POOL_LOGICAL_ID = 'apiable-authn-pool'
+export const AUTHZ_POOL_LOGICAL_ID = 'apiable-authz-pool'
+export const PRE_TOKEN_FUNCTION_LOGICAL_ID = 'apiable-pretoken-fn'
 
 export interface Env extends cdk.StackProps {
   account: string;
@@ -75,6 +85,10 @@ export class Cognito extends cdk.Stack {
         }
       }
     })
+    // Declare the channel-stable identity on the pool itself (never the stack — a stack-wide tag
+    // collapses every resource onto one id), so the parity gate keys it by declared id. The tag lands
+    // in the pool's UserPoolTags; the gate enforces it (an id-less pool reads as a divergence).
+    cdk.Tags.of(poolAuthN).add('apiable:logical-id', AUTHN_POOL_LOGICAL_ID)
 
     const adminScope = new cognito.ResourceServerScope({
         scopeName: 'admin',
@@ -185,6 +199,7 @@ export class Cognito extends cdk.Stack {
       accountRecovery: cognito.AccountRecovery.NONE,
       selfSignUpEnabled: false
     })
+    cdk.Tags.of(poolAuthZ).add('apiable:logical-id', AUTHZ_POOL_LOGICAL_ID)
 
     const l = new lambda.Function(this, 'Function', {
       functionName: `${userPoolName}-auth`,
@@ -192,6 +207,7 @@ export class Cognito extends cdk.Stack {
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/pre-token-generation-authz')),
     })
+    cdk.Tags.of(l).add('apiable:logical-id', PRE_TOKEN_FUNCTION_LOGICAL_ID)
     poolAuthZ.addTrigger(cognito.UserPoolOperation.PRE_TOKEN_GENERATION_CONFIG, l, cognito.LambdaVersion.V1_0)
 
     const authZadminScope = new cognito.ResourceServerScope({

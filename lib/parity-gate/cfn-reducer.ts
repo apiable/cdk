@@ -13,6 +13,7 @@ import {
   Channel,
   ChannelModel,
   cognitoDiscovery,
+  discoveryValueRows,
   grantedAccountsValue,
   identityCollisionsOf,
   namespaceByRef,
@@ -343,6 +344,18 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
         refToNode.set(id, nodeRef('cognito-user-pool-domain', `of-pool:${discriminatorOf(refToNode.get(poolTarget.id) ?? poolTarget.id)}`))
       }
     }
+    // A resource-server's Identifier is only unique WITHIN one pool — two pools can each expose an
+    // `apiable` resource-server — so anchor the node to its bound pool's channel-stable identity plus
+    // the identifier, mirroring the domain. Same-identifier resource-servers on different pools are
+    // then distinct refs (no false collision); the within-channel guard still catches a same-pool dup.
+    if (kind === 'cognito-resource-server') {
+      const poolTarget = resourceRefsIn(res.properties.UserPoolId, resourceIds)[0]
+      if (poolTarget !== undefined) {
+        const poolDisc = discriminatorOf(refToNode.get(poolTarget.id) ?? poolTarget.id)
+        const identifier = asString(res.properties.Identifier) ?? 'resource-server'
+        refToNode.set(id, nodeRef('cognito-resource-server', `of-pool:${poolDisc}:${identifier}`))
+      }
+    }
     // A bucket-policy's channel-stable identity is the bucket it secures (its own name is generated).
     if (kind === 's3-bucket-policy') {
       const bucketTarget = resourceRefsIn(res.properties.Bucket, resourceIds)[0]
@@ -451,6 +464,9 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     if (kind === 'cognito-user-pool') {
       cognitoEdge(ref, asRecord(res.properties.LambdaConfig).PreTokenGeneration, 'pre-token-generation')
       cognitoEdge(ref, asRecord(asRecord(res.properties.LambdaConfig).PreTokenGenerationConfig).LambdaArn, 'pre-token-generation')
+      // The pool's discovery endpoints as load-bearing value rows, so a divergent issuer or sign-in/token
+      // host is caught cross-channel by the value comparison, not merely checked per channel for conformance.
+      values = { ...values, ...discoveryValueRows(ref, region, domainByPoolRef.get(ref)) }
     }
     if (kind === 'cognito-resource-server') {
       cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
@@ -465,7 +481,9 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       const poolRef = poolTargets.length > 0 ? refToNode.get(poolTargets[0].id) ?? poolTargets[0].id : nodeRef('cognito-user-pool', 'pool')
       const clientOauth = oauthFrom(res.properties, cognitoDiscovery(poolNameFromRef(poolRef), region, domainByPoolRef.get(poolRef)))
       if (clientOauth !== undefined) {
-        oauthByClient[ref] = clientOauth
+        // Key by the channel-local logical id, not the de-duplicating node ref: two same-named or
+        // nameless clients share a ref, so ref-keying would drop one client's conformance check.
+        oauthByClient[id] = clientOauth
         oauth = clientOauth
       }
     }

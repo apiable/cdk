@@ -30,21 +30,41 @@ const COGNITO_FLOW_TO_RFC6749: Readonly<Record<string, string>> = {
 
 const toRfc6749Flow = (flow: string): string => COGNITO_FLOW_TO_RFC6749[flow] ?? flow
 
+/**
+ * The RFC 6749 grants that sign a user in interactively through the hosted sign-in UI — the
+ * authorization-code and implicit flows. Only a client declaring one of these needs the pool to
+ * publish hosted sign-in / token endpoints; a machine-to-machine (client-credentials) client mints
+ * tokens directly and legitimately advertises no hosted-UI endpoint.
+ */
+const INTERACTIVE_FLOWS: ReadonlySet<string> = new Set(['authorization_code', 'implicit'])
+
 export interface ConformanceIssue {
   readonly rule: 'RFC6749' | 'RFC6750' | 'OIDC1.0'
   readonly detail: string
 }
 
-const REQUIRED_DISCOVERY: readonly (readonly [keyof OidcDiscovery, string])[] = [
+/** Discovery fields every conformant pool publishes: the issuer and the signing-key set. */
+const ALWAYS_REQUIRED_DISCOVERY: readonly (readonly [keyof OidcDiscovery, string])[] = [
   ['issuer', 'issuer'],
-  ['authorizationEndpoint', 'authorization_endpoint'],
-  ['tokenEndpoint', 'token_endpoint'],
   ['jwksUri', 'jwks_uri'],
 ]
 
-const checkDiscovery = (discovery: OidcDiscovery): ConformanceIssue[] => {
+/** Discovery fields a pool publishes only when it serves an interactive (hosted sign-in) client. */
+const INTERACTIVE_DISCOVERY: readonly (readonly [keyof OidcDiscovery, string])[] = [
+  ['authorizationEndpoint', 'authorization_endpoint'],
+  ['tokenEndpoint', 'token_endpoint'],
+]
+
+/**
+ * Conformance of an emitted discovery document. The issuer and key set are required of every pool;
+ * the sign-in / token endpoints are required only when a client signs users in interactively
+ * (`requiresHostedUi`), so a domainless machine-to-machine pool is conformant without them rather
+ * than false-failed for lacking endpoints it has no interactive client to serve.
+ */
+const checkDiscovery = (discovery: OidcDiscovery, requiresHostedUi: boolean): ConformanceIssue[] => {
   const issues: ConformanceIssue[] = []
-  for (const [key, name] of REQUIRED_DISCOVERY) {
+  const required = requiresHostedUi ? [...ALWAYS_REQUIRED_DISCOVERY, ...INTERACTIVE_DISCOVERY] : ALWAYS_REQUIRED_DISCOVERY
+  for (const [key, name] of required) {
     const value = discovery[key]
     if (typeof value !== 'string' || value.length === 0) {
       issues.push({ rule: 'OIDC1.0', detail: `discovery document is missing ${name}` })
@@ -74,6 +94,9 @@ export const checkOAuthConformance = (oauth: OAuthConfig): ConformanceIssue[] =>
       issues.push({ rule: 'RFC6749', detail: `"${flow}" is not a registered OAuth2 grant type` })
     }
   }
-  if (oauth.discovery !== undefined) issues.push(...checkDiscovery(oauth.discovery))
+  if (oauth.discovery !== undefined) {
+    const requiresHostedUi = oauth.flows.some((flow) => INTERACTIVE_FLOWS.has(toRfc6749Flow(flow)))
+    issues.push(...checkDiscovery(oauth.discovery, requiresHostedUi))
+  }
   return issues
 }
