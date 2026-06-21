@@ -2,7 +2,7 @@
  * Test-automation coverage (Story 013-1-17) — edge/error paths of the target-shape reference
  * normalisation beyond the frozen contract's acceptance scenarios. Exercises the strangler engine on
  * boundary template shapes: a reference to a non-resource id, references nested in arrays, a retarget
- * that collapses two formerly-distinct referrers, and the assertNoStranglerDrift value/throw contract
+ * that collapses two distinct referrers, and the assertNoStranglerDrift value/throw contract
  * under a retarget. The real `@apiable/umbrella` engine is the oracle; no policy logic is re-declared.
  */
 import { cfnDifferences, isCfnEquivalent, assertNoStranglerDrift, resourceShapes } from '@apiable/umbrella'
@@ -36,7 +36,7 @@ describe('013-1-17 retarget engine — edge & error paths', () => {
     expect(cfnDifferences(tmpl('RoleA'), tmpl('RoleB')).length).toBeGreaterThan(0)
   })
 
-  it('two formerly-distinct referrers that retarget to the SAME resource collapse in the multiset → drift', () => {
+  it('two distinct referrers that retarget to the SAME resource collapse in the multiset → drift', () => {
     // baseline: P1→RoleA, P2→RoleB (two distinct policy shapes). candidate: both →RoleA (one shape ×2).
     const baseline: Tmpl = {
       Resources: {
