@@ -5,7 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam'
 import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose'
 import * as logs from 'aws-cdk-lib/aws-logs'
 import { publishOutputs } from '@apiable/cdk-ssm-composition'
-import { CONSTRUCT_NAME } from './launch-stack-url'
+import { BUCKET_ARN_PATTERN_SOURCE, CONSTRUCT_NAME } from './launch-stack-url'
 
 /** Logical id of the storage-location parameter the published template scopes the stream's destination by. */
 export const LOGS_BUCKET_ARN_PARAMETER = 'LogsBucketArn'
@@ -223,8 +223,9 @@ export class LogsStreamStack extends cdk.Stack {
       const logsBucketArnParameter = new CfnParameter(this, LOGS_BUCKET_ARN_PARAMETER, {
         type: 'String',
         minLength: 1,
+        allowedPattern: BUCKET_ARN_PATTERN_SOURCE,
         description: 'ARN of the log-storage S3 bucket the usage-log delivery stream writes to',
-        constraintDescription: 'must be a non-empty S3 bucket ARN',
+        constraintDescription: 'must be a valid S3 bucket ARN (arn:aws:s3:::<bucket>)',
       })
       logsBucketArnParameter.overrideLogicalId(LOGS_BUCKET_ARN_PARAMETER)
       logsBucketArn = logsBucketArnParameter.valueAsString
