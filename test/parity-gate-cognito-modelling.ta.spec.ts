@@ -120,3 +120,93 @@ describe('cognito modelling (TA) — OAuth slot fallback and edge determinism', 
     expect(edgeOf(bareFirst)?.relation).toBe('exports:arn')
   })
 })
+
+// ── flow-gated discovery conformance (M4) edge cases ───────────────────────────────────────────
+
+const TAG = 'apiable:logical-id'
+
+describe('cognito modelling (TA) — flow-gated discovery conformance', () => {
+  it('still requires the hosted-UI endpoints when a client declares BOTH an interactive and a machine flow', () => {
+    // requiresHostedUi is OR-based: an interactive flow alongside client-credentials still needs the endpoints
+    const issues = checkOAuthConformance({ flows: ['code', 'client_credentials'], scopes: [], discovery: { issuer: 'https://i', jwksUri: 'https://j' } })
+    expect(issues.some((issue) => issue.detail.includes('authorization_endpoint'))).toBe(true)
+  })
+
+  it('accepts a machine-to-machine client whose pool DOES publish endpoints (present-but-not-required is conformant)', () => {
+    const issues = checkOAuthConformance({
+      flows: ['client_credentials'],
+      scopes: [],
+      discovery: { issuer: 'https://i', jwksUri: 'https://j', authorizationEndpoint: 'https://a', tokenEndpoint: 'https://t', bearerMethod: 'header' },
+    })
+    expect(issues).toEqual([])
+  })
+
+  it('requires the endpoints for an implicit client (interactive), not only authorization-code', () => {
+    const issues = checkOAuthConformance({ flows: ['implicit'], scopes: [], discovery: { issuer: 'https://i', jwksUri: 'https://j' } })
+    expect(issues.some((issue) => issue.detail.includes('token_endpoint'))).toBe(true)
+  })
+})
+
+// ── cross-channel discovery value rows (DISC) ──────────────────────────────────────────────────
+
+const cfnPoolWithDomain = (domain: string | undefined): unknown => ({
+  Resources: {
+    Pool: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'authz', UserPoolTags: { [TAG]: 'authz-pool' } } },
+    ...(domain === undefined ? {} : { Domain: { Type: 'AWS::Cognito::UserPoolDomain', Properties: { Domain: domain, UserPoolId: { Ref: 'Pool' } } } }),
+  },
+})
+
+describe('cognito modelling (TA) — cross-channel discovery value rows', () => {
+  it('emits the pool issuer region-normalised, so a channel reduced with vs without a concrete region reads the same host', () => {
+    const issuerKey = 'oauth-discovery-issuer:cognito-user-pool:authz-pool'
+    const withRegion = reduceCloudFormation(cfnPoolWithDomain(undefined), 'cfn', REGION)
+    const noRegion = reduceCloudFormation(cfnPoolWithDomain(undefined), 'cdk')
+    expect(withRegion.values[issuerKey]).toBe(noRegion.values[issuerKey])
+    expect(withRegion.values[issuerKey]).toContain('{region}')
+  })
+
+  it('emits no sign-in/token rows for a domainless pool, but does for a domained one', () => {
+    const authorizeKey = 'oauth-discovery-authorize:cognito-user-pool:authz-pool'
+    const domainless = reduceCloudFormation(cfnPoolWithDomain(undefined), 'cfn', REGION)
+    const domained = reduceCloudFormation(cfnPoolWithDomain('authz-portal'), 'cfn', REGION)
+    expect(domainless.values[authorizeKey]).toBeUndefined()
+    expect(domained.values[authorizeKey]).toContain('authz-portal')
+  })
+})
+
+// ── per-client OAuth keyed by channel-local id (OBC) ───────────────────────────────────────────
+
+describe('cognito modelling (TA) — per-client OAuth keyed by channel-local id', () => {
+  it('keeps BOTH of two nameless clients in the per-client map, so the first unregistered flow is not swallowed', () => {
+    const twoNameless: unknown = {
+      Resources: {
+        Pool: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'authz', UserPoolTags: { [TAG]: 'authz-pool' } } },
+        ClientOne: { Type: 'AWS::Cognito::UserPoolClient', Properties: { UserPoolId: { Ref: 'Pool' }, AllowedOAuthFlows: ['magic_link'], AllowedOAuthScopes: ['apiable/read'] } },
+        ClientTwo: { Type: 'AWS::Cognito::UserPoolClient', Properties: { UserPoolId: { Ref: 'Pool' }, AllowedOAuthFlows: ['client_credentials'], AllowedOAuthScopes: ['apiable/read'] } },
+      },
+    }
+    const model = reduceCloudFormation(twoNameless, 'cfn', REGION)
+    expect(Object.keys(model.oauthByClient ?? {}).length).toBe(2)
+  })
+})
+
+// ── resource-server pool anchoring (the genuine same-pool dup backstop) ────────────────────────
+
+describe('cognito modelling (TA) — resource-server pool anchoring', () => {
+  it('still collides two same-Identifier resource-servers on the SAME pool (the within-channel backstop)', () => {
+    const samePoolDup: unknown = {
+      Resources: {
+        Pool: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'authz', UserPoolTags: { [TAG]: 'authz-pool' } } },
+        RsOne: { Type: 'AWS::Cognito::UserPoolResourceServer', Properties: { UserPoolId: { Ref: 'Pool' }, Identifier: 'apiable', Name: 'a', Scopes: [{ ScopeName: 'read', ScopeDescription: 'r' }] } },
+        RsTwo: { Type: 'AWS::Cognito::UserPoolResourceServer', Properties: { UserPoolId: { Ref: 'Pool' }, Identifier: 'apiable', Name: 'b', Scopes: [{ ScopeName: 'write', ScopeDescription: 'w' }] } },
+      },
+    }
+    const result = gate([
+      reduceCloudFormation(samePoolDup, 'cdk', REGION),
+      reduceCloudFormation(samePoolDup, 'cfn', REGION),
+      reduceCloudFormation(samePoolDup, 'terraform', REGION),
+    ])
+    expect(result.passed).toBe(false)
+    expect(result.divergences.some((entry) => entry.detail.includes('duplicate declared identity') && entry.detail.includes('of-pool:authz-pool:apiable'))).toBe(true)
+  })
+})
