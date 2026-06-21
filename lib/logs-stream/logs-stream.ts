@@ -5,7 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam'
 import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose'
 import * as logs from 'aws-cdk-lib/aws-logs'
 import { publishOutputs } from '@apiable/cdk-ssm-composition'
-import { BUCKET_ARN_PATTERN_SOURCE, CONSTRUCT_NAME } from './launch-stack-url'
+import { BUCKET_ARN_PATTERN_SOURCE, CONSTRUCT_NAME, TOKENS_CONSTRUCT_NAME } from './launch-stack-url'
 
 /** Logical id of the storage-location parameter the published template scopes the stream's destination by. */
 export const LOGS_BUCKET_ARN_PARAMETER = 'LogsBucketArn'
@@ -19,20 +19,42 @@ export const PREFIX_PARAMETER = 'DestinationPrefix'
 /** Kebab kit-component segment the usage-log distribution publishes its outputs under. */
 export const USAGELOGS_STREAM_COMPONENT = 'usagelogs-stream'
 
+/** Kebab kit-component segment the api-key-token distribution publishes its outputs under. */
+export const USAGETOKENS_STREAM_COMPONENT = 'usagetokens-stream'
+
 /**
  * Author-declared, channel-identical identity the release-time parity gate keys the delivery role on
  * (the `apiable:logical-id` tag), so the same role compares equal across the CDK, published-CFN, and
  * Terraform channels regardless of its generated name, account, or region. The hand-rolled Terraform
  * module declares the identical literal. The firehose delivery stream is not a parity-gate taggable
- * primary, so only the role carries the declared id.
+ * primary, so only the role carries the declared id. The two distributions of the shared stream each
+ * carry their own value so the token role is labelled for the token distribution, never as the usage-log
+ * one — the role is a separate physical resource per stream, so the ids do not collide within a channel.
  */
 export const FIREHOSE_ROLE_LOGICAL_ID = 'apiable-usagelogs-firehose-role'
+
+/** The token distribution's delivery-role declared identity (see {@link FIREHOSE_ROLE_LOGICAL_ID}). */
+export const FIREHOSE_ROLE_LOGICAL_ID_TOKENS = 'apiable-usagetokens-firehose-role'
 
 /** Stream-name prefix the API gateway requires to attach to and write access logs to the stream. */
 const GATEWAY_STREAM_NAME_PREFIX = 'amazon-apigateway-'
 
 /** S3 key prefix the usage-log stream writes its records under when none is supplied. */
 export const DEFAULT_USAGELOGS_PREFIX = 'apiable/aws'
+
+/** S3 key prefix the api-key-token stream writes its records under — the routing signal the downstream pipeline keys off. */
+export const DEFAULT_USAGETOKENS_PREFIX = 'apiable/aws/apikey-token'
+
+/**
+ * The delivery-role declared identity for a concrete stream name: the token distribution (a name
+ * scoped under the `usagetokens` variant) is labelled for the token distribution, every other name for
+ * the usage-log one. A tokenised (published one-click) name carries no variant signal, so the published
+ * stack passes the correct id explicitly rather than deriving it here.
+ */
+export const firehoseRoleLogicalIdForName = (name: string): string =>
+  !cdk.Token.isUnresolved(name) && name.startsWith('usagetokens')
+    ? FIREHOSE_ROLE_LOGICAL_ID_TOKENS
+    : FIREHOSE_ROLE_LOGICAL_ID
 
 export interface LogsStreamConstructProps {
   /** ARN of the log-storage bucket the stream writes to — a deploy-time input, never baked in. */
@@ -55,6 +77,13 @@ export interface LogsStreamConstructProps {
   readonly publishComposition?: boolean
   /** Kit-component segment the composition key addresses this distribution under. Defaults to the usage-log component. */
   readonly compositionComponent?: string
+  /**
+   * Channel-stable `apiable:logical-id` the delivery role carries for the parity gate. Defaults to the
+   * value derived from {@link name} (the token distribution's id when the name is a token-variant name,
+   * the usage-log id otherwise); the published token stack supplies it explicitly since a tokenised name
+   * carries no variant signal.
+   */
+  readonly firehoseRoleLogicalId?: string
 }
 
 /**
@@ -124,7 +153,8 @@ export class LogsStreamConstruct extends Construct {
     // Declare the channel-stable identity on the role itself (never the stack — a stack-wide tag
     // propagates one id onto every resource and collapses them), so the parity gate compares it by
     // declared id rather than its name-derived discriminator. 'apiable:logical-id' is the gate's tag key.
-    cdk.Tags.of(this.deliveryRole).add('apiable:logical-id', FIREHOSE_ROLE_LOGICAL_ID)
+    const firehoseRoleLogicalId = props.firehoseRoleLogicalId ?? firehoseRoleLogicalIdForName(name)
+    cdk.Tags.of(this.deliveryRole).add('apiable:logical-id', firehoseRoleLogicalId)
 
     const streamConstructId = cdk.Token.isUnresolved(name)
       ? GATEWAY_STREAM_NAME_PREFIX.replace(/-$/, '')
@@ -216,14 +246,30 @@ export interface LogsStreamStackProps extends cdk.StackProps {
   readonly publishComposition?: boolean
   /** Forwarded to {@link LogsStreamConstructProps.compositionComponent}. */
   readonly compositionComponent?: string
+  /**
+   * Default the stream-name parameter falls back to when {@link name} is omitted. Defaults to the
+   * usage-log distribution's name; the token distribution supplies its own.
+   */
+  readonly defaultName?: string
+  /**
+   * Default the destination-prefix parameter falls back to when {@link prefix} is omitted. Defaults to
+   * the usage-log distribution's prefix; the token distribution supplies its own.
+   */
+  readonly defaultPrefix?: string
+  /** Forwarded to {@link LogsStreamConstructProps.firehoseRoleLogicalId} for this distribution's parity identity. */
+  readonly firehoseRoleLogicalId?: string
 }
 
 /** Resource-name token the published one-click stream is scoped by when no name is supplied. */
 export const DEFAULT_USAGELOGS_NAME = 'usagelogs'
 
+/** Resource-name token the published one-click token stream is scoped by when no name is supplied. */
+export const DEFAULT_USAGETOKENS_NAME = 'usagetokens'
+
 /**
  * Stack wrapper that surfaces the storage location as a deploy-time CFN parameter for the published
- * one-click template; the stream name + prefix default to the usage-log distribution's values.
+ * one-click template; the stream name + prefix default to this distribution's values (the usage-log
+ * distribution's unless overridden for the token distribution).
  */
 export class LogsStreamStack extends cdk.Stack {
   public readonly logsStream: LogsStreamConstruct
@@ -231,29 +277,32 @@ export class LogsStreamStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: LogsStreamStackProps = {}) {
     super(scope, id, props)
 
+    const defaultName = props.defaultName ?? DEFAULT_USAGELOGS_NAME
+    const defaultPrefix = props.defaultPrefix ?? DEFAULT_USAGELOGS_PREFIX
+
     let logsBucketArn = props.logsBucketArn
     if (logsBucketArn === undefined) {
       const logsBucketArnParameter = new CfnParameter(this, LOGS_BUCKET_ARN_PARAMETER, {
         type: 'String',
         minLength: 1,
         allowedPattern: BUCKET_ARN_PATTERN_SOURCE,
-        description: 'ARN of the log-storage S3 bucket the usage-log delivery stream writes to',
+        description: 'ARN of the log-storage S3 bucket the delivery stream writes to',
         constraintDescription: 'must be a valid S3 bucket ARN (arn:aws:s3:::<bucket>)',
       })
       logsBucketArnParameter.overrideLogicalId(LOGS_BUCKET_ARN_PARAMETER)
       logsBucketArn = logsBucketArnParameter.valueAsString
     }
 
-    // The stream name + destination prefix are deploy-time named values too; omitting them keeps the
-    // usage-log defaults, so a one-click deploy with only the storage location reproduces the existing
-    // usage-log stream while a customer can still override either.
+    // The stream name + destination prefix are deploy-time named values too; omitting them keeps this
+    // distribution's defaults, so a one-click deploy with only the storage location reproduces the
+    // existing stream while a customer can still override either.
     let name = props.name
     if (name === undefined) {
       const streamNameParameter = new CfnParameter(this, STREAM_NAME_PARAMETER, {
         type: 'String',
-        default: DEFAULT_USAGELOGS_NAME,
+        default: defaultName,
         minLength: 1,
-        description: 'Resource-name token the usage-log stream is scoped by (amazon-apigateway-<name>)',
+        description: 'Resource-name token the stream is scoped by (amazon-apigateway-<name>)',
       })
       streamNameParameter.overrideLogicalId(STREAM_NAME_PARAMETER)
       name = streamNameParameter.valueAsString
@@ -263,7 +312,7 @@ export class LogsStreamStack extends cdk.Stack {
     if (prefix === undefined) {
       const prefixParameter = new CfnParameter(this, PREFIX_PARAMETER, {
         type: 'String',
-        default: DEFAULT_USAGELOGS_PREFIX,
+        default: defaultPrefix,
         minLength: 1,
         description: 'S3 key prefix the stream writes its logs/ and errors/ records under',
       })
@@ -278,6 +327,7 @@ export class LogsStreamStack extends cdk.Stack {
       tenant: props.tenant,
       publishComposition: props.publishComposition,
       compositionComponent: props.compositionComponent,
+      firehoseRoleLogicalId: props.firehoseRoleLogicalId,
     })
   }
 }
@@ -293,6 +343,25 @@ export const buildPublishedStack = (app: cdk.App): LogsStreamStack =>
   new LogsStreamStack(app, CONSTRUCT_NAME, {
     description: 'Apiable gateway usage-log delivery stream — one-click provisioning',
     analyticsReporting: false,
+    // an asset-less stream must install into an un-bootstrapped account, so drop the bootstrap-version rule
+    synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
+  })
+
+/**
+ * Build the api-key-token-stream stack as published in the launch-stack template: the same shared
+ * stream as {@link buildPublishedStack}, published under the token distribution identity — its
+ * stream-name and destination-prefix parameters default to the token values and its delivery role
+ * carries the token parity identity. The tokenised name carries no variant signal, so the token role id
+ * is supplied explicitly here.
+ */
+export const buildPublishedTokensStack = (app: cdk.App): LogsStreamStack =>
+  new LogsStreamStack(app, TOKENS_CONSTRUCT_NAME, {
+    description: 'Apiable gateway api-key-token delivery stream — one-click provisioning',
+    analyticsReporting: false,
+    defaultName: DEFAULT_USAGETOKENS_NAME,
+    defaultPrefix: DEFAULT_USAGETOKENS_PREFIX,
+    firehoseRoleLogicalId: FIREHOSE_ROLE_LOGICAL_ID_TOKENS,
+    compositionComponent: USAGETOKENS_STREAM_COMPONENT,
     // an asset-less stream must install into an un-bootstrapped account, so drop the bootstrap-version rule
     synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
   })

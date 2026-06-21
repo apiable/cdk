@@ -1,0 +1,14 @@
+{
+  "name": "@apiable/cdk-usagetokens-stream",
+  "version": "1.0.0",
+  "description": "Apiable CDK construct kit: gateway api-key-token Kinesis Firehose delivery stream with one-click CloudFormation provisioning. The api-key-token distribution of the shared usage stream.",
+  "main": "../index.ts",
+  "types": "../index.ts",
+  "peerDependencies": {
+    "aws-cdk-lib": "2.137.0",
+    "constructs": "^10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

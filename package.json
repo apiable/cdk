@@ -12,9 +12,11 @@
     "synth:launchstack": "bash synth-launchstack.sh",
     "synth:launchstack:logs-bucket": "bash synth-launchstack.sh apiable-logs-bucket",
     "synth:launchstack:usagelogs-stream": "bash synth-launchstack.sh apiable-usagelogs-stream",
+    "synth:launchstack:usagetokens-stream": "bash synth-launchstack.sh apiable-usagetokens-stream",
     "publish:terraform": "bash publish-terraform.sh",
     "publish:terraform:logs-bucket": "bash publish-terraform.sh apiable-logs-bucket",
     "publish:terraform:usagelogs-stream": "bash publish-terraform.sh apiable-usagelogs-stream",
+    "publish:terraform:usagetokens-stream": "bash publish-terraform.sh apiable-usagetokens-stream",
     "cdk": "cdk"
   },
   "devDependencies": {
