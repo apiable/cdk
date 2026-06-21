@@ -359,7 +359,7 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
     expect(keys).toHaveLength(1)
     const [key] = keys
     // name-derived, single, correct: identifies this usagelogs distribution once (no `usagelogs-usagelogs-` doubling)
-    expect(key).toBe(`firehosearn${USAGELOGS_NAME}`.replace(/[^A-Za-z0-9]/g, ''))
+    expect(key).toBe('firehosearnusagelogstest') // derived from name `usagelogs-test`, once
     expect(key).not.toMatch(/usagelogs-?usagelogs/i)
     expect(JSON.stringify(outputs[key].Value)).toContain('Arn')
   })
