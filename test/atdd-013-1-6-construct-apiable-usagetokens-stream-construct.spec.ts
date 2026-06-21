@@ -30,6 +30,7 @@ import {
   PREFIX_PARAMETER,
   FIREHOSE_ROLE_LOGICAL_ID,
   FIREHOSE_ROLE_LOGICAL_ID_TOKENS,
+  firehoseRoleLogicalIdForName,
   DEFAULT_USAGETOKENS_NAME,
   DEFAULT_USAGETOKENS_PREFIX,
   tokensLaunchStackTemplateKey,
@@ -334,5 +335,16 @@ describe('013-1-6 apiable-usagetokens-stream — distribution distinctness from 
     // and the two Terraform modules declare those same distinct literals
     expect(tfModule(TF_MODULE_DIR, 'main.tf')).toContain(FIREHOSE_ROLE_LOGICAL_ID_TOKENS)
     expect(tfModule(USAGELOGS_TF_MODULE_DIR, 'main.tf')).toContain(FIREHOSE_ROLE_LOGICAL_ID)
+  })
+
+  // the name→declared-id derivation never silently fall-backs to the usage-log id for a new variant
+  it('a new distribution variant gets its own distinct declared id — never a silent usage-log collision', () => {
+    expect(firehoseRoleLogicalIdForName('usagelogs-staging')).toBe(FIREHOSE_ROLE_LOGICAL_ID)
+    expect(firehoseRoleLogicalIdForName('usagetokens-staging')).toBe(FIREHOSE_ROLE_LOGICAL_ID_TOKENS)
+    // a hypothetical third distribution must NOT collapse onto the usage-log id (parity-gate collision)
+    const third = firehoseRoleLogicalIdForName('usagemetrics-staging')
+    expect(third).toBe('apiable-usagemetrics-firehose-role')
+    expect(third).not.toBe(FIREHOSE_ROLE_LOGICAL_ID)
+    expect(third).not.toBe(FIREHOSE_ROLE_LOGICAL_ID_TOKENS)
   })
 })

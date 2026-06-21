@@ -46,15 +46,21 @@ export const DEFAULT_USAGELOGS_PREFIX = 'apiable/aws'
 export const DEFAULT_USAGETOKENS_PREFIX = 'apiable/aws/apikey-token'
 
 /**
- * The delivery-role declared identity for a concrete stream name: the token distribution (a name
- * scoped under the `usagetokens` variant) is labelled for the token distribution, every other name for
- * the usage-log one. A tokenised (published one-click) name carries no variant signal, so the published
- * stack passes the correct id explicitly rather than deriving it here.
+ * The delivery-role declared identity derived from a concrete stream name. Each distribution carries
+ * its own id so the parity gate never sees two distributions collide on one declared id: the usage-log
+ * variant gets the usage-log id, the token variant the token id, and any other variant a distinct
+ * variant-derived id (`apiable-<variant>-firehose-role`) — never a silent fall-back to the usage-log id,
+ * which would mislabel a new distribution as the usage-log one and collide on the gate. A tokenised
+ * (published one-click) name carries no variant signal, so the published stack passes the id explicitly.
  */
-export const firehoseRoleLogicalIdForName = (name: string): string =>
-  !cdk.Token.isUnresolved(name) && name.startsWith('usagetokens')
-    ? FIREHOSE_ROLE_LOGICAL_ID_TOKENS
-    : FIREHOSE_ROLE_LOGICAL_ID
+export const firehoseRoleLogicalIdForName = (name: string): string => {
+  if (cdk.Token.isUnresolved(name)) return FIREHOSE_ROLE_LOGICAL_ID
+  // the variant is the leading segment of the name (`usagetokens-staging` → `usagetokens`)
+  const variant = name.split('-')[0]
+  if (variant === 'usagetokens') return FIREHOSE_ROLE_LOGICAL_ID_TOKENS
+  if (variant === 'usagelogs') return FIREHOSE_ROLE_LOGICAL_ID
+  return `apiable-${variant}-firehose-role`
+}
 
 export interface LogsStreamConstructProps {
   /** ARN of the log-storage bucket the stream writes to — a deploy-time input, never baked in. */
