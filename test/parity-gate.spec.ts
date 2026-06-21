@@ -4,6 +4,8 @@
  * the extra-resource graph case, version precedence, logical normalisation, and the report
  * formatter. Every case drives the real reducers / gate, never a re-declaration of the diff logic.
  */
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import {
   ChannelModel,
   formatGateReport,
@@ -12,6 +14,7 @@ import {
   reduceCloudFormation,
   reduceTerraformShowJson,
 } from '@apiable/parity-gate'
+import { VALUE_BEARING_KINDS } from '../lib/parity-gate/canonical'
 
 const cfnAuthorizer = (type: string): unknown => ({
   Resources: {
@@ -440,5 +443,99 @@ describe('parity gate — within-channel identity collision (a primary id must b
     ])
     expect(result.passed).toBe(true)
     expect(result.divergences.some((entry) => entry.detail.includes('duplicate declared identity'))).toBe(false)
+  })
+})
+
+const cfnOneBucketTwoPolicies = (policyAWriter: string): unknown => ({
+  Resources: {
+    LogsBucket: {
+      Type: 'AWS::S3::Bucket',
+      Properties: { BucketName: 'apiable-logs', Tags: [{ Key: 'apiable:logical-id', Value: 'logs' }] },
+    },
+    PolicyA: {
+      Type: 'AWS::S3::BucketPolicy',
+      Properties: {
+        Bucket: { Ref: 'LogsBucket' },
+        PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${policyAWriter}:root` }, Action: 's3:PutObject', Resource: 'arn:aws:s3:::apiable-logs/*' }] },
+      },
+    },
+    PolicyB: {
+      Type: 'AWS::S3::BucketPolicy',
+      Properties: {
+        Bucket: { Ref: 'LogsBucket' },
+        PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: 'arn:aws:iam::222222222222:root' }, Action: 's3:PutObject', Resource: 'arn:aws:s3:::apiable-logs/*' }] },
+      },
+    },
+  },
+})
+
+const cfnOneNameTwoAuthorizers = (authAType: string): unknown => ({
+  Resources: {
+    AuthZA: { Type: 'AWS::ApiGateway::Authorizer', Properties: { Name: 'authz', Type: authAType, IdentitySource: 'method.request.header.Authorization' } },
+    AuthZB: { Type: 'AWS::ApiGateway::Authorizer', Properties: { Name: 'authz', Type: 'TOKEN', IdentitySource: 'method.request.header.Authorization' } },
+  },
+})
+
+// Every kind whose reducer writes a `values[...]` / `out[...]` row, read from the reducer source by
+// tracking the kind context of each row write. The structural coupling that makes VALUE_BEARING_KINDS
+// impossible to drift out of sync with the value-writing sites.
+const valueWritingKindsIn = (source: string): Set<string> => {
+  const kinds = new Set<string>()
+  let currentKind: string | undefined
+  for (const line of source.split('\n')) {
+    const kindMatch = line.match(/kind === '([^']+)'/)
+    if (kindMatch !== null) currentKind = kindMatch[1]
+    if (/(?<![.\w])(?:values|out)\[/.test(line) && currentKind !== undefined) kinds.add(currentKind)
+  }
+  return kinds
+}
+
+describe('parity gate — within-channel uniqueness covers value-bearing attached kinds', () => {
+  it('fails when one bucket carries two bucket-policies and the clobbered loser widens who may write', () => {
+    // AWS permits one policy per bucket, so two on one bucket are a duplicate identity, not two
+    // resources: both reduce to s3-bucket-policy:logs and PolicyB (last) clobbers PolicyA's
+    // bucket-policy-write-accounts value. Widening PolicyA (the loser) in terraform is hidden behind
+    // PolicyB's safe value, and the account-level widening tokenises away in the grant tier — so only
+    // catching the within-channel collision surfaces the extra cross-account writer.
+    const result = gate([
+      reduceCloudFormation(cfnOneBucketTwoPolicies('111111111111'), 'cdk'),
+      reduceCloudFormation(cfnOneBucketTwoPolicies('111111111111'), 'cfn'),
+      reduceCloudFormation(cfnOneBucketTwoPolicies('999988887777'), 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    const collision = result.divergences.find((entry) => entry.detail.includes('duplicate declared identity s3-bucket-policy:logs'))
+    expect(collision).toBeDefined()
+  })
+
+  it('fails when two authorizers share one Name and the clobbered loser widens its authorizer-type', () => {
+    // An authorizer is self-keyed by Name, so two same-Name authorizers collapse onto
+    // apigateway-authorizer:authz and AuthZB (last) clobbers AuthZA's authorizer-type value. Widening
+    // AuthZA (the loser) in terraform is hidden behind AuthZB's TOKEN; the within-channel guard is the
+    // only witness.
+    const result = gate([
+      reduceCloudFormation(cfnOneNameTwoAuthorizers('TOKEN'), 'cdk'),
+      reduceCloudFormation(cfnOneNameTwoAuthorizers('TOKEN'), 'cfn'),
+      reduceCloudFormation(cfnOneNameTwoAuthorizers('REQUEST'), 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    const collision = result.divergences.find((entry) => entry.detail.includes('duplicate declared identity apigateway-authorizer:authz'))
+    expect(collision).toBeDefined()
+  })
+
+  it('guards every kind that writes a load-bearing value row, so a new value row cannot bypass the uniqueness check', () => {
+    // Structural coupling: a future reducer that adds a values[...] / out[...] row for a new kind must
+    // also add that kind to VALUE_BEARING_KINDS or this fails — the durable anti-drift on the invariant.
+    for (const file of ['cfn-reducer.ts', 'terraform-reducer.ts']) {
+      const source = readFileSync(join(__dirname, '..', 'lib', 'parity-gate', file), 'utf8')
+      const valueWritingKinds = valueWritingKindsIn(source)
+      // The scan is non-vacuous and sees both write mechanisms: collectValues (the cognito/authorizer
+      // rows) and the two direct writes (iam-role trust account, s3-bucket-policy write accounts).
+      expect(valueWritingKinds.has('iam-role')).toBe(true)
+      expect(valueWritingKinds.has('s3-bucket-policy')).toBe(true)
+      expect(valueWritingKinds.has('apigateway-authorizer')).toBe(true)
+      for (const kind of valueWritingKinds) {
+        expect(VALUE_BEARING_KINDS.has(kind)).toBe(true)
+      }
+    }
   })
 })

@@ -35,7 +35,7 @@ import {
   missingDeclaredId,
   nodeRef,
   policyServices,
-  PRIMARY_KINDS,
+  VALUE_BEARING_KINDS,
 } from './canonical'
 import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
 import { asArray, asRecord, asString, asStringArray, isRecord } from './narrow'
@@ -350,12 +350,12 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     }
   }
 
-  // The within-channel primary identity collisions: two distinct primaries that resolved to one node
-  // ref clobber each other's load-bearing values, so the gate must fail on the collision itself rather
-  // than silently certify the surviving (last-written) value as parity.
+  // The within-channel identity collisions among value-bearing kinds: two distinct resources that
+  // resolved to one node ref clobber each other's load-bearing value row, so the gate must fail on the
+  // collision itself rather than silently certify the surviving (last-written) value as parity.
   const identityCollisions = identityCollisionsOf(
     Object.entries(resources)
-      .filter(([, res]) => PRIMARY_KINDS.has(canonicalCfnKind(res.type)))
+      .filter(([, res]) => VALUE_BEARING_KINDS.has(canonicalCfnKind(res.type)))
       .map(([id]) => refToNode.get(id) ?? ''),
   )
 

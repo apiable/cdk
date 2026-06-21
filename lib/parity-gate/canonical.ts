@@ -84,18 +84,23 @@ export const DECLARED_ID_KINDS: ReadonlySet<string> = new Set([
 export const ENFORCED_DECLARED_ID_KINDS: ReadonlySet<string> = new Set(['iam-role', 's3-bucket'])
 
 /**
- * The primary kinds whose node ref must be UNIQUE within a channel. A primary carries its own
- * load-bearing value rows keyed by that ref, so two distinct primaries collapsing onto one ref would
- * clobber each other last-write-wins and hide a widening on the loser. These are the taggable
- * {@link DECLARED_ID_KINDS} plus the two cognito kinds identified by an author-declared natural key
- * (the resource-server's Identifier, the client's name). The pooled attached kinds — inline policy,
- * lambda permission, bucket policy, user-pool domain — are excluded: they legitimately share one
- * parent-anchored node and carry no load-bearing value of their own to clobber.
+ * The kinds whose node ref must be UNIQUE within a channel: every kind that namespaces a load-bearing
+ * value row by its own ref. Two distinct resources of such a kind collapsing onto one ref clobber each
+ * other's value last-write-wins and hide a widening on the loser, so the gate fails the collision
+ * itself. The axis is VALUE-BEARING, not primary-vs-attached: the taggable {@link DECLARED_ID_KINDS},
+ * the two cognito kinds keyed by an author-declared natural key (resource-server Identifier, client
+ * name), the api-gateway authorizer (self-keyed by Name), and the s3 bucket-policy (anchored to its
+ * bucket — AWS permits one policy per bucket, so two on one bucket are a duplicate identity). The
+ * pooled inline-policy / lambda-permission / user-pool-domain kinds are excluded because they emit NO
+ * value row (their security is the grant multiset, which enlarges rather than clobbers), never because
+ * they are "attached". A structural test keeps this set in step with the reducers' value-writing sites.
  */
-export const PRIMARY_KINDS: ReadonlySet<string> = new Set<string>([
+export const VALUE_BEARING_KINDS: ReadonlySet<string> = new Set<string>([
   ...DECLARED_ID_KINDS,
   'cognito-resource-server',
   'cognito-user-pool-client',
+  'apigateway-authorizer',
+  's3-bucket-policy',
 ])
 
 /** A sentinel marking a taggable primary that should carry a declared id but does not in this channel. */
