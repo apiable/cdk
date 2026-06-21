@@ -278,6 +278,31 @@ describe('parity gate — cross-role trust pooling (two roles never share one tr
     expect(divergence?.detail).toContain('grant:assume-role:iam-role:role-a')
     expect(divergence?.channels).toEqual(['terraform'])
   })
+
+  const assumeRoleRefs = (model: ReturnType<typeof reduceCloudFormation>): string[] =>
+    model.grants.filter((grant) => grant.ref.startsWith('grant:assume-role')).map((grant) => grant.ref).sort()
+
+  it('files each role’s trust under its own node ref in both reducers, so two roles’ assume-role grants never share one ref', () => {
+    expect(assumeRoleRefs(reduceCloudFormation(cfnTwoTrustRoles('a'), 'cfn'))).toEqual([
+      'grant:assume-role:iam-role:role-a',
+      'grant:assume-role:iam-role:role-b',
+    ])
+    expect(assumeRoleRefs(reduceTerraformShowJson(tfTwoTrustRoles('a'), 'terraform'))).toEqual([
+      'grant:assume-role:iam-role:role-a',
+      'grant:assume-role:iam-role:role-b',
+    ])
+  })
+
+  it('agrees when two roles carry matching trusts across all channels — the per-role ref raises no false alarm', () => {
+    // role-a guarded, role-b unguarded, identically in every channel: the per-role suffix must not invent a divergence
+    const result = gate([
+      reduceCloudFormation(cfnTwoTrustRoles('a'), 'cdk'),
+      reduceCloudFormation(cfnTwoTrustRoles('a'), 'cfn'),
+      reduceTerraformShowJson(tfTwoTrustRoles('a'), 'terraform'),
+    ])
+    expect(result.passed).toBe(true)
+    expect(result.divergences.find((entry) => entry.tier === 'permission')).toBeUndefined()
+  })
 })
 
 describe('parity gate — report', () => {
