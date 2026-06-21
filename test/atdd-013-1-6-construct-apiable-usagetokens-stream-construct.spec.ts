@@ -262,7 +262,7 @@ describe('013-1-6 apiable-usagetokens-stream — synth contract (shared shape, t
     expect(JSON.stringify(outputs[key].Value)).toContain('Arn')
   })
 
-  // S7 — token defaults reproduce the existing token stream; no baked-in IDs; zero regression
+  // S7 — token defaults reproduce the existing token stream exactly; no baked-in IDs; back-compatible
   it('S7: with only the required storage location, token name/prefix/identity equal the existing token stream, no literals baked in', () => {
     // concrete defaults reproduce the existing token stream exactly
     const t = concreteTemplate()
