@@ -151,3 +151,56 @@ describe('S3 reducer edge inputs', () => {
     expect(model.graph.nodes.some((node) => node.kind === 's3-bucket-policy')).toBe(true)
   })
 })
+
+// ── {none} sentinel: an empty external-writer set is an explicit value, compared like any other ─────
+
+describe('S3 bucket-policy {none} presence-vs-value sentinel', () => {
+  const deployOnly = (channel: 'cdk' | 'cfn' | 'terraform') => reduceCloudFormation(cfnBucketPolicy({ AWS: arnRoot(DEPLOY) }), channel, REGION, DEPLOY)
+
+  it('all three channels narrowed to deploy-only agree on {none} → parity holds (the sentinel does not false-FAIL)', () => {
+    const result = gate([deployOnly('cdk'), deployOnly('cfn'), deployOnly('terraform')])
+    expect(result.divergences.filter((entry) => entry.detail.includes('bucket-policy-write-accounts'))).toEqual([])
+  })
+
+  it('a deploy-only {none} channel diverges from a wildcard-granting channel — {none} is never "any account"', () => {
+    const result = gate([deployOnly('cdk'), deployOnly('cfn'), reduceCloudFormation(cfnBucketPolicy({ AWS: '*' }), 'terraform', REGION, DEPLOY)])
+    expect(result.passed).toBe(false)
+    const divergence = result.divergences.find((entry) => entry.tier === 'value' && entry.detail.includes('bucket-policy-write-accounts'))
+    expect(divergence?.channels).toEqual(['terraform'])
+  })
+})
+
+// ── canonicalOutputAttr: a bucket's name-identifier output reconciles across channels ───────────────
+
+describe('S3 bucket-name output reconciliation across channels', () => {
+  const cfnBucketWithOutputs = (): unknown => ({
+    Resources: { Bucket: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'apiable-logs-staging', Tags: [{ Key: TAG, Value: BUCKET_ID }] } } },
+    Outputs: { BucketName: { Value: { Ref: 'Bucket' } }, BucketArn: { Value: { 'Fn::GetAtt': ['Bucket', 'Arn'] } } },
+  })
+  const tfBucketWithOutputs = (): unknown => ({
+    planned_values: { root_module: { resources: [{ address: 'aws_s3_bucket.this', type: 'aws_s3_bucket', values: { bucket: 'apiable-logs-staging', tags: { [TAG]: BUCKET_ID }, tags_all: { [TAG]: BUCKET_ID } } }] } },
+    configuration: {
+      root_module: {
+        resources: [{ address: 'aws_s3_bucket.this', type: 'aws_s3_bucket', expressions: {} }],
+        outputs: {
+          bucket_name: { expression: { references: ['aws_s3_bucket.this.bucket', 'aws_s3_bucket.this'] } },
+          bucket_arn: { expression: { references: ['aws_s3_bucket.this.arn', 'aws_s3_bucket.this'] } },
+        },
+      },
+    },
+  })
+
+  it('a bucket-name export reconciles whether the channel addresses it by CFN Ref or TF .bucket (both → output:s3-bucket.name)', () => {
+    const cfn = reduceCloudFormation(cfnBucketWithOutputs(), 'cfn', REGION)
+    const tf = reduceTerraformShowJson(tfBucketWithOutputs(), 'terraform', REGION)
+    expect(cfn.graph.nodes.some((n) => n.ref === 'output:s3-bucket.name')).toBe(true)
+    expect(tf.graph.nodes.some((n) => n.ref === 'output:s3-bucket.name')).toBe(true)
+  })
+
+  it('a bucket-arn export keeps its arn attribute — canonicalisation touches only the name identifier', () => {
+    const cfn = reduceCloudFormation(cfnBucketWithOutputs(), 'cfn', REGION)
+    const tf = reduceTerraformShowJson(tfBucketWithOutputs(), 'terraform', REGION)
+    expect(cfn.graph.nodes.some((n) => n.ref === 'output:s3-bucket.arn')).toBe(true)
+    expect(tf.graph.nodes.some((n) => n.ref === 'output:s3-bucket.arn')).toBe(true)
+  })
+})
