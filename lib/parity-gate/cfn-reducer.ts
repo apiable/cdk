@@ -415,8 +415,12 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     secrets.push(...collectSecrets(res.properties))
 
     if (kind === 'iam-role') {
+      // File each trust grant under the role's own node ref: the trust ref is otherwise the constant
+      // `grant:assume-role`, so two roles' trusts pool into one multiset and a cross-role swap nets out.
       grants.push(
-        ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust', canonicaliseResource),
+        ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust', canonicaliseResource).map(
+          (grant) => ({ ...grant, ref: `${grant.ref}:${ref}` }),
+        ),
       )
       const trustAccount = trustedAccountsOf(res.properties.AssumeRolePolicyDocument, resolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount

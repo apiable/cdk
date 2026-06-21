@@ -216,6 +216,70 @@ describe('parity gate — trust condition (a load-bearing assume-role guard)', (
   })
 })
 
+// ── Cross-role trust pooling: two roles' trusts must never share one comparison ────────────────
+
+// A trust statement on a fixed account-root, optionally guarded by an sts:ExternalId condition. The
+// guard is invisible to the by-value trusted-account read, so a role keeps the same trusted account
+// whether or not it carries the guard — only the per-role grant ref can tell the two apart.
+const SHARED_TRUST_ACCOUNT = '034444869755'
+const assumeRoot = (guarded: boolean): unknown => ({
+  Effect: 'Allow',
+  Principal: { AWS: `arn:aws:iam::${SHARED_TRUST_ACCOUNT}:root` },
+  Action: 'sts:AssumeRole',
+  ...(guarded ? { Condition: { StringEquals: { 'sts:ExternalId': 'apiable-tenant' } } } : {}),
+})
+const cfnTrustRole = (logicalId: string, roleName: string, guarded: boolean): unknown => ({
+  Type: 'AWS::IAM::Role',
+  Properties: {
+    RoleName: roleName,
+    Tags: [{ Key: 'apiable:logical-id', Value: logicalId }],
+    AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [assumeRoot(guarded)] },
+  },
+})
+const cfnTwoTrustRoles = (guardedRole: 'a' | 'b'): unknown => ({
+  Resources: {
+    RoleA: cfnTrustRole('role-a', 'apiable-role-a', guardedRole === 'a'),
+    RoleB: cfnTrustRole('role-b', 'apiable-role-b', guardedRole === 'b'),
+  },
+})
+const tfTrustRole = (address: string, logicalId: string, roleName: string, guarded: boolean): unknown => ({
+  address,
+  type: 'aws_iam_role',
+  values: {
+    name: roleName,
+    tags: { 'apiable:logical-id': logicalId },
+    assume_role_policy: JSON.stringify({ Version: '2012-10-17', Statement: [assumeRoot(guarded)] }),
+  },
+})
+const tfTwoTrustRoles = (guardedRole: 'a' | 'b'): unknown => ({
+  planned_values: {
+    root_module: {
+      resources: [
+        tfTrustRole('aws_iam_role.a', 'role-a', 'apiable-role-a', guardedRole === 'a'),
+        tfTrustRole('aws_iam_role.b', 'role-b', 'apiable-role-b', guardedRole === 'b'),
+      ],
+    },
+  },
+  configuration: { root_module: { resources: [], outputs: {} } },
+})
+
+describe('parity gate — cross-role trust pooling (two roles never share one trust comparison)', () => {
+  it('fails when one channel moves an external-id guard from one role onto its sibling, both roles trusting one account', () => {
+    // CFN/CDK guard role-a; Terraform guards role-b instead — role-a's guard is dropped (widened). Both
+    // roles trust the same account in every channel, so the value tier and the pooled assume-role multiset
+    // both agree; only filing each trust under its owning role's ref surfaces the moved guard.
+    const result = gate([
+      reduceCloudFormation(cfnTwoTrustRoles('a'), 'cdk'),
+      reduceCloudFormation(cfnTwoTrustRoles('a'), 'cfn'),
+      reduceTerraformShowJson(tfTwoTrustRoles('b'), 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    const divergence = result.divergences.find((entry) => entry.tier === 'permission')
+    expect(divergence?.detail).toContain('grant:assume-role:iam-role:role-a')
+    expect(divergence?.channels).toEqual(['terraform'])
+  })
+})
+
 describe('parity gate — report', () => {
   it('renders a failing result naming the tier and the divergent detail', () => {
     const result = gate([

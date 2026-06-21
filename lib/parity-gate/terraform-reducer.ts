@@ -432,7 +432,13 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     secrets.push(...collectSecrets(res.values))
     if (kind === 'iam-role') {
       const assumePolicy = parseJson(res.values.assume_role_policy)
-      grants.push(...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust', canonicaliseResource))
+      // File each trust grant under the role's own node ref, mirroring the CloudFormation side, so two
+      // roles' trusts never pool into one multiset where a cross-role swap nets out.
+      grants.push(
+        ...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust', canonicaliseResource).map(
+          (grant) => ({ ...grant, ref: `${grant.ref}:${ref}` }),
+        ),
+      )
       const trustAccount = trustedAccountsOf(assumePolicy, tfResolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }

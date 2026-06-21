@@ -2,13 +2,13 @@
  * Acceptance specs — Story 013-1-14: close the parity check's grant & trust fail-open holes.
  * Frozen contract: contract-013-1-14-parity-gate-cognito-capability.md
  *
- * One un-skipped spec per contract scenario (S1–S7), each driving the real reducers + gate against
- * multi-statement / multi-role / federated-trust / divergent-invoke-source artifacts. Every failing
- * scenario is a forcing fixture: it cannot go green while a non-first grant is dropped, a federated
- * account is blanked, a second role's trust is clobbered, or an invoke source is reduced to mere
- * presence. The CDK and CFN channels are reduced from CloudFormation and the Terraform channel from
- * `terraform show -json`, so a divergence is proven across both reducers, not one shape compared to
- * itself.
+ * One un-skipped spec per contract scenario (S1–S8), each driving the real reducers + gate against
+ * multi-statement / multi-role / federated-trust / divergent-invoke-source / cross-role-trust artifacts.
+ * Every failing scenario is a forcing fixture: it cannot go green while a non-first grant is dropped, a
+ * federated account is blanked, a second role's trust is clobbered, an invoke source is reduced to mere
+ * presence, or two roles' trusts pool so a cross-role swap nets out. The CDK and CFN channels are reduced
+ * from CloudFormation and the Terraform channel from `terraform show -json`, so a divergence is proven
+ * across both reducers, not one shape compared to itself.
  *
  * Shares compareGrants + the trust reduction + both reducers with sibling 013-1-15 (S3) and
  * 013-1-16 (cognito modelling); whichever slice lands second re-runs the other's failing fixtures.
@@ -27,12 +27,17 @@ const cfnTrustStatement = (principal: unknown): unknown => ({
   Action: 'sts:AssumeRole',
 })
 
-/** A role whose trust policy carries the given statements verbatim. */
+/** A role whose trust policy carries the given statements verbatim. The declared id is the role name, so
+ * the iam-role node ref is the channel-stable `iam-role:<roleName>` the enforced declared-id engine keys on. */
 const cfnRole = (statements: readonly unknown[], roleName = 'apiable-managed-role'): unknown => ({
   Resources: {
     Role: {
       Type: 'AWS::IAM::Role',
-      Properties: { RoleName: roleName, AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: statements } },
+      Properties: {
+        RoleName: roleName,
+        Tags: [{ Key: 'apiable:logical-id', Value: roleName }],
+        AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: statements },
+      },
     },
   },
 })
@@ -44,6 +49,7 @@ const cfnTwoRoles = (firstAccount: string, secondAccount: string): unknown => ({
       Type: 'AWS::IAM::Role',
       Properties: {
         RoleName: 'apiable-role-a',
+        Tags: [{ Key: 'apiable:logical-id', Value: 'apiable-role-a' }],
         AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [cfnTrustStatement({ AWS: `arn:aws:iam::${firstAccount}:root` })] },
       },
     },
@@ -51,6 +57,7 @@ const cfnTwoRoles = (firstAccount: string, secondAccount: string): unknown => ({
       Type: 'AWS::IAM::Role',
       Properties: {
         RoleName: 'apiable-role-b',
+        Tags: [{ Key: 'apiable:logical-id', Value: 'apiable-role-b' }],
         AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [cfnTrustStatement({ AWS: `arn:aws:iam::${secondAccount}:root` })] },
       },
     },
@@ -83,6 +90,7 @@ const tfPlan = (resources: readonly unknown[]): unknown => ({
 const tfRole = (statements: readonly unknown[], name = 'apiable-managed-role', address = 'aws_iam_role.this'): unknown =>
   tfResource(address, 'aws_iam_role', {
     name,
+    tags: { 'apiable:logical-id': name },
     assume_role_policy: JSON.stringify({ Version: '2012-10-17', Statement: statements }),
   })
 
@@ -203,5 +211,60 @@ describe('013-1-14 parity check — grant & trust fail-open closure', () => {
     const caught = gateOf(pilotCfn, pilotCfn, divergentTf)
     expect(caught.passed).toBe(false)
     expect(valueDivergence(caught, 'role-trust-account')?.channels).toEqual(['terraform'])
+  })
+
+  // contract: S8 — a divergence between two different roles' trusts is caught, not pooled away (F2)
+  it('S8: two roles both trusting the same account, one role widened in a single channel (extra any-principal statement) → the check FAILS per role, never pooled into one comparison that nets out the swap', () => {
+    // Both roles trust the SAME account in every channel, so the per-role trusted-account value row is
+    // identical everywhere and only the per-role grant ref can catch the swap. CFN/CDK widen role-b with an
+    // extra {AWS:'*'}; Terraform widens role-a instead. Pooled under one `grant:assume-role` ref the two
+    // multisets are equal and the gate passes (fail-open); filed per owning role each side diverges.
+    const root = (account: string): unknown => ({ AWS: `arn:aws:iam::${account}:root` })
+    const cfnRolesWidened = (wildcardRole: 'a' | 'b'): unknown => ({
+      Resources: {
+        RoleA: {
+          Type: 'AWS::IAM::Role',
+          Properties: {
+            RoleName: 'apiable-role-a',
+            Tags: [{ Key: 'apiable:logical-id', Value: 'apiable-role-a' }],
+            AssumeRolePolicyDocument: {
+              Version: '2012-10-17',
+              Statement: [cfnTrustStatement(root(INTENDED_TRUST_ACCOUNT)), ...(wildcardRole === 'a' ? [cfnTrustStatement({ AWS: '*' })] : [])],
+            },
+          },
+        },
+        RoleB: {
+          Type: 'AWS::IAM::Role',
+          Properties: {
+            RoleName: 'apiable-role-b',
+            Tags: [{ Key: 'apiable:logical-id', Value: 'apiable-role-b' }],
+            AssumeRolePolicyDocument: {
+              Version: '2012-10-17',
+              Statement: [cfnTrustStatement(root(INTENDED_TRUST_ACCOUNT)), ...(wildcardRole === 'b' ? [cfnTrustStatement({ AWS: '*' })] : [])],
+            },
+          },
+        },
+      },
+    })
+    const tfRolesWidened = (wildcardRole: 'a' | 'b'): unknown =>
+      tfPlan([
+        tfRole(
+          [tfTrustStatement(root(INTENDED_TRUST_ACCOUNT)), ...(wildcardRole === 'a' ? [tfTrustStatement({ AWS: '*' })] : [])],
+          'apiable-role-a',
+          'aws_iam_role.a',
+        ),
+        tfRole(
+          [tfTrustStatement(root(INTENDED_TRUST_ACCOUNT)), ...(wildcardRole === 'b' ? [tfTrustStatement({ AWS: '*' })] : [])],
+          'apiable-role-b',
+          'aws_iam_role.b',
+        ),
+      ])
+    const result = gateOf(cfnRolesWidened('b'), cfnRolesWidened('b'), tfRolesWidened('a'))
+    expect(result.passed).toBe(false)
+    // Caught on role-a's OWN grant ref: its trust is widened only in terraform, so terraform is the outlier
+    // there — never pooled with role-b's opposite widening, which would net the two swaps out to agreement.
+    const divergence = permissionDivergence(result)
+    expect(divergence?.detail).toContain('grant:assume-role:iam-role:apiable-role-a')
+    expect(divergence?.channels).toEqual(['terraform'])
   })
 })
