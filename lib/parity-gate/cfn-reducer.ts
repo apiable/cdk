@@ -442,8 +442,7 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       const bucketTarget = resourceRefsIn(res.properties.Bucket, resourceIds)[0]
       const bucketNodeRef = bucketTarget !== undefined ? refToNode.get(bucketTarget.id) : undefined
       grants.push(...bucketPolicyGrants(res.properties.PolicyDocument, resolve, region, securedBucketName(bucketNodeRef), canonicaliseResource))
-      // The cross-account write grant by value (the deploying account dropped); always emitted — {none}
-      // when no external writer — so a deploy-only narrowing compares present-vs-present, never an absent key.
+      // The cross-account write grant by value (deploying account dropped); always emitted ({none} = no external writer).
       values[`bucket-policy-write-accounts:${ref}`] = grantedAccountsValue(resolvedPrincipalsOf(res.properties.PolicyDocument, resolve), deployAccount)
       if (bucketTarget !== undefined) {
         edges.push({ from: ref, to: bucketNodeRef ?? bucketTarget.id, relation: 'secures-bucket' })

@@ -448,8 +448,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     }
     if (kind === 's3-bucket-policy') {
       grants.push(...bucketPolicyGrants(res.values.policy, region, securedBucketName(securedBucketByPolicyAddress.get(res.address)), canonicaliseResource))
-      // The cross-account write grant by value (the deploying account dropped); always emitted — {none}
-      // when no external writer — so a deploy-only narrowing compares present-vs-present, never an absent key.
+      // The cross-account write grant by value (deploying account dropped); always emitted ({none} = no external writer).
       values[`bucket-policy-write-accounts:${ref}`] = grantedAccountsValue(resolvedPrincipalsOf(parseJson(res.values.policy), tfResolve), deployAccount)
     }
     if (kind === 'lambda-permission') grants.push(lambdaPermissionGrant(res.values, region))
