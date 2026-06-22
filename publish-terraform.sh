@@ -14,6 +14,7 @@ CONSTRUCT_NAME="${1:-apiable-gateway-role}"
 case "${CONSTRUCT_NAME}" in
   apiable-gateway-role) VERSION="$(node -p "require('./lib/gateway-role/package.json').version")" ;;
   apiable-logs-bucket) VERSION="$(node -p "require('./lib/logs-bucket/package.json').version")" ;;
+  apiable-cognito-pool) VERSION="$(node -p "require('./lib/cognito-pool/package.json').version")" ;;
   apiable-usagelogs-stream | apiable-usagetokens-stream) VERSION="$(node -p "require('./lib/logs-stream/package.json').version")" ;;
   *) echo "unknown construct: ${CONSTRUCT_NAME}" >&2; exit 1 ;;
 esac

@@ -6,6 +6,7 @@
     "paths": {
       "@apiable/cdk-gateway-role": ["lib/gateway-role/index.ts"],
       "@apiable/cdk-logs-bucket": ["lib/logs-bucket/index.ts"],
+      "@apiable/cdk-cognito-pool": ["lib/cognito-pool/index.ts"],
       "@apiable/cdk-usagelogs-stream": ["lib/logs-stream/index.ts"],
       "@apiable/cdk-usagetokens-stream": ["lib/logs-stream/index.ts"],
       "@apiable/parity-gate": ["lib/parity-gate/index.ts"],

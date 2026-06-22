@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib'
 import { buildPublishedStack as buildGatewayRoleStack } from '../lib/gateway-role'
 import { buildPublishedStack as buildLogsBucketStack } from '../lib/logs-bucket'
+import { buildPublishedStack as buildCognitoPoolStack } from '../lib/cognito-pool'
 import {
   buildPublishedStack as buildUsageLogsStreamStack,
   buildPublishedTokensStack as buildUsageTokensStreamStack,
@@ -14,5 +15,6 @@ import {
 const app = new cdk.App()
 buildGatewayRoleStack(app)
 buildLogsBucketStack(app)
+buildCognitoPoolStack(app)
 buildUsageLogsStreamStack(app)
 buildUsageTokensStreamStack(app)
