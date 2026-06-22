@@ -23,7 +23,20 @@ interface StreamShape {
   readonly cwLoggingEnabled?: boolean
   readonly roleId?: string
   readonly omitDestination?: boolean
+  // When set, the Terraform stream's destination + grant point at this hardcoded literal bucket with NO
+  // var.logs_bucket_arn binding (the re-pointed-destination exploit); otherwise the conventional parameter.
+  readonly tfExfilBucket?: string
 }
+
+// The delivery role's S3-write inline policy on the destination logs bucket — the destination's security
+// representation the parameter-identity reduction compares by value. CFN embeds it via the role's Policies
+// array (CDK inlinePolicies); Terraform declares a separate aws_iam_role_policy. The destination ARN reads
+// as the LogsBucketArn parameter ref (CFN) and the var.logs_bucket_arn-bound literal (TF) by default.
+const s3WriteStatement = (bucketArn: unknown): unknown => ({
+  Effect: 'Allow',
+  Action: ['s3:GetObject', 's3:PutObject'],
+  Resource: [bucketArn, typeof bucketArn === 'string' ? `${bucketArn}/*` : { 'Fn::Join': ['', [bucketArn, '/*']] }],
+})
 
 const cfnStream = (shape: StreamShape = {}): unknown => {
   const destination = {
@@ -41,6 +54,7 @@ const cfnStream = (shape: StreamShape = {}): unknown => {
         Type: 'AWS::IAM::Role',
         Properties: {
           AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'firehose.amazonaws.com' }, Action: 'sts:AssumeRole' }] },
+          Policies: [{ PolicyName: 'FirehosePolicy', PolicyDocument: { Version: '2012-10-17', Statement: [s3WriteStatement({ Ref: 'LogsBucketArn' })] } }],
           Tags: [{ Key: TAG, Value: shape.roleId ?? ROLE_ID }],
         },
       },
@@ -58,9 +72,15 @@ const cfnStream = (shape: StreamShape = {}): unknown => {
 
 // ── synthetic single-stream Terraform artifact ───────────────────────────────────────────────────
 
+const TF_LOGS_BUCKET = 'arn:aws:s3:::apiable-logs-ci'
+
 const tfStream = (shape: StreamShape = {}): unknown => {
+  const bucketArn = shape.tfExfilBucket ?? TF_LOGS_BUCKET
+  // The exfil case wires the destination to a hardcoded literal with no var reference; the legitimate case
+  // binds the conventional var.logs_bucket_arn (the configuration reference is the binding witness).
+  const bucketReferences = shape.tfExfilBucket !== undefined ? [] : ['var.logs_bucket_arn']
   const destination: Record<string, unknown> = {
-    bucket_arn: 'arn:aws:s3:::apiable-logs-ci',
+    bucket_arn: bucketArn,
     role_arn: 'arn:aws:iam::111111111111:role/apiable-usagelogs-firehose',
     prefix: shape.prefix ?? 'apiable/aws/logs/',
     error_output_prefix: shape.errorPrefix ?? 'apiable/aws/errors/',
@@ -82,6 +102,11 @@ const tfStream = (shape: StreamShape = {}): unknown => {
             },
           },
           {
+            address: 'aws_iam_role_policy.firehose',
+            type: 'aws_iam_role_policy',
+            values: { name: 'FirehosePolicy', policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject'], Resource: [bucketArn, `${bucketArn}/*`] }] }) },
+          },
+          {
             address: 'aws_kinesis_firehose_delivery_stream.this',
             type: 'aws_kinesis_firehose_delivery_stream',
             values: { name: 'amazon-apigateway-usagelogs', destination: 'extended_s3', ...(shape.omitDestination ? {} : { extended_s3_configuration: [destination] }) },
@@ -93,10 +118,11 @@ const tfStream = (shape: StreamShape = {}): unknown => {
       root_module: {
         resources: [
           { address: 'aws_iam_role.firehose', type: 'aws_iam_role', expressions: {} },
+          { address: 'aws_iam_role_policy.firehose', type: 'aws_iam_role_policy', expressions: { role: { references: ['aws_iam_role.firehose.id', 'aws_iam_role.firehose'] } } },
           {
             address: 'aws_kinesis_firehose_delivery_stream.this',
             type: 'aws_kinesis_firehose_delivery_stream',
-            expressions: { extended_s3_configuration: [{ role_arn: { references: ['aws_iam_role.firehose.arn', 'aws_iam_role.firehose'] }, bucket_arn: { references: ['var.logs_bucket_arn'] } }] },
+            expressions: { extended_s3_configuration: [{ role_arn: { references: ['aws_iam_role.firehose.arn', 'aws_iam_role.firehose'] }, bucket_arn: { references: bucketReferences } }] },
           },
         ],
         outputs: {},
@@ -186,11 +212,30 @@ describe('firehose role embedded inline policy reduces like a separate policy re
     expect(model.graph.edges.some((e) => e.relation === 'attached-to-role' && e.to === `iam-role:${ROLE_ID}`)).toBe(true)
   })
 
-  it('reduces the embedded policy S3 grant on the deploy-time logs bucket to the shared logs-bucket token', () => {
+  it('reduces the embedded policy S3 grant on the deploy-time logs-bucket PARAMETER to the shared parameter token, preserving the object path', () => {
     const model = reduceCloudFormation(cfnStreamWithPolicy(), 'cfn', REGION)
     const grant = model.grants.find((g) => g.ref.startsWith('grant:s3:iam-inline-policy:policy-of:'))
-    expect(grant?.resources).toContain('{logs-bucket-arn}')
-    expect(grant?.resources).toContain('{logs-bucket-arn}/*')
+    // The grant on `{Ref: LogsBucketArn}` reduces to the parameter token (not a constant that erases the
+    // destination's identity), so a grant on a DIFFERENT bucket would keep that bucket's identity and diverge.
+    expect(grant?.resources).toContain('{logs-bucket-param}')
+    expect(grant?.resources).toContain('{logs-bucket-param}/*')
+  })
+
+  it('keeps a grant on a literal exfil bucket as its own identity — it does NOT collapse to the parameter token', () => {
+    const artifact = cfnStream() as { Resources: Record<string, { Type: string; Properties: Record<string, unknown> }> }
+    artifact.Resources.FirehoseRole.Properties.Policies = [
+      {
+        PolicyName: 'FirehosePolicy',
+        PolicyDocument: {
+          Version: '2012-10-17',
+          Statement: [{ Effect: 'Allow', Action: ['s3:PutObject'], Resource: ['arn:aws:s3:::attacker-exfil-bucket'] }],
+        },
+      },
+    ]
+    const model = reduceCloudFormation(artifact, 'cfn', REGION)
+    const grant = model.grants.find((g) => g.ref.startsWith('grant:s3:iam-inline-policy:policy-of:'))
+    expect(grant?.resources).toContain('arn:aws:s3:::attacker-exfil-bucket')
+    expect(grant?.resources).not.toContain('{logs-bucket-param}')
   })
 })
 
@@ -251,6 +296,48 @@ describe('firehose-delivery-stream fail-closed: an under-specified stream cannot
     expect(Object.keys(model.values).some((key) => key.startsWith('destination-prefix'))).toBe(false)
     // an absent destination block leaves the stream un-anchored to a role, but still a recognised kind
     expect(model.graph.nodes.some((node) => node.kind === 'firehose-delivery-stream')).toBe(true)
+  })
+})
+
+describe('firehose-delivery-stream destination bucket is caught by value (the parameter-identity reduction)', () => {
+  // The fail-OPEN this story closes: a Terraform leg re-pointed to an attacker-controlled bucket while the
+  // CFN/CDK channels stay on the conventional LogsBucketArn parameter MUST fail the gate, not be certified
+  // equivalent. The destination's security representation is the delivery role's S3 write grant multiset.
+  it('FAILS the gate when the Terraform destination is re-pointed to a literal exfil bucket (CFN/CDK on the parameter)', () => {
+    const result = gate([
+      reduceCloudFormation(cfnStream(), 'cdk', REGION),
+      reduceCloudFormation(cfnStream(), 'cfn', REGION),
+      reduceTerraformShowJson(tfStream({ tfExfilBucket: 'arn:aws:s3:::attacker-exfil-bucket' }), 'terraform', REGION, '111111111111'),
+    ])
+    expect(result.passed).toBe(false)
+    // the divergent channel is named, and the exfil bucket keeps its own identity (never the parameter token)
+    const grantDivergence = result.divergences.find((entry) => entry.tier === 'permission')
+    expect(grantDivergence?.channels).toEqual(['terraform'])
+    expect(JSON.stringify(result.divergences)).toContain('attacker-exfil-bucket')
+  })
+
+  it('FAILS the gate when one channel hardcodes the legitimate bucket as a literal where the others parameterise it', () => {
+    // A channel that bakes a concrete bucket where the other channels keep the deploy-time parameter is a
+    // divergence — hardcoding removes the deployer's control over where records land, even on the right bucket.
+    const result = gate([
+      reduceCloudFormation(cfnStream(), 'cdk', REGION),
+      reduceCloudFormation(cfnStream(), 'cfn', REGION),
+      reduceTerraformShowJson(tfStream({ tfExfilBucket: TF_LOGS_BUCKET }), 'terraform', REGION, '111111111111'),
+    ])
+    expect(result.passed).toBe(false)
+    expect(result.divergences.some((entry) => entry.tier === 'permission')).toBe(true)
+  })
+
+  it('PASSES on the matching parameter↔parameter destination (the real legitimate case — no false-FAIL)', () => {
+    // CFN @ref:LogsBucketArn and TF var.logs_bucket_arn-bound literal both reduce to {logs-bucket-param}, so
+    // the delivery role's S3 grant multiset reconciles cross-channel and the gate certifies the channels match.
+    const result = gate([
+      reduceCloudFormation(cfnStream(), 'cdk', REGION),
+      reduceCloudFormation(cfnStream(), 'cfn', REGION),
+      reduceTerraformShowJson(tfStream(), 'terraform', REGION, '111111111111'),
+    ])
+    expect(result.divergences).toEqual([])
+    expect(result.passed).toBe(true)
   })
 })
 

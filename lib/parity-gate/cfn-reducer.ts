@@ -28,13 +28,14 @@ import {
   SecretRef,
 } from './model'
 import {
-  canonicaliseLogsBucketArn,
+  canonicaliseLogsBucketParam,
   canonicalCfnKind,
   canonicalOutputAttr,
   DECLARED_ID_KINDS,
   DECLARED_ID_TAG,
   discriminatorOf,
   ENFORCED_DECLARED_ID_KINDS,
+  LOGS_BUCKET_ARN_PARAMETER,
   missingDeclaredId,
   nodeRef,
   policyServices,
@@ -445,23 +446,27 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     }
   }
 
-  // The external logs bucket each delivery stream writes to — a deploy-time input resolved here to its
-  // parameter ref (`@ref:<param>`) and a concrete literal in the Terraform channel; both reduce to the
-  // LOGS_BUCKET_ARN_TOKEN so the delivery role's S3 grant on it reconciles cross-channel.
-  const deliveryBucketArns = new Set<string>()
+  // The destination of each delivery stream whose BucketARN is bound to the declared deploy-time logs-bucket
+  // parameter — keyed on the parameter REF (`@ref:LogsBucketArn`), read from the raw `BucketARN` intrinsic,
+  // NOT its resolved value: a stream pointed at a literal bucket, or a ref to a different-named parameter,
+  // contributes nothing, so its grant keeps that identity and diverges from the parameter token. The TF
+  // channel adds its own var.logs_bucket_arn-bound literal to the same shared {logs-bucket-param} token.
+  const paramDestinations = new Set<string>()
   for (const res of Object.values(resources)) {
     if (canonicalCfnKind(res.type) !== 'firehose-delivery-stream') continue
-    const bucketArn = normaliseLogical(resolve(streamS3Destination(res.properties).BucketARN), region)
-    if (bucketArn !== '') deliveryBucketArns.add(bucketArn)
+    if (asString(asRecord(streamS3Destination(res.properties).BucketARN).Ref) === LOGS_BUCKET_ARN_PARAMETER) {
+      paramDestinations.add(`@ref:${LOGS_BUCKET_ARN_PARAMETER}`)
+    }
   }
 
   // A grant resource that is a `Fn::GetAtt` to a resource in this template resolves to `@getatt:<id>:<attr>`
   // with the channel-local logical id; map it back to that resource's channel-stable node ref (keeping any
-  // trailing object path) so a self-referential ARN reconciles with the Terraform-resolved literal. A
-  // grant on an external delivery destination (the deploy-time logs bucket) reduces to the shared token.
+  // trailing object path) so a self-referential ARN reconciles with the Terraform-resolved literal. A grant
+  // naming the deploy-time logs-bucket parameter reduces to the shared parameter token; every other literal
+  // ARN keeps its identity and diverges.
   const canonicaliseResource = (resource: string): string => {
     const match = /^@getatt:([^:]+):[^/]*(.*)$/.exec(resource)
-    if (match === null) return canonicaliseLogsBucketArn(resource, deliveryBucketArns)
+    if (match === null) return canonicaliseLogsBucketParam(resource, paramDestinations)
     const node = refToNode.get(match[1])
     return node === undefined ? resource : `${node}${match[2]}`
   }

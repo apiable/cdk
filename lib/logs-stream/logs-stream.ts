@@ -5,10 +5,15 @@ import * as iam from 'aws-cdk-lib/aws-iam'
 import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose'
 import * as logs from 'aws-cdk-lib/aws-logs'
 import { publishOutputs } from '@apiable/cdk-ssm-composition'
+import { LOGS_BUCKET_ARN_PARAMETER } from '@apiable/parity-gate'
 import { BUCKET_ARN_PATTERN_SOURCE, CONSTRUCT_NAME, TOKENS_CONSTRUCT_NAME } from './launch-stack-url'
 
-/** Logical id of the storage-location parameter the published template scopes the stream's destination by. */
-export const LOGS_BUCKET_ARN_PARAMETER = 'LogsBucketArn'
+/**
+ * Logical id of the storage-location parameter the published template scopes the stream's destination by.
+ * The parity gate owns the canonical spelling (it keys the destination-bucket parameter-identity reduction
+ * on it), so the construct sources it from there and re-exports it for the launch-stack/test consumers.
+ */
+export { LOGS_BUCKET_ARN_PARAMETER }
 
 /** Logical id of the stream-name parameter the published template scopes the stream's physical names by. */
 export const STREAM_NAME_PARAMETER = 'StreamName'

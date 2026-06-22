@@ -70,6 +70,37 @@ const streamConfigOf = (plan: TfPlan): Record<string, unknown> => {
   return config
 }
 
+interface TfConfigPlan {
+  configuration: { root_module: { resources: { type: string; expressions?: Record<string, unknown> }[] } }
+}
+
+const EXFIL_BUCKET = 'arn:aws:s3:::attacker-exfil-bucket'
+
+/**
+ * Re-point the real Terraform fixture's destination to a hardcoded exfil bucket, the way a hand-rolled
+ * module would: rewrite the delivery role's S3 write grant onto the exfil bucket AND drop the stream
+ * destination's `var.logs_bucket_arn` binding (a literal with no var reference), so the destination is no
+ * longer the conventional deploy-time parameter. The CFN/CDK channels stay on the published parameter.
+ */
+const repointToExfilBucket = (plan: unknown): unknown => {
+  const tf = plan as TfPlan & TfConfigPlan
+  const policy = tf.planned_values.root_module.resources.find((r) => r.type === 'aws_iam_role_policy')
+  if (policy === undefined) throw new Error('fixture must carry an aws_iam_role_policy resource')
+  const document = JSON.parse(policy.values.policy as string) as { Statement: { Action: unknown; Resource: unknown }[] }
+  for (const statement of document.Statement) {
+    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action]
+    if (actions.some((action) => typeof action === 'string' && action.startsWith('s3:'))) {
+      statement.Resource = [EXFIL_BUCKET, `${EXFIL_BUCKET}/*`]
+    }
+  }
+  policy.values.policy = JSON.stringify(document)
+  streamConfigOf(tf).bucket_arn = EXFIL_BUCKET
+  const configStream = tf.configuration.root_module.resources.find((r) => r.type === 'aws_kinesis_firehose_delivery_stream')
+  const configDestination = (configStream?.expressions?.extended_s3_configuration as Record<string, unknown>[])[0]
+  configDestination.bucket_arn = { references: [] }
+  return tf
+}
+
 describe('013-1-21 usage-stream parity — real CDK + one-click + Terraform artifacts', () => {
   for (const distribution of DISTRIBUTIONS) {
     describe(`${distribution.name} stream`, () => {
@@ -106,6 +137,18 @@ describe('013-1-21 usage-stream parity — real CDK + one-click + Terraform arti
         const result = gate([cdkModel(distribution), cfnModel(distribution), tfModel(distribution, drifted)])
         expect(result.passed).toBe(false)
         const divergence = result.divergences.find((entry) => entry.detail.includes('cloudwatch-logging-enabled'))
+        expect(divergence).toBeDefined()
+        expect(divergence?.channels).toEqual(['terraform'])
+      })
+
+      it('a Terraform leg re-pointed to a hardcoded exfil bucket FAILS the gate naming terraform (the fail-OPEN this tier closes)', () => {
+        // The exploit against the REAL published CFN: the destination is re-pointed to an attacker-controlled
+        // bucket while CFN/CDK stay on the published LogsBucketArn parameter. Certifying this equivalent would
+        // let usage records be exfiltrated through the hand-rolled Terraform channel.
+        const exploit = repointToExfilBucket(clone(tfPlan(distribution)))
+        const result = gate([cdkModel(distribution), cfnModel(distribution), tfModel(distribution, exploit)])
+        expect(result.passed).toBe(false)
+        const divergence = result.divergences.find((entry) => entry.tier === 'permission' && entry.detail.includes('attacker-exfil-bucket'))
         expect(divergence).toBeDefined()
         expect(divergence?.channels).toEqual(['terraform'])
       })

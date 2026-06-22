@@ -30,13 +30,14 @@ import {
   SecretRef,
 } from './model'
 import {
-  canonicaliseLogsBucketArn,
+  canonicaliseLogsBucketParam,
   canonicalTfKind,
   canonicalOutputAttr,
   DECLARED_ID_KINDS,
   DECLARED_ID_TAG,
   discriminatorOf,
   ENFORCED_DECLARED_ID_KINDS,
+  LOGS_BUCKET_VAR_REFERENCE,
   missingDeclaredId,
   nodeRef,
   policyServices,
@@ -357,6 +358,11 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const functionRefByPermissionAddress = new Map<string, string>()
   const poolRefByDomainAddress = new Map<string, string>()
   const roleRefByStreamAddress = new Map<string, string>()
+  // Stream addresses whose destination bucket_arn is bound to the conventional deploy-time
+  // var.logs_bucket_arn (read from configuration references, since planned_values resolves the var to
+  // its concrete literal and hides the binding) — the witness that the stream's resolved destination
+  // literal IS the deploy-time logs-bucket parameter and so reduces to the shared parameter token.
+  const streamDestinationBoundToParam = new Set<string>()
   for (const entry of configResources) {
     const record = asRecord(entry)
     const address = asString(record.address)
@@ -397,8 +403,14 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       // The delivery role the stream assumes, read from the destination block's role_arn reference (the
       // role id is computed and absent from planned_values), so the stream anchors to the role's
       // channel-stable declared identity — the Terraform counterpart of the CloudFormation RoleARN anchor.
-      const roleTarget = referencesOf(block(expressions.extended_s3_configuration).role_arn, addresses)[0]
+      const destination = block(expressions.extended_s3_configuration ?? expressions.s3_configuration)
+      const roleTarget = referencesOf(destination.role_arn, addresses)[0]
       if (roleTarget !== undefined) roleRefByStreamAddress.set(address, refToNode.get(roleTarget.address) ?? roleTarget.address)
+      // The destination bucket_arn references the conventional deploy-time variable: the stream's resolved
+      // destination literal is the logs-bucket parameter, so its grant reduces to the shared parameter token.
+      if (asStringArray(asRecord(destination.bucket_arn).references).includes(LOGS_BUCKET_VAR_REFERENCE)) {
+        streamDestinationBoundToParam.add(address)
+      }
     }
   }
   // The pool disc a literal-bound resource-server anchored to, so its bound-to-pool edge can be emitted
@@ -481,14 +493,18 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       if (logGroupName !== '') arnToNode.set(`arn:aws:logs:${REGION_TOKEN}:${ACCOUNT_TOKEN}:log-group:${logGroupName}`, refToNode.get(res.address) ?? res.address)
     }
   }
-  // The external logs bucket each delivery stream writes to — a deploy-time input that is a concrete
-  // `arn:aws:s3:::…` literal here and a parameter ref in the published CloudFormation channel; both
-  // reduce to the LOGS_BUCKET_ARN_TOKEN so the delivery role's S3 grant on it reconciles cross-channel.
-  const deliveryBucketArns = new Set<string>()
+  // The concrete destination literal of each stream whose bucket_arn is bound to the conventional
+  // deploy-time var.logs_bucket_arn — the Terraform spelling of the same input the published CloudFormation
+  // channel carries as `@ref:LogsBucketArn`; both reduce to the shared {logs-bucket-param} token so the
+  // delivery role's S3 grant on the conventional bucket reconciles cross-channel. A stream pointed at a
+  // hardcoded literal with no var binding, or bound to a different-named variable, contributes nothing —
+  // its grant keeps that literal and diverges from the parameter token (the re-pointed-destination attack).
+  const paramDestinations = new Set<string>()
   for (const res of resources) {
     if (kindByAddress.get(res.address) !== 'firehose-delivery-stream') continue
+    if (!streamDestinationBoundToParam.has(res.address)) continue
     const bucketArn = normaliseLogical(tfResolve(streamS3Destination(res.values).bucket_arn), region)
-    if (bucketArn !== '') deliveryBucketArns.add(bucketArn)
+    if (bucketArn !== '') paramDestinations.add(bucketArn)
   }
   const canonicaliseResource = (resource: string): string => {
     for (const [arn, node] of arnToNode) {
@@ -496,7 +512,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       if (resource.startsWith(`${arn}:`)) return `${node}${resource.slice(arn.length)}`
       if (resource.startsWith(`${arn}/`)) return `${node}${resource.slice(arn.length)}`
     }
-    return canonicaliseLogsBucketArn(resource, deliveryBucketArns)
+    return canonicaliseLogsBucketParam(resource, paramDestinations)
   }
 
   const nodes: ResourceNode[] = []

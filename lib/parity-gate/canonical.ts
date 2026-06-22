@@ -131,28 +131,57 @@ export const VALUE_BEARING_KINDS: ReadonlySet<string> = new Set<string>([
 ])
 
 /**
- * The stable token a firehose delivery stream's destination logs-bucket ARN reduces to. The bucket is
- * a deploy-time input external to the stream artifact, so it reads as a parameter ref in the published
- * CloudFormation channel and a concrete literal in Terraform — two channel-specific forms of the one
- * "the logs bucket the customer supplies". Both reduce to this token so the delivery role's S3 grant on
- * that bucket (and the stream's destination) reconciles cross-channel by the role's grant, while a
- * stream wired to a genuinely different in-stack bucket (an Fn::GetAtt / address reference) still
- * resolves to that bucket's node ref and diverges. A real bucket ARN can never equal this token.
+ * Logical id of the deploy-time parameter the published CloudFormation template scopes a firehose
+ * stream's destination logs bucket by. The construct re-exports this from its own module; the parity
+ * gate owns the canonical spelling so it imports nothing from the construct directory. The
+ * CloudFormation parameter ref is `@ref:LogsBucketArn`.
  */
-export const LOGS_BUCKET_ARN_TOKEN = '{logs-bucket-arn}'
+export const LOGS_BUCKET_ARN_PARAMETER = 'LogsBucketArn'
 
 /**
- * Canonicalise a grant resource that names one of a channel's firehose delivery destinations (its
- * external logs bucket) to {@link LOGS_BUCKET_ARN_TOKEN}, preserving any trailing object path (`/ *`).
- * `deliveryArns` is the set of each channel's own destination-bucket representations — the resolved
- * `@ref:<param>` on the CloudFormation side, the concrete `arn:aws:s3:::…` literal on the Terraform side
- * — so the same deploy-time bucket reduces to one token in every channel. A resource naming no delivery
- * destination is returned unchanged.
+ * The Terraform reference to the deploy-time logs-bucket variable — the channel-twin of
+ * {@link LOGS_BUCKET_ARN_PARAMETER}. The published module names the variable `logs_bucket_arn`, so a
+ * stream whose destination `bucket_arn` references this is bound to the conventional deploy-time input.
+ * The two spellings (`LogsBucketArn` ⇄ `var.logs_bucket_arn`) are the authored channel forms of the one
+ * input, kept together here so the parameter-identity reduction keys both on a single source of truth.
  */
-export const canonicaliseLogsBucketArn = (resource: string, deliveryArns: ReadonlySet<string>): string => {
-  for (const arn of deliveryArns) {
-    if (resource === arn) return LOGS_BUCKET_ARN_TOKEN
-    if (resource.startsWith(`${arn}/`)) return `${LOGS_BUCKET_ARN_TOKEN}${resource.slice(arn.length)}`
+export const LOGS_BUCKET_VAR_REFERENCE = 'var.logs_bucket_arn'
+
+/**
+ * The stable token the declared deploy-time logs-bucket PARAMETER reduces to. The destination bucket is
+ * a deploy-time input external to the stream artifact, so the conventional case reads as the parameter
+ * ref `@ref:LogsBucketArn` in the published CloudFormation channel and a concrete literal bound to
+ * `var.logs_bucket_arn` in Terraform — two channel-specific spellings of the one deploy-time input the
+ * construct names. Both reduce to this token so the delivery role's S3 grant on the conventional logs
+ * bucket reconciles cross-channel, while every *other* ARN keeps its identity (a literal stays a literal,
+ * a ref to a different-named parameter stays `@ref:<other>`) and therefore diverges. The token name
+ * carries the convention — "this is the declared logs-bucket parameter", not "any delivery destination".
+ * A real bucket ARN or a different parameter ref can never equal this token.
+ */
+export const LOGS_BUCKET_PARAM_TOKEN = '{logs-bucket-param}'
+
+/**
+ * Canonicalise a grant resource to {@link LOGS_BUCKET_PARAM_TOKEN} *only* when it names the channel's
+ * representation of the declared deploy-time logs-bucket parameter, preserving any trailing object path
+ * (`/ *`). `paramDestinations` is the set of each channel's own representation of that destination
+ * **when and only when** the stream's `BucketARN`/`bucket_arn` is bound to the conventional parameter:
+ * the single `@ref:LogsBucketArn` entry on the CloudFormation side, the concrete `arn:aws:s3:::…` literal
+ * the Terraform stream binds via `var.logs_bucket_arn` on the Terraform side. A resource that is a bare
+ * literal, or a ref to a different-named parameter/variable, is **not** in the set and is returned
+ * unchanged — so a re-pointed destination (an attacker-controlled exfil bucket, whether hardcoded or
+ * wired to a differently-named variable) keeps its identity and fails the gate by value.
+ *
+ * The Terraform variable name is load-bearing: the witness that a TF literal is the conventional
+ * deploy-time parameter is that the stream's destination `bucket_arn` references the top-level
+ * `var.logs_bucket_arn`. A hand-rolled module that renames that variable while still wiring it as a
+ * genuine deploy-time input would fail CLOSED (its literal is unrecognised → diverges from the
+ * parameter token), never fail open — using the conventional variable name is part of the published
+ * convention the gate polices, and a renamed fork is realigned by adopting the convention.
+ */
+export const canonicaliseLogsBucketParam = (resource: string, paramDestinations: ReadonlySet<string>): string => {
+  for (const destination of paramDestinations) {
+    if (resource === destination) return LOGS_BUCKET_PARAM_TOKEN
+    if (resource.startsWith(`${destination}/`)) return `${LOGS_BUCKET_PARAM_TOKEN}${resource.slice(destination.length)}`
   }
   return resource
 }

@@ -23,6 +23,7 @@ export type {
   ResourceNode,
   SecretRef,
 } from './model'
+export { LOGS_BUCKET_ARN_PARAMETER } from './canonical'
 export { reduceCloudFormation } from './cfn-reducer'
 export { reduceTerraformShowJson } from './terraform-reducer'
 export { compareGraph } from './compare'
