@@ -141,6 +141,35 @@ const subAttrWiredTo = (bucketId: 'BucketAlpha' | 'BucketBeta'): Tmpl => ({
 })
 
 /**
+ * Two buckets identical in Type AND Properties, differing ONLY in a top-level `DeletionPolicy`
+ * (durable `Retain` vs disposable `Delete`) — both present in baseline AND candidate, so the resource
+ * multiset is identical. A consumer ties to one of them through BOTH a direct `{Ref}` and an
+ * `{Fn::GetAtt}`. Re-pointing the consumer's references from the durable bucket to the disposable
+ * near-twin is observable drift (a reference re-aimed at a resource with a different deletion behaviour),
+ * but it is invisible unless the referent token carries the target's load-bearing top-level attributes:
+ * if the token were keyed over Type+Properties only, both buckets would yield the identical token and
+ * the consumer's shape would match in both templates → no drift (the residual fail-open this closes).
+ */
+const refToNearTwin = (bucketId: 'DurableBucket' | 'DisposableBucket'): Tmpl => ({
+  Resources: {
+    DurableBucket: { Type: 'AWS::S3::Bucket', DeletionPolicy: 'Retain', Properties: { BucketName: 'twin' } },
+    DisposableBucket: { Type: 'AWS::S3::Bucket', DeletionPolicy: 'Delete', Properties: { BucketName: 'twin' } },
+    Consumer: {
+      Type: 'AWS::Lambda::Function',
+      Properties: {
+        FunctionName: 'twin-consumer',
+        Environment: {
+          Variables: {
+            BucketRef: { Ref: bucketId }, // direct Ref to the near-twin
+            BucketArn: { 'Fn::GetAtt': [bucketId, 'Arn'] }, // Fn::GetAtt to the near-twin
+          },
+        },
+      },
+    },
+  },
+})
+
+/**
  * A resource graph exercising EVERY reference form the template can express, so S2 proves no form is
  * left un-normalised: direct {Ref}, attribute {Fn::GetAtt} short (string) AND long (array) form,
  * {Fn::Sub}-embedded ${Logical} AND ${Logical.Attr}, DependsOn, and the default-policy PolicyName echo.
@@ -250,6 +279,13 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       expect(candidate.Resources).not.toEqual(baseline.Resources)
       expect(cfnDifferences(baseline, candidate)).toEqual([])
     })
+
+    it('renaming a near-twin target (+ its {Ref} and {Fn::GetAtt}) whose only distinction is DeletionPolicy → still no drift', () => {
+      const baseline = refToNearTwin('DurableBucket')
+      const candidate = renameAll(baseline, 'DurableBucket', 'RenamedDurableBucket')
+      expect(candidate.Resources).not.toEqual(baseline.Resources)
+      expect(cfnDifferences(baseline, candidate)).toEqual([])
+    })
   })
 
   // S3 — a re-target (by reference OR by value, incl an IAM trust/principal/resource) is caught
@@ -316,6 +352,14 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       const baseline = cyclicPair('Beta')
       const candidate = cyclicPair('Gamma') // Alpha.Peer re-pointed from Beta (Policy) to Gamma (Queue)
       expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+    })
+
+    it('a {Ref} + {Fn::GetAtt} re-pointed to a near-twin differing ONLY in DeletionPolicy → drift (the referent token carries top-level attrs)', () => {
+      const baseline = refToNearTwin('DurableBucket')
+      const candidate = refToNearTwin('DisposableBucket')
+      expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+      expect(isCfnEquivalent(baseline, candidate)).toBe(false)
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
     })
   })
 

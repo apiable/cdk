@@ -56,11 +56,29 @@ const canonical = (value: unknown): string => {
 }
 
 /**
+ * The load-bearing top-level resource attributes that carry observable behaviour (siblings of `Type`
+ * and `Properties`) — a `DependsOn` re-target, a flip of `DeletionPolicy`/`UpdateReplacePolicy` on a
+ * stateful resource, or a changed `Condition`/`CreationPolicy`/`UpdatePolicy` all change what the stack
+ * does, so they enter the comparison shape. `DependsOn` is reference-normalised by its target's shape;
+ * the rest are compared by value. `Metadata` is cosmetic (its `aws:cdk:path` changes on every rename)
+ * and is excluded so the rename tolerance holds.
+ */
+const TOP_LEVEL_SHAPE_ATTRIBUTES = [
+  'DependsOn',
+  'Condition',
+  'DeletionPolicy',
+  'UpdateReplacePolicy',
+  'CreationPolicy',
+  'UpdatePolicy',
+] as const
+
+/**
  * Resolves a logical-id reference to a token that encodes *what the reference points at* — the target
- * resource's shape (its type + recursively reference-normalised properties), never its renameable
- * logical-id identity. Two references to differently-shaped targets get different tokens, so a
- * re-target (a policy re-attached to another role, a stream re-wired to another bucket) changes the
- * referrer's canonical shape and registers as drift; a consistent logical-id rename leaves the
+ * resource's shape (its type + recursively reference-normalised properties AND its load-bearing
+ * top-level attributes), never its renameable logical-id identity. Two references to differently-shaped
+ * targets get different tokens, so a re-target (a policy re-attached to another role, a stream re-wired
+ * to another bucket, a reference re-pointed from a durable resource to a disposable near-twin) changes
+ * the referrer's canonical shape and registers as drift; a consistent logical-id rename leaves the
  * target's shape unchanged, so the token is stable and the rename is tolerated.
  */
 const targetTokenResolver = (resources: Record<string, CfnResource>) => {
@@ -80,11 +98,37 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
     const target = resources[id]
     if (!target) return 'ref→<unknown>'
     if (resolving.has(id)) return `ref-cycle→${target.Type}`
-    const properties = normalise(target.Properties ?? null, new Set(resolving).add(id))
-    const token = `ref→${canonical({ type: target.Type, properties })}`
+    const token = `ref→${canonical(shapeOf(target, new Set(resolving).add(id)))}`
     if (resolving.size === 0) cache.set(id, token)
     return token
   }
+
+  // The single source of truth for a resource's comparison shape — its type, its reference-normalised
+  // properties, and each present load-bearing top-level attribute (`DependsOn` reference-normalised by
+  // target shape; the rest by value; `Metadata` excluded). BOTH the referent token (`shapeToken`, with
+  // the cycle-extended stack) and the owner shape (`resourceShapes`, with a fresh stack) build through
+  // this, so the two paths can never drift apart: a reference re-pointed between two resources that
+  // differ only in a top-level attribute now changes the referent token, just as it changes the owner.
+  const shapeOf = (resource: CfnResource, resolving: Set<string>): Record<string, unknown> => {
+    const shape: Record<string, unknown> = {
+      type: resource.Type,
+      properties: normalise(resource.Properties ?? null, resolving),
+    }
+    for (const attr of TOP_LEVEL_SHAPE_ATTRIBUTES) {
+      if (resource[attr] === undefined) continue
+      shape[attr] = attr === 'DependsOn' ? normaliseDependsOn(resource[attr], resolving) : resource[attr]
+    }
+    return shape
+  }
+
+  // A `DependsOn` is a logical id or a list of them; each id-reference rewrites to its target-shape
+  // token (a non-id entry normalises as ordinary data). Shared by the `normalise` walk (a `DependsOn`
+  // nested inside a walked object) and `shapeOf` (the top-level `DependsOn`, the only valid CFN
+  // placement), so the dependency-declaration reference form normalises identically in both paths.
+  const normaliseDependsOn = (dep: unknown, resolving: Set<string>): unknown =>
+    (Array.isArray(dep) ? dep : [dep]).map((d) =>
+      typeof d === 'string' && logicalIds.has(d) ? shapeToken(d, resolving) : normalise(d, resolving),
+    )
 
   /**
    * Rewrites every cross-resource logical-id reference to its target-shape token, across every form a
@@ -124,10 +168,7 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
           if (k === 'PolicyName' && typeof obj[k] === 'string' && logicalIds.has(obj[k] as string)) {
             out[k] = shapeToken(obj[k] as string, resolving)
           } else if (k === 'DependsOn') {
-            const dep = obj[k]
-            out[k] = (Array.isArray(dep) ? dep : [dep]).map((d) =>
-              typeof d === 'string' && logicalIds.has(d) ? shapeToken(d, resolving) : walk(d),
-            )
+            out[k] = normaliseDependsOn(obj[k], resolving)
           } else {
             out[k] = walk(obj[k])
           }
@@ -161,47 +202,30 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
     return normalise(sub, resolving)
   }
 
-  return (value: unknown): unknown => normalise(value, new Set<string>())
+  return {
+    // The public reference-normaliser (fresh resolution stack) — rewrites every cross-resource
+    // reference in an arbitrary value to its target-shape token. Used for export values.
+    normalise: (value: unknown): unknown => normalise(value, new Set<string>()),
+    // A resource's full comparison shape (fresh resolution stack), so the multiset key and the
+    // referent token are built by one helper and cannot diverge.
+    shapeOf: (resource: CfnResource): Record<string, unknown> => shapeOf(resource, new Set<string>()),
+  }
 }
-
-/**
- * The load-bearing top-level resource attributes that carry observable behaviour (siblings of `Type`
- * and `Properties`) — a `DependsOn` re-target, a flip of `DeletionPolicy`/`UpdateReplacePolicy` on a
- * stateful resource, or a changed `Condition`/`CreationPolicy`/`UpdatePolicy` all change what the stack
- * does, so they enter the comparison shape. `Metadata` is cosmetic and is excluded.
- */
-const TOP_LEVEL_SHAPE_ATTRIBUTES = [
-  'DependsOn',
-  'Condition',
-  'DeletionPolicy',
-  'UpdateReplacePolicy',
-  'CreationPolicy',
-  'UpdatePolicy',
-] as const
 
 /**
  * The multiset of resource shapes, keyed by type + reference-normalised properties + load-bearing
  * top-level attributes, so that a rename of a resource's logical id (and of any reference to it) does
  * not register as a change, while a reference re-pointed at a different resource does (its target-shape
- * token changes). The whole resource is run through the reference resolver so a top-level `DependsOn`
- * (the only place `DependsOn` is valid CloudFormation) normalises by its target's shape too.
+ * token changes). The shape is built by the resolver's `shapeOf` — the same helper the referent token
+ * uses — so a re-target between two resources differing only in a top-level attribute is caught
+ * symmetrically whether the resource is compared as an owner or reached through a reference.
  */
 export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
   const resources = template.Resources ?? {}
-  const normaliseRefs = targetTokenResolver(resources)
+  const resolver = targetTokenResolver(resources)
   const counts = new Map<string, number>()
   for (const resource of Object.values(resources)) {
-    // Normalise the resource as a whole so a top-level `DependsOn` reaches the resolver's `DependsOn`
-    // branch (it fires on a key of an object it walks, not on a bare value passed as the walk root).
-    const normalised = normaliseRefs(resource) as Record<string, unknown>
-    const shape: Record<string, unknown> = {
-      type: resource.Type,
-      properties: normalised.Properties ?? null,
-    }
-    for (const attr of TOP_LEVEL_SHAPE_ATTRIBUTES) {
-      if (normalised[attr] !== undefined) shape[attr] = normalised[attr]
-    }
-    const key = canonical(shape)
+    const key = canonical(resolver.shapeOf(resource))
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
   return counts
@@ -209,12 +233,12 @@ export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
 
 /** Published exports keyed by export name — the contract dependent stacks import via `Fn::ImportValue`. */
 export const publishedExports = (template: CfnTemplate): Map<string, string> => {
-  const normaliseRefs = targetTokenResolver(template.Resources ?? {})
+  const resolver = targetTokenResolver(template.Resources ?? {})
   const exports = new Map<string, string>()
   for (const output of Object.values(template.Outputs ?? {})) {
     const exportName = output.Export?.Name
     if (typeof exportName === 'string') {
-      exports.set(exportName, canonical(normaliseRefs(output.Value)))
+      exports.set(exportName, canonical(resolver.normalise(output.Value)))
     }
   }
   return exports
