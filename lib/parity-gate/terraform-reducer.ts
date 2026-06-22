@@ -459,14 +459,27 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
-      grants.push(...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline', canonicaliseResource))
+      // File each inline-policy grant under the policy's own node ref, mirroring the CloudFormation side,
+      // so two roles' policies covering one service set never pool into a shared multiset where a
+      // cross-owner loosen/tighten swap nets out. The policy node ref embeds its owning role.
+      grants.push(
+        ...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline', canonicaliseResource).map(
+          (grant) => ({ ...grant, ref: `${grant.ref}:${ref}` }),
+        ),
+      )
     }
     if (kind === 's3-bucket-policy') {
       grants.push(...bucketPolicyGrants(res.values.policy, region, securedBucketName(securedBucketByPolicyAddress.get(res.address)), canonicaliseResource))
       // The cross-account write grant by value (deploying account dropped); always emitted ({none} = no external writer).
       values[`bucket-policy-write-accounts:${ref}`] = grantedAccountsValue(resolvedPrincipalsOf(parseJson(res.values.policy), tfResolve), deployAccount)
     }
-    if (kind === 'lambda-permission') grants.push(lambdaPermissionGrant(res.values, region))
+    if (kind === 'lambda-permission') {
+      // File the invoke grant under the permission's own node ref, mirroring the CloudFormation side, so
+      // two functions invoked by one principal never pool where a cross-owner swap nets out. The
+      // permission node ref embeds its owning function.
+      const invokeGrant = lambdaPermissionGrant(res.values, region)
+      grants.push({ ...invokeGrant, ref: `${invokeGrant.ref}:${ref}` })
+    }
     if (kind === 'cognito-user-pool') {
       // The pool's discovery endpoints as load-bearing value rows, so a divergent issuer or sign-in/token
       // host is caught cross-channel by the value comparison, not merely checked per channel for conformance.
@@ -493,7 +506,10 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     const kind = canonicalTfKind(asString(record.type) ?? '')
     const expressions = asRecord(record.expressions)
     const from = refToNode.get(address) ?? address
-    const relation = kind === 'iam-inline-policy' ? 'attached-to-role' : 'depends-on'
+    // A policy is `attached-to-role` and a permission `invokes` its function, matching the relation the
+    // CloudFormation reducer emits, so a lambda-permission's invoke edge reconciles cross-channel instead
+    // of false-diverging on the relation string (CFN `invokes` vs a generic `depends-on`).
+    const relation = kind === 'iam-inline-policy' ? 'attached-to-role' : kind === 'lambda-permission' ? 'invokes' : 'depends-on'
     for (const target of referencesOf(expressions.role ?? expressions.function_name, addresses)) {
       edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation })
     }

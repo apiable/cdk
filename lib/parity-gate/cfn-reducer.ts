@@ -440,13 +440,24 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
     }
     if (kind === 'iam-inline-policy') {
-      grants.push(...grantsFromPolicyDocument(res.properties.PolicyDocument, resolve, region, 'inline', canonicaliseResource))
+      // File each inline-policy grant under the policy's own node ref: the grant ref is otherwise the
+      // bare `grant:<services>`, so two roles' policies covering one service set pool into a shared
+      // multiset and a cross-owner loosen/tighten swap nets out. The policy node ref embeds its owning role.
+      grants.push(
+        ...grantsFromPolicyDocument(res.properties.PolicyDocument, resolve, region, 'inline', canonicaliseResource).map(
+          (grant) => ({ ...grant, ref: `${grant.ref}:${ref}` }),
+        ),
+      )
       for (const target of resourceRefsIn(res.properties.Roles, resourceIds)) {
         edges.push({ from: ref, to: refToNode.get(target.id) ?? target.id, relation: 'attached-to-role' })
       }
     }
     if (kind === 'lambda-permission') {
-      grants.push(lambdaPermissionGrant(res.properties, resolve, region))
+      // File the invoke grant under the permission's own node ref: the grant ref is otherwise the bare
+      // `grant:invoke:<principal>`, so two functions invoked by one principal pool and a cross-owner swap
+      // nets out. The permission node ref embeds its owning function.
+      const invokeGrant = lambdaPermissionGrant(res.properties, resolve, region)
+      grants.push({ ...invokeGrant, ref: `${invokeGrant.ref}:${ref}` })
       for (const target of resourceRefsIn(res.properties.FunctionName, resourceIds)) {
         edges.push({ from: ref, to: refToNode.get(target.id) ?? target.id, relation: 'invokes' })
       }

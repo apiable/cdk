@@ -585,7 +585,12 @@ const valueWritingKindsIn = (source: string): Set<string> => {
   for (const line of source.split('\n')) {
     const kindMatch = line.match(/kind === '([^']+)'/)
     if (kindMatch !== null) currentKind = kindMatch[1]
-    if (/(?<![.\w])(?:values|out)\[/.test(line) && currentKind !== undefined) kinds.add(currentKind)
+    // A value row is written either by direct bracket assignment (`values[key] = …`) or by spreading a
+    // per-resource value-batch helper into the map (`values = { ...values, ...helper(ref, …) }`). Both must
+    // be seen, or a kind whose only value row is spread-written silently escapes the uniqueness coupling.
+    const bracketWrite = /(?<![.\w])(?:values|out)\[/.test(line)
+    const spreadWrite = /(?<![.\w])(?:values|out) = \{ [^}]*\.\.\.\w+\(/.test(line)
+    if ((bracketWrite || spreadWrite) && currentKind !== undefined) kinds.add(currentKind)
   }
   return kinds
 }
