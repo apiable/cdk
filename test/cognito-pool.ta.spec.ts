@@ -7,7 +7,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
-import { Template, Match } from 'aws-cdk-lib/assertions'
+import { Template } from 'aws-cdk-lib/assertions'
 import {
   CognitoPool,
   CognitoPoolStack,
@@ -84,16 +84,6 @@ describe('cognito-pool — additional automation coverage', () => {
           featurePlan: 'ESSENTIALS',
         }),
     ).toThrow(/lowercase letters, digits, and hyphens/)
-  })
-
-  it('substitutes the reserved "aws" hosted-UI domain prefix', () => {
-    const t = Template.fromStack(
-      new CognitoPoolStack(new cdk.App(), 'apiable-cognito-pool', {
-        name: 'aws',
-        env: { account: TENANT_ACCOUNT, region: REGION },
-      }),
-    )
-    t.hasResourceProperties('AWS::Cognito::UserPoolDomain', Match.objectLike({ Domain: 'apiable-aw-s' }))
   })
 
   it('the pool always carries the channel-stable declared id, on both the concrete and published synth', () => {

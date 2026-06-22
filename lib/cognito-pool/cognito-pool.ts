@@ -118,9 +118,11 @@ export class CognitoPool extends Construct {
       scopes: [adminScope],
     })
 
-    let domainPrefix = `apiable-${name}`
-    if (name === 'aws') domainPrefix = 'apiable-aw-s' // aws is reserved on Cognito and cannot be used
-    this.pool.addDomain('CognitoDomain', { cognitoDomain: { domainPrefix } })
+    // Render the hosted-UI domain as `apiable-<name>` identically on every channel (the published CFN
+    // and Terraform channels cannot string-substitute a token name, so the CDK channel must not either).
+    // A reserved Cognito substring (`aws`) fails the deploy identically across channels; cross-channel
+    // reserved-name normalisation is a separate concern owned by the parity-gate capability slice.
+    this.pool.addDomain('CognitoDomain', { cognitoDomain: { domainPrefix: `apiable-${name}` } })
 
     // The machine consumer: client_credentials, bound to exactly the admin scope. Cognito issues the
     // `scope` claim natively from this allowed set — the pool cannot widen the bound scopes.
@@ -140,9 +142,12 @@ export class CognitoPool extends Construct {
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, '../assets/lambdas/cognito-pool-pretokengen')),
       environment: {
-        // apiable_plan_resources has no machine-to-machine source yet (no user => no user-attribute);
-        // empty makes the authorizer grant the invoked API on a scope-pass. Per-method resource binding
-        // is deferred to a dedicated binding story. The live entitlement is the native `scope` claim.
+        // Both claim sources have no machine-to-machine producer yet (no user => no user-attribute), so
+        // both ship empty and are set explicitly to make the empty intentional. apiable_plan_resources
+        // empty makes the authorizer grant the invoked API on a scope-pass; apiable_api_key empty means
+        // the consumer sends no usageIdentifierKey. Per-client binding is deferred to a dedicated binding
+        // story. The live entitlement is the native `scope` claim.
+        APIABLE_API_KEY: '',
         APIABLE_PLAN_RESOURCES: '',
       },
     })

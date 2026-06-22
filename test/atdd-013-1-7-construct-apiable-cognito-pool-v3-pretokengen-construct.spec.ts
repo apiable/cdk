@@ -129,11 +129,13 @@ describe('013-1-7 apiable-cognito-pool — synth + parity contract', () => {
     // the V3_0 customisation fires (the trigger is wired at V3_0 — proven to enrich the access token in the spike)
     expect((poolProps(cdkT).LambdaConfig as { PreTokenGenerationConfig?: { LambdaVersion?: string } })?.PreTokenGenerationConfig?.LambdaVersion).toBe('V3_0')
 
-    // apiable_plan_resources ships EMPTY (no machine-to-machine source) — never a fabricated placeholder map
+    // both claim sources ship EMPTY (no machine-to-machine source) — set explicitly so the empty is
+    // intentional, never a fabricated placeholder map nor a silent dead env-var fallthrough
     const fnEnv = (firstResource(cdkT, 'AWS::Lambda::Function').Properties?.Environment as {
       Variables?: Record<string, string>
     })?.Variables
     expect(fnEnv?.APIABLE_PLAN_RESOURCES).toBe('')
+    expect(fnEnv?.APIABLE_API_KEY).toBe('')
     // the lambda asset injects the V3_0 claim shape and does not fabricate a non-empty per-resource map
     const lambdaSrc = fs.readFileSync(
       path.join(REPO_ROOT, 'lib/assets/lambdas/cognito-pool-pretokengen/index.mjs'),
@@ -191,6 +193,16 @@ describe('013-1-7 apiable-cognito-pool — synth + parity contract', () => {
         Scopes: [Match.objectLike({ ScopeName: ADMIN_SCOPE_NAME })],
       }),
     )
+
+    // the published one-click CFN channel (highest-distribution, customer-facing) binds the identical
+    // single apiable/admin scope — never wider — so a future widening of the published client is caught
+    const pubClient = firstResource(publishedTemplate(), 'AWS::Cognito::UserPoolClient').Properties as {
+      AllowedOAuthScopes?: unknown[]
+    }
+    const pubScope = boundScope(pubClient.AllowedOAuthScopes ?? [])
+    expect(pubScope.suffix).toBe(`/${ADMIN_SCOPE_NAME}`)
+    expect(pubScope.serverRef).toContain('ResourceServer')
+    expect((pubClient.AllowedOAuthScopes ?? []).length).toBe(1)
 
     // the Terraform channel binds the identical single scope, never wider
     expect(tfModule('main.tf')).toMatch(/allowed_oauth_scopes\s*=\s*\["\$\{aws_cognito_resource_server\.apiable\.identifier\}\/admin"\]/)
@@ -264,6 +276,39 @@ describe('013-1-7 apiable-cognito-pool — synth + parity contract', () => {
     const main = tfModule('main.tf')
     expect(main).toContain(`"apiable:logical-id" = "${COGNITO_POOL_LOGICAL_ID}"`)
     expect(main).toContain(`"apiable:logical-id" = "${PRE_TOKEN_FUNCTION_LOGICAL_ID}"`)
+  })
+
+  // channel-identical hosted-UI domain floor (Task 5.4): every channel renders `apiable-<name>` with no
+  // channel-only string substitution, so they provision (and fail) identically. Cross-channel reserved-name
+  // equivalence-normalisation is out of scope here (owned by the parity-gate capability slice).
+  it('every channel renders the hosted-UI domain as apiable-<name> identically, with no channel-only substitution', () => {
+    const domainOf = (t: Template): unknown =>
+      (firstResource(t, 'AWS::Cognito::UserPoolDomain').Properties as { Domain?: unknown }).Domain
+
+    // CDK channel: a concrete name renders the literal apiable-<name> (no aws-style substitution)
+    expect(domainOf(concreteTemplate())).toBe(EXPECTED_POOL_NAME)
+
+    // published one-click CFN channel: the domain is derived from the tenant-name parameter (a Join over
+    // the param Ref), never a baked or substituted literal — identical derivation to the pool name
+    const pubDomain = JSON.stringify(domainOf(publishedTemplate()))
+    expect(pubDomain).toContain(TENANT_NAME_PARAMETER)
+    expect(pubDomain).not.toContain('aw-s')
+
+    // Terraform channel: the same apiable-<name> interpolation with no substitution branch
+    const main = tfModule('main.tf')
+    expect(main).toMatch(/resource\s+"aws_cognito_user_pool_domain"[\s\S]*?domain\s*=\s*"apiable-\$\{var\.name\}"/)
+    expect(main).not.toContain('aw-s')
+  })
+
+  // dual-channel lambda drift guard: the Terraform channel ships a byte-copy of the CDK lambda asset (the
+  // V3_0 claim shape the 1-8 authorizer enforces). A CDK-only edit must red CI rather than silently ship a
+  // stale Terraform-channel lambda — there is no shared synth that would otherwise catch the divergence.
+  it('the Terraform-channel lambda is byte-identical to the CDK lambda asset (no silent drift)', () => {
+    const cdkAsset = fs.readFileSync(
+      path.join(REPO_ROOT, 'lib/assets/lambdas/cognito-pool-pretokengen/index.mjs'),
+    )
+    const tfCopy = fs.readFileSync(path.join(TF_MODULE_DIR, 'lambda/index.mjs'))
+    expect(tfCopy).toEqual(cdkAsset)
   })
 
   // security (RULES): no secret baked into source; the pre-token lambda never logs the token/claims/secret

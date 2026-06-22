@@ -67,8 +67,10 @@ resource "aws_lambda_function" "pretokengen" {
 
   environment {
     variables = {
-      # No machine-to-machine source for apiable_plan_resources yet; empty grants the invoked API on a
-      # scope-pass. Per-method resource binding is deferred; the live entitlement is the native `scope`.
+      # No machine-to-machine source for either claim yet; both ship empty, set explicitly so the empty
+      # is intentional. apiable_plan_resources empty grants the invoked API on a scope-pass; apiable_api_key
+      # empty sends no usageIdentifierKey. Per-client binding is deferred; the live entitlement is `scope`.
+      APIABLE_API_KEY        = ""
       APIABLE_PLAN_RESOURCES = ""
     }
   }

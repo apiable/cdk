@@ -26,10 +26,13 @@ provisioning a pool whose trigger never fires.
 ## Pre Token Generation claims
 
 The pool's V3_0 trigger injects `apiable_api_key` and `apiable_plan_resources` into the access token.
-`apiable_plan_resources` ships empty — there is no machine-to-machine source for it yet (no user, so
-no user-attribute pipeline) — which makes the downstream authorizer grant the invoked API on a
-scope-pass. The live entitlement is the native `scope` claim, issued by Cognito from the app client's
-bound scopes. Per-method resource binding is deferred to a dedicated binding story.
+Both ship empty — there is no machine-to-machine source for either yet (no user, so no user-attribute
+pipeline) — and `APIABLE_API_KEY` / `APIABLE_PLAN_RESOURCES` are set explicitly to the empty string so
+the empty is intentional rather than a silent fallthrough. An empty `apiable_plan_resources` makes the
+downstream authorizer grant the invoked API on a scope-pass; an empty `apiable_api_key` means the
+consumer sends no `usageIdentifierKey`. The live entitlement is the native `scope` claim, issued by
+Cognito from the app client's bound scopes. Per-client binding (both claims) is deferred to a dedicated
+binding story.
 
 ## Channel-stable identity
 
