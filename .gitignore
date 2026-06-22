@@ -43,6 +43,7 @@ out/
 /deploy-all.sh
 !/lib/assets/lambdas/authorization/node_modules/
 !/lib/assets/lambdas/authorization-cc/node_modules/
+!/terraform/apiable-lambda-authorizer/lambda/node_modules/
 /cdk.out/
 *spec.json
 /temp*

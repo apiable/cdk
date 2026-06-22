@@ -185,15 +185,18 @@ export const buildLogsBucketStackComposed = (app: cdk.App, config: LogsBucketCon
 
 /**
  * Read-side resolvers for the cross-component dependencies the composition seam carries: the logs
- * firehose consumes the logs-bucket ARN, the authorizer consumes the gateway-role ARN. They compose
- * the same key the writer publishes under and read it by value from the shared parameter space.
+ * firehose consumes the logs-bucket ARN, and a future gateway-role consumer reads the gateway-role
+ * ARN. They compose the same key the writer publishes under and read it by value from the shared
+ * parameter space.
  *
- * These resolvers are forward-scaffolding: the firehose and lambda-authorizer constructs still take
- * the upstream ARN as a string prop; they are re-pointed onto these SSM reads when each is extracted
- * into a kit `Construct`. Wiring the legacy stacks here would regress the zero-drift equivalence, so
- * the consumer-side wiring lands with those construct-extraction stories. The writers exist (the
- * `…Composed` builders publish) and the readers exist here, but the legacy stacks are not yet wired
- * to them.
+ * `resolveLogsBucketArn` is forward-scaffolding: the firehose construct still takes the upstream ARN
+ * as a string prop and is re-pointed onto this SSM read when it is extracted into a kit `Construct`.
+ * Wiring the legacy stack here would regress the zero-drift equivalence, so the consumer-side wiring
+ * lands with that construct-extraction story.
+ *
+ * `resolveGatewayRoleArn` has no live consumer: the extracted lambda-authorizer reads `apiable_api_key`
+ * straight off the verified token claim and makes no cross-account `sts:AssumeRole`, so it needs no
+ * gateway-role ARN. The resolver stays available for a future construct that does.
  */
 export const resolveLogsBucketArn = (scope: cdk.Stack, tenant: string): string =>
   readUpstreamOutput(scope, { tenant, component: compositionComponent.logsBucket, output: 'bucket-arn' })

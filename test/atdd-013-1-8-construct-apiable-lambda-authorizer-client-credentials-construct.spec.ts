@@ -54,7 +54,8 @@ const HARDCODED_APIABLE_ACCOUNT = '034444869755'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const TF_MODULE_DIR = path.join(REPO_ROOT, 'terraform/apiable-lambda-authorizer')
-const ASSET = path.join(REPO_ROOT, 'lib/assets/lambdas/authorization-cc/index.mjs')
+const CDK_ASSET_DIR = path.join(REPO_ROOT, 'lib/assets/lambdas/authorization-cc')
+const ASSET = path.join(CDK_ASSET_DIR, 'index.mjs')
 
 const concreteTemplate = (overrides: LambdaAuthorizerStackProps = {}): Template =>
   Template.fromStack(
@@ -361,6 +362,26 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
     const cdkAsset = fs.readFileSync(ASSET)
     const tfCopy = fs.readFileSync(path.join(TF_MODULE_DIR, 'lambda/index.mjs'))
     expect(tfCopy).toEqual(cdkAsset)
+  })
+
+  // the Terraform channel actually PACKAGES the aws-jwt-verify runtime dependency the handler imports —
+  // a managed nodejs20.x runtime carries only @aws-sdk/*, so a single-file zip cold-starts with
+  // Runtime.ImportModuleError. The source-text byte-identical check above is blind to packaging, so this
+  // is the load-bearing "deployable" guard.
+  it('the Terraform channel vendors aws-jwt-verify and packages the whole lambda dir', () => {
+    const cdkDep = path.join(CDK_ASSET_DIR, 'node_modules/aws-jwt-verify')
+    const tfDep = path.join(TF_MODULE_DIR, 'lambda/node_modules/aws-jwt-verify')
+    // the dependency is vendored git-tracked alongside the handler (not left to a managed runtime)
+    expect(fs.existsSync(path.join(tfDep, 'package.json'))).toBe(true)
+    expect(fs.existsSync(path.join(tfDep, 'dist/esm/index.js'))).toBe(true)
+    // the vendored version matches the CDK asset's, so the two channels cannot skew
+    const cdkVersion = JSON.parse(fs.readFileSync(path.join(cdkDep, 'package.json'), 'utf8')).version
+    const tfVersion = JSON.parse(fs.readFileSync(path.join(tfDep, 'package.json'), 'utf8')).version
+    expect(tfVersion).toBe(cdkVersion)
+    // the archive packages the whole lambda/ tree (handler + node_modules), never a single file
+    const main = tfModule('main.tf')
+    expect(main).toMatch(/source_dir\s*=\s*"\$\{path\.module\}\/lambda"/)
+    expect(main).not.toMatch(/source_file\s*=/)
   })
 
   // route-key derivation (the map key the scope gate looks up) is account/region/apiId-agnostic

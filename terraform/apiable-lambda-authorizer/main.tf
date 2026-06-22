@@ -65,9 +65,11 @@ resource "aws_lambda_function" "authz" {
   }
 }
 
+# Package the whole lambda/ tree (handler + vendored node_modules) so the bundled aws-jwt-verify
+# dependency ships in the deployment artifact — the nodejs20.x managed runtime carries only @aws-sdk/*.
 data "archive_file" "authz" {
   type        = "zip"
-  source_file = "${path.module}/lambda/index.mjs"
+  source_dir  = "${path.module}/lambda"
   output_path = "${path.module}/.build/authz.zip"
 }
 
