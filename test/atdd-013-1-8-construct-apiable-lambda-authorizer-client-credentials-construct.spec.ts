@@ -371,7 +371,7 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
   it('the Terraform channel vendors aws-jwt-verify and packages the whole lambda dir', () => {
     const cdkDep = path.join(CDK_ASSET_DIR, 'node_modules/aws-jwt-verify')
     const tfDep = path.join(TF_MODULE_DIR, 'lambda/node_modules/aws-jwt-verify')
-    // the dependency is vendored git-tracked alongside the handler (not left to a managed runtime)
+    // the dependency is vendored alongside the handler (not left to a managed runtime)
     expect(fs.existsSync(path.join(tfDep, 'package.json'))).toBe(true)
     expect(fs.existsSync(path.join(tfDep, 'dist/esm/index.js'))).toBe(true)
     // the vendored version matches the CDK asset's, so the two channels cannot skew
