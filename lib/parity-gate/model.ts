@@ -193,6 +193,16 @@ export const WILDCARD_PRINCIPAL = '*'
 export const NO_EXTERNAL_GRANTEE = '{none}'
 
 /**
+ * The sentinel for a pool that publishes no hosted sign-in domain, so its authorize/token discovery
+ * endpoints are emitted as an explicit "absent" value rather than omitted. Both reducers resolve the
+ * domain prefix by structurally different paths, so a present-vs-absent comparison of these rows would
+ * false-FAIL on equivalent domainless infrastructure; emitting the sentinel keeps the comparison
+ * present-vs-present (mirroring {@link NO_EXTERNAL_GRANTEE}). A real `https://…` host can never equal it,
+ * so a channel that publishes a domain still diverges from one that does not.
+ */
+export const NO_HOSTED_DOMAIN = '{none}'
+
+/**
  * The accounts a resource policy grants to, BY VALUE, minus the incidental deploying account. A
  * bucket policy names the deploying (tenant) account — the `AWS::AccountId` pseudo-parameter on the
  * published channel (already a token, no digits), the concrete deploy account elsewhere — and the
@@ -277,10 +287,13 @@ export const cognitoDiscovery = (poolName: string, region: string | undefined, d
  * A pool's derived discovery endpoints as load-bearing value rows keyed per pool ref, so a channel
  * that mints or redeems tokens at a different host than its peers diverges on the value tier — the
  * discovery document is compared CROSS-channel, not only checked per channel for conformance. The
- * issuer and key set are always emitted; the sign-in/token endpoints only when the pool publishes a
- * hosted sign-in domain. Single-sourced so both reducers emit identical rows for an equivalent pool.
- * The deploy region collapses to {@link REGION_TOKEN} (as it does for every other identity here), so
- * channels reduced with and without a concrete region still read the same issuer host.
+ * issuer, key set, and the sign-in/token endpoints are all emitted unconditionally; a pool without a
+ * hosted sign-in domain carries the {@link NO_HOSTED_DOMAIN} sentinel on its authorize/token rows so
+ * the comparison is present-vs-present even though the two reducers resolve the domain by different
+ * paths. The endpoint host keeps its tenant segment by value, so a substituted token-minting host
+ * diverges; only the deploy region collapses to {@link REGION_TOKEN} (as for every other identity
+ * here), so channels reduced with and without a concrete region still read the same issuer host.
+ * Single-sourced so both reducers emit identical rows for an equivalent pool.
  */
 export const discoveryValueRows = (
   poolRef: string,
@@ -288,12 +301,12 @@ export const discoveryValueRows = (
   domainPrefix: string | undefined,
 ): Record<string, string> => {
   const discovery = cognitoDiscovery(poolNameFromRef(poolRef), region, domainPrefix)
-  const stable = (endpoint: string | undefined): string => normaliseLogical(endpoint ?? '', region)
-  const rows: Record<string, string> = {
+  const stable = (endpoint: string | undefined): string =>
+    endpoint === undefined ? NO_HOSTED_DOMAIN : normaliseLogical(endpoint, region)
+  return {
     [`oauth-discovery-issuer:${poolRef}`]: stable(discovery.issuer),
     [`oauth-discovery-jwks:${poolRef}`]: stable(discovery.jwksUri),
+    [`oauth-discovery-authorize:${poolRef}`]: stable(discovery.authorizationEndpoint),
+    [`oauth-discovery-token:${poolRef}`]: stable(discovery.tokenEndpoint),
   }
-  if (discovery.authorizationEndpoint !== undefined) rows[`oauth-discovery-authorize:${poolRef}`] = stable(discovery.authorizationEndpoint)
-  if (discovery.tokenEndpoint !== undefined) rows[`oauth-discovery-token:${poolRef}`] = stable(discovery.tokenEndpoint)
-  return rows
 }

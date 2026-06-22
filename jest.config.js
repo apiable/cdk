@@ -1,7 +1,15 @@
-/** Default test run: synth-level specs only. The live-deploy spec is excluded by name. */
+/**
+ * Default test run: synth-level specs only. The live-deploy spec is excluded by name.
+ * `maxWorkers: 1` + ts-jest `isolatedModules` keep the verdict stable: the pure fixture→gate() specs
+ * carry no shared state, so a parallel-worker heap-pressure flake is a runner artifact, never a gate
+ * defect; a serial run with per-file transpilation (no type-checker heap per worker) is deterministic.
+ */
 module.exports = {
-  preset: 'ts-jest',
   testEnvironment: 'node',
+  maxWorkers: 1,
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true }],
+  },
   roots: ['<rootDir>/test'],
   testMatch: ['**/*.spec.ts'],
   testPathIgnorePatterns: ['/node_modules/', '\\.live\\.spec\\.ts$'],

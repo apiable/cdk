@@ -64,7 +64,7 @@ const cfnCognitoPool = (lambdaVersion: string): unknown => ({
         LambdaConfig: { PreTokenGenerationConfig: { LambdaVersion: lambdaVersion, LambdaArn: { 'Fn::GetAtt': ['PreTokenFn', 'Arn'] } } },
       },
     },
-    PreTokenFn: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'pretokengen', Runtime: 'nodejs20.x' } },
+    PreTokenFn: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'pretokengen', Runtime: 'nodejs20.x', Tags: [{ Key: 'apiable:logical-id', Value: 'apiable-pretoken-fn' }] } },
   },
 })
 
@@ -81,7 +81,7 @@ const tfCognitoPoolLegacy = (): unknown => ({
             lambda_config: [{ pre_token_generation: 'arn:aws:lambda:eu-central-1:034444869755:function:pretokengen' }],
           },
         },
-        { address: 'aws_lambda_function.pretokengen', type: 'aws_lambda_function', values: { function_name: 'pretokengen', runtime: 'nodejs20.x' } },
+        { address: 'aws_lambda_function.pretokengen', type: 'aws_lambda_function', values: { function_name: 'pretokengen', runtime: 'nodejs20.x', tags: { 'apiable:logical-id': 'apiable-pretoken-fn' } } },
       ],
     },
   },

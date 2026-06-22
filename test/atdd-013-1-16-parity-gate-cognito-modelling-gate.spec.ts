@@ -24,6 +24,7 @@ const REGION = 'eu-central-1'
 const TAG = 'apiable:logical-id'
 const AUTHZ_POOL = 'apiable-authz-pool'
 const AUTHN_POOL = 'apiable-authn-pool'
+const PRE_TOKEN_FN = 'apiable-pretoken-fn'
 const ISSUER = `https://cognito-idp.${REGION}.amazonaws.com/${AUTHZ_POOL}`
 
 // ── CloudFormation builders (the CDK + CFN channels share this reducer) ────────────────────────
@@ -57,7 +58,7 @@ const cfnCognitoStack = (shape: CognitoShape = {}): unknown => {
           LambdaConfig: { PreTokenGenerationConfig: { LambdaVersion: 'V3_0', LambdaArn: { 'Fn::GetAtt': ['PreTokenFn', 'Arn'] } } },
         },
       },
-      PreTokenFn: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'pretokengen', Runtime: 'nodejs20.x' } },
+      PreTokenFn: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'pretokengen', Runtime: 'nodejs20.x', Tags: [{ Key: TAG, Value: PRE_TOKEN_FN }] } },
       ...(shape.withDomain === false
         ? {}
         : { AuthzDomain: { Type: 'AWS::Cognito::UserPoolDomain', Properties: { Domain: domain, UserPoolId: { Ref: 'AuthzPool' } } } }),
@@ -138,7 +139,7 @@ const tfCognitoStack = (shape: CognitoShape = {}): unknown => {
         lambda_config: [{ pre_token_generation_config: [{ lambda_version: 'V3_0', lambda_arn: 'arn:aws:lambda:eu-central-1:034444869755:function:pretokengen' }] }],
       },
     },
-    { address: 'aws_lambda_function.pretokengen', type: 'aws_lambda_function', values: { function_name: 'pretokengen', runtime: 'nodejs20.x' } },
+    { address: 'aws_lambda_function.pretokengen', type: 'aws_lambda_function', values: { function_name: 'pretokengen', runtime: 'nodejs20.x', tags: { [TAG]: PRE_TOKEN_FN } } },
     ...(shape.withDomain === false
       ? []
       : [{ address: 'aws_cognito_user_pool_domain.authz', type: 'aws_cognito_user_pool_domain', values: { domain } }]),

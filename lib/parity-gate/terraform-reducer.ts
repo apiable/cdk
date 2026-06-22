@@ -363,6 +363,9 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       if (bucketTarget !== undefined) securedBucketByPolicyAddress.set(address, refToNode.get(bucketTarget.address) ?? bucketTarget.address)
     }
   }
+  // The pool disc a literal-bound resource-server anchored to, so its bound-to-pool edge can be emitted
+  // to the same pool node a referenced binding resolves to (a literal binding carries no reference).
+  const literalPoolDiscByResourceServer = new Map<string, string>()
   // Re-key each attached resource by its parent + a per-parent local key (the policy's/permission's
   // own address is not channel-stable), so two of one kind under one parent stay distinct.
   for (const res of resources) {
@@ -390,9 +393,18 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     // pools each exposing an `apiable` resource-server stay distinct refs (mirrors the CloudFormation side).
     if (kind === 'cognito-resource-server') {
       const poolRef = poolRefByResourceServerAddress.get(res.address)
-      if (poolRef !== undefined) {
-        const identifier = asString(res.values.identifier) ?? 'resource-server'
-        refToNode.set(res.address, nodeRef('cognito-resource-server', `of-pool:${discriminatorOf(poolRef)}:${identifier}`))
+      const identifier = asString(res.values.identifier) ?? 'resource-server'
+      // Anchor to the bound pool's channel-stable identity. A reference resolves to the pool node's
+      // discriminator; a binding that inlines a literal pool id (no reference to resolve) anchors to
+      // that normalised literal, so a literal-bound and a reference-bound resource-server on the same
+      // pool resolve to the same ref rather than the literal one falling back to a bare ref.
+      const poolDisc =
+        poolRef !== undefined ? discriminatorOf(poolRef) : normaliseLogical(tfResolve(res.values.user_pool_id), region) || undefined
+      if (poolDisc !== undefined) {
+        refToNode.set(res.address, nodeRef('cognito-resource-server', `of-pool:${poolDisc}:${identifier}`))
+        // A literal-bound resource-server has no reference to build its bound-to-pool edge from, so file
+        // the anchored pool disc to emit that edge to the same pool node a referenced binding resolves to.
+        if (poolRef === undefined) literalPoolDiscByResourceServer.set(res.address, poolDisc)
       }
     }
   }
@@ -542,6 +554,12 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
         edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'secures-bucket' })
       }
     }
+  }
+
+  // A literal-bound resource-server has no configuration reference, so its bound-to-pool edge is emitted
+  // from the anchored pool disc to the same pool node a referenced binding resolves to (parity with CFN).
+  for (const [address, poolDisc] of literalPoolDiscByResourceServer) {
+    edges.push({ from: refToNode.get(address) ?? address, to: nodeRef('cognito-user-pool', poolDisc), relation: 'bound-to-pool' })
   }
 
   const configOutputs = asRecord(asRecord(asRecord(root.configuration).root_module).outputs)

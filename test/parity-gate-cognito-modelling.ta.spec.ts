@@ -5,7 +5,7 @@
  * the per-client OAuth fallback to the single slot, and the TF output-edge attribute-order
  * determinism the `referencesOf` change pins. Every case drives the real reducers / gate.
  */
-import { reduceCloudFormation, reduceTerraformShowJson, gate, checkOAuthConformance } from '@apiable/parity-gate'
+import { reduceCloudFormation, reduceTerraformShowJson, gate, checkOAuthConformance, NO_HOSTED_DOMAIN } from '@apiable/parity-gate'
 
 const REGION = 'eu-central-1'
 
@@ -21,14 +21,16 @@ const cfnResourceServer = (scopeNames: readonly string[]): unknown => ({
 })
 
 describe('cognito modelling (TA) — resource-server scope set', () => {
+  // The resource-server binds its pool by an inlined literal id (`UserPoolId: 'authz'`), so it anchors to
+  // that pool's literal discriminator — `of-pool:authz:apiable` — rather than a bare, pool-less ref.
   it('reduces the scope-name set sorted and de-duplicated, so channel emission order does not matter', () => {
     const model = reduceCloudFormation(cfnResourceServer(['write', 'read', 'read']), 'cfn', REGION)
-    expect(model.values['resource-server-scopes:cognito-resource-server:apiable']).toBe('read,write')
+    expect(model.values['resource-server-scopes:cognito-resource-server:of-pool:authz:apiable']).toBe('read,write')
   })
 
   it('reduces a scopeless resource-server to an empty scope set (present-but-empty, not absent)', () => {
     const model = reduceCloudFormation(cfnResourceServer([]), 'cfn', REGION)
-    expect(model.values['resource-server-scopes:cognito-resource-server:apiable']).toBe('')
+    expect(model.values['resource-server-scopes:cognito-resource-server:of-pool:authz:apiable']).toBe('')
   })
 
   it('agrees on an equal scope set across channels regardless of declared order', () => {
@@ -36,7 +38,7 @@ describe('cognito modelling (TA) — resource-server scope set', () => {
       reduceCloudFormation(cfnResourceServer(['read', 'write']), 'cdk', REGION),
       reduceCloudFormation(cfnResourceServer(['write', 'read']), 'cfn', REGION),
       reduceTerraformShowJson(
-        { planned_values: { root_module: { resources: [{ address: 'aws_cognito_resource_server.rs', type: 'aws_cognito_resource_server', values: { identifier: 'apiable', name: 'apiable', scope: [{ scope_name: 'write' }, { scope_name: 'read' }] } }] } }, configuration: { root_module: { resources: [], outputs: {} } } },
+        { planned_values: { root_module: { resources: [{ address: 'aws_cognito_resource_server.rs', type: 'aws_cognito_resource_server', values: { identifier: 'apiable', name: 'apiable', user_pool_id: 'authz', scope: [{ scope_name: 'write' }, { scope_name: 'read' }] } }] } }, configuration: { root_module: { resources: [], outputs: {} } } },
         'terraform',
         REGION,
       ),
@@ -52,11 +54,11 @@ describe('cognito modelling (TA) — reference edges', () => {
     const cfn: unknown = {
       Resources: {
         Pool: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'authz', LambdaConfig: { PreTokenGeneration: { 'Fn::GetAtt': ['Fn', 'Arn'] } } } },
-        Fn: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'pretokengen' } },
+        Fn: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'pretokengen', Tags: [{ Key: TAG, Value: 'apiable-pretoken-fn' }] } },
       },
     }
     const model = reduceCloudFormation(cfn, 'cfn', REGION)
-    expect(model.graph.edges.some((edge) => edge.relation === 'pre-token-generation' && edge.to === 'lambda-function:pretokengen')).toBe(true)
+    expect(model.graph.edges.some((edge) => edge.relation === 'pre-token-generation' && edge.to === 'lambda-function:apiable-pretoken-fn')).toBe(true)
   })
 
   it('fails when one channel leaves the authorizer UNBOUND from its rest-api (authorizes-api edge present vs absent)', () => {
@@ -165,11 +167,11 @@ describe('cognito modelling (TA) — cross-channel discovery value rows', () => 
     expect(withRegion.values[issuerKey]).toContain('{region}')
   })
 
-  it('emits no sign-in/token rows for a domainless pool, but does for a domained one', () => {
+  it('emits an explicit "none" sentinel on the sign-in/token rows for a domainless pool, and the real host for a domained one — so the comparison is present-vs-present', () => {
     const authorizeKey = 'oauth-discovery-authorize:cognito-user-pool:authz-pool'
     const domainless = reduceCloudFormation(cfnPoolWithDomain(undefined), 'cfn', REGION)
     const domained = reduceCloudFormation(cfnPoolWithDomain('authz-portal'), 'cfn', REGION)
-    expect(domainless.values[authorizeKey]).toBeUndefined()
+    expect(domainless.values[authorizeKey]).toBe(NO_HOSTED_DOMAIN)
     expect(domained.values[authorizeKey]).toContain('authz-portal')
   })
 })

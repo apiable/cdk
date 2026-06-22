@@ -319,6 +319,9 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     const kind = canonicalCfnKind(res.type)
     refToNode.set(id, nodeRef(kind, identityFor(kind, res.properties, resolve, region, id)))
   }
+  // The pool disc a literal-bound resource-server anchored to, so its bound-to-pool edge can be emitted
+  // to the same pool node a referenced binding resolves to (a literal binding carries no reference).
+  const literalPoolDiscByResourceServer = new Map<string, string>()
   // An attached resource carries no channel-stable name of its own; anchor its node to its parent's
   // declared identity plus a per-parent local key, so two of the same kind under one parent stay
   // distinct and a divergence on the second is never clobbered. Run after every primary node ref is
@@ -350,10 +353,20 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     // then distinct refs (no false collision); the within-channel guard still catches a same-pool dup.
     if (kind === 'cognito-resource-server') {
       const poolTarget = resourceRefsIn(res.properties.UserPoolId, resourceIds)[0]
-      if (poolTarget !== undefined) {
-        const poolDisc = discriminatorOf(refToNode.get(poolTarget.id) ?? poolTarget.id)
-        const identifier = asString(res.properties.Identifier) ?? 'resource-server'
+      const identifier = asString(res.properties.Identifier) ?? 'resource-server'
+      // Anchor to the bound pool's channel-stable identity. A cross-resource ref resolves to the pool
+      // node's discriminator; a channel that inlines a literal pool id (no ref to resolve) anchors to
+      // that normalised literal, so a literal-bound and a ref-bound resource-server on the same pool
+      // resolve to the same ref rather than the literal one falling back to a bare, pool-less ref.
+      const poolDisc =
+        poolTarget !== undefined
+          ? discriminatorOf(refToNode.get(poolTarget.id) ?? poolTarget.id)
+          : normaliseLogical(resolve(res.properties.UserPoolId), region) || undefined
+      if (poolDisc !== undefined) {
         refToNode.set(id, nodeRef('cognito-resource-server', `of-pool:${poolDisc}:${identifier}`))
+        // A literal-bound resource-server has no reference to build its bound-to-pool edge from, so file
+        // the anchored pool disc to emit that edge to the same pool node a referenced binding resolves to.
+        if (poolTarget === undefined) literalPoolDiscByResourceServer.set(id, poolDisc)
       }
     }
     // A bucket-policy's channel-stable identity is the bucket it secures (its own name is generated).
@@ -481,6 +494,8 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     }
     if (kind === 'cognito-resource-server') {
       cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
+      const literalPoolDisc = literalPoolDiscByResourceServer.get(id)
+      if (literalPoolDisc !== undefined) edges.push({ from: ref, to: nodeRef('cognito-user-pool', literalPoolDisc), relation: 'bound-to-pool' })
     }
     if (kind === 'apigateway-authorizer') {
       cognitoEdge(ref, res.properties.RestApiId, 'authorizes-api')
