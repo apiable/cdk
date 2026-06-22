@@ -1,0 +1,11 @@
+{
+  "name": "apiable-authz-cc",
+  "version": "1.0.0",
+  "description": "Scope-enforcing Lambda authorizer for the client_credentials (machine-to-machine) flow",
+  "main": "index.mjs",
+  "type": "module",
+  "license": "ISC",
+  "dependencies": {
+    "aws-jwt-verify": "^4.0.1"
+  }
+}
