@@ -89,7 +89,8 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
   /**
    * Rewrites every cross-resource logical-id reference to its target-shape token, across every form a
    * CloudFormation template can express one: `{Ref}`, array- and string-form `{Fn::GetAtt}`,
-   * `Fn::Sub`-embedded `${LogicalId}`, `DependsOn`, and the CDK default-policy `PolicyName` echo.
+   * `Fn::Sub`-embedded `${LogicalId}` and `${LogicalId.Attr}`, `DependsOn`, and the CDK default-policy
+   * `PolicyName` echo.
    */
   const normalise = (value: unknown, resolving: Set<string>): unknown => {
     const walk = (v: unknown): unknown => {
@@ -138,13 +139,18 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
     return walk(value)
   }
 
-  // `Fn::Sub` is either a string or `[template, { var: value }]`; embedded `${LogicalId}` references
-  // (not `${Logical.Attr}` pseudo-params or `${!Literal}` escapes) rewrite to the target-shape token.
+  // `Fn::Sub` is either a string or `[template, { var: value }]`. An embedded `${LogicalId}` OR
+  // `${LogicalId.Attr}` reference rewrites to the target-shape token (the head before the first `.` is
+  // the logical id, the suffix the attribute, mirroring string-form `Fn::GetAtt`), so a consistent
+  // rename of the target is tolerated while a re-target reads as drift. A `${!Literal}` escape (head
+  // `!Literal`, never a logical id) and a non-resource `${Param}` are left untouched.
   const normaliseSub = (sub: unknown, resolving: Set<string>): unknown => {
     const rewriteString = (s: string): string =>
       s.replace(/\$\{([^}]+)\}/g, (match, inner: string) => {
-        const id = inner.trim()
-        return logicalIds.has(id) ? `\${${shapeToken(id, resolving)}}` : match
+        const trimmed = inner.trim()
+        const dot = trimmed.indexOf('.')
+        const head = dot >= 0 ? trimmed.slice(0, dot) : trimmed
+        return logicalIds.has(head) ? `\${${shapeToken(head, resolving)}${dot >= 0 ? trimmed.slice(dot) : ''}}` : match
       })
     if (typeof sub === 'string') return rewriteString(sub)
     if (Array.isArray(sub)) {
@@ -159,17 +165,43 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
 }
 
 /**
- * The multiset of resource shapes, keyed by type + reference-normalised properties so that a rename of
- * a resource's logical id (and of any reference to it) does not register as a change, while a
- * reference re-pointed at a different resource does (its target-shape token changes).
+ * The load-bearing top-level resource attributes that carry observable behaviour (siblings of `Type`
+ * and `Properties`) — a `DependsOn` re-target, a flip of `DeletionPolicy`/`UpdateReplacePolicy` on a
+ * stateful resource, or a changed `Condition`/`CreationPolicy`/`UpdatePolicy` all change what the stack
+ * does, so they enter the comparison shape. `Metadata` is cosmetic and is excluded.
+ */
+const TOP_LEVEL_SHAPE_ATTRIBUTES = [
+  'DependsOn',
+  'Condition',
+  'DeletionPolicy',
+  'UpdateReplacePolicy',
+  'CreationPolicy',
+  'UpdatePolicy',
+] as const
+
+/**
+ * The multiset of resource shapes, keyed by type + reference-normalised properties + load-bearing
+ * top-level attributes, so that a rename of a resource's logical id (and of any reference to it) does
+ * not register as a change, while a reference re-pointed at a different resource does (its target-shape
+ * token changes). The whole resource is run through the reference resolver so a top-level `DependsOn`
+ * (the only place `DependsOn` is valid CloudFormation) normalises by its target's shape too.
  */
 export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
   const resources = template.Resources ?? {}
   const normaliseRefs = targetTokenResolver(resources)
   const counts = new Map<string, number>()
   for (const resource of Object.values(resources)) {
-    const properties = normaliseRefs(resource.Properties ?? null)
-    const key = canonical({ type: resource.Type, properties })
+    // Normalise the resource as a whole so a top-level `DependsOn` reaches the resolver's `DependsOn`
+    // branch (it fires on a key of an object it walks, not on a bare value passed as the walk root).
+    const normalised = normaliseRefs(resource) as Record<string, unknown>
+    const shape: Record<string, unknown> = {
+      type: resource.Type,
+      properties: normalised.Properties ?? null,
+    }
+    for (const attr of TOP_LEVEL_SHAPE_ATTRIBUTES) {
+      if (normalised[attr] !== undefined) shape[attr] = normalised[attr]
+    }
+    const key = canonical(shape)
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
   return counts

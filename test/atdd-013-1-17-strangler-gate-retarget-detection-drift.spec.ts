@@ -96,9 +96,54 @@ const roleTrustingAccount = (account: string): Tmpl => ({
 })
 
 /**
+ * Two roles of distinct shape and a consumer whose ONLY tie to a role is a top-level `DependsOn` — the
+ * dependency-declaration reference form. Re-aiming the `DependsOn` from one role to the other is a
+ * re-target the gate must catch; a consistent rename of the depended-on role must stay tolerated.
+ */
+const dependsOnRole = (roleId: 'RoleA' | 'RoleB'): Tmpl => ({
+  Resources: {
+    RoleA: {
+      Type: 'AWS::IAM::Role',
+      Properties: { RoleName: 'role-alpha', AssumeRolePolicyDocument: { Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } },
+    },
+    RoleB: {
+      Type: 'AWS::IAM::Role',
+      Properties: { RoleName: 'role-beta', AssumeRolePolicyDocument: { Statement: [{ Effect: 'Allow', Principal: { Service: 'firehose.amazonaws.com' }, Action: 'sts:AssumeRole' }] } },
+    },
+    Consumer: { Type: 'AWS::Lambda::Function', DependsOn: roleId, Properties: { FunctionName: 'consumer' } },
+  },
+})
+
+/** A stateful bucket carrying a top-level `DeletionPolicy` — flipping Retain→Delete is a data-durability drift. */
+const bucketWithDeletionPolicy = (policy: 'Retain' | 'Delete'): Tmpl => ({
+  Resources: {
+    LogsBucket: { Type: 'AWS::S3::Bucket', DeletionPolicy: policy, UpdateReplacePolicy: policy, Properties: { BucketName: 'logs' } },
+  },
+})
+
+/**
+ * Two distinctly-shaped buckets (both present in baseline AND candidate, so the resource multiset is
+ * identical) and a consumer whose only tie to a bucket is an `Fn::Sub`-embedded attribute reference
+ * `${Bucket.Arn}`. Re-aiming only the Sub body from one bucket to the other is the forcing construction
+ * for the new Sub-attribute normalisation: if the `Fn::Sub` were ignored (its body treated as opaque
+ * text), the consumer's shape would be identical in both templates → no drift; only correct Sub-attr
+ * normalisation resolves the embedded id to its target's distinct shape token and reports the re-target.
+ */
+const subAttrWiredTo = (bucketId: 'BucketAlpha' | 'BucketBeta'): Tmpl => ({
+  Resources: {
+    BucketAlpha: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'sub-alpha' } },
+    BucketBeta: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'sub-beta' } },
+    Consumer: {
+      Type: 'AWS::Lambda::Function',
+      Properties: { FunctionName: 'sub-consumer', Environment: { Variables: { BucketArn: { 'Fn::Sub': 'destination=${' + bucketId + '.Arn}' } } } },
+    },
+  },
+})
+
+/**
  * A resource graph exercising EVERY reference form the template can express, so S2 proves no form is
  * left un-normalised: direct {Ref}, attribute {Fn::GetAtt} short (string) AND long (array) form,
- * {Fn::Sub}-embedded ${Logical}, DependsOn, and the default-policy PolicyName echo of the role id.
+ * {Fn::Sub}-embedded ${Logical} AND ${Logical.Attr}, DependsOn, and the default-policy PolicyName echo.
  */
 const everyReferenceForm = (): Tmpl => ({
   Resources: {
@@ -117,7 +162,9 @@ const everyReferenceForm = (): Tmpl => ({
           Variables: {
             RoleRef: { Ref: 'TargetRole' }, // direct Ref
             BucketArnShort: { 'Fn::GetAtt': 'TargetBucket.Arn' }, // short-form GetAtt (string)
-            BucketUri: { 'Fn::Sub': 'arn:aws:s3:::${TargetBucket}/data' }, // Fn::Sub-embedded id
+            BucketUri: { 'Fn::Sub': 'arn:aws:s3:::${TargetBucket}/data' }, // Fn::Sub-embedded id (bare)
+            RoleArnSub: { 'Fn::Sub': 'role-is-${TargetRole.Arn}' }, // Fn::Sub-embedded attribute ref ${Id.Attr}
+            LiteralKept: { 'Fn::Sub': 'kept-${!Literal}-escape' }, // ${!Literal} escape — never a ref, rename-invariant
           },
         },
       },
@@ -188,6 +235,21 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       expect(candidate.Resources).not.toEqual(baseline.Resources)
       expect(cfnDifferences(baseline, candidate)).toEqual([])
     })
+
+    it('renaming a top-level-DependsOn target → still no drift (the dependency-declaration reference form)', () => {
+      const baseline = dependsOnRole('RoleA')
+      const candidate = renameAll(baseline, 'RoleA', 'RenamedRoleA')
+      expect(candidate.Resources).not.toEqual(baseline.Resources)
+      expect(cfnDifferences(baseline, candidate)).toEqual([])
+    })
+
+    it('renaming a target referenced by an Fn::Sub attribute form ${Id.Arn} → still no drift (no over-block)', () => {
+      const baseline = everyReferenceForm()
+      const candidate = renameAll(baseline, 'TargetRole', 'RenamedRole')
+      // the rename touches the ${TargetRole.Arn} Sub body; the ${!TargetRole} literal escape is left intact
+      expect(candidate.Resources).not.toEqual(baseline.Resources)
+      expect(cfnDifferences(baseline, candidate)).toEqual([])
+    })
   })
 
   // S3 — a re-target (by reference OR by value, incl an IAM trust/principal/resource) is caught
@@ -231,6 +293,23 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       // the Sub-embedded ${TargetBucket} re-pointed at ${TargetRole} (a differently-shaped resource)
       consumer.Properties.Environment.Variables.BucketUri = { 'Fn::Sub': 'arn:aws:s3:::${TargetRole}/data' }
       expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+    })
+
+    it('a re-target through ONLY an Fn::Sub body (the only difference is which bucket the ${Bucket.Arn} points at) → drift', () => {
+      // Both buckets exist in both templates, so the multiset is identical and the sole difference is
+      // the consumer's Sub-embedded target. The new Sub-attribute normalisation resolves ${Bucket.Arn}
+      // to its target's distinct shape token, so the re-target is reported as a property change.
+      const baseline = subAttrWiredTo('BucketAlpha')
+      const candidate = subAttrWiredTo('BucketBeta')
+      expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
+    })
+
+    it('a top-level DependsOn re-aimed at a DIFFERENT role → drift', () => {
+      const baseline = dependsOnRole('RoleA')
+      const candidate = dependsOnRole('RoleB')
+      expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
     })
 
     it('a re-target INTO a reference cycle (a cyclic member re-pointed at a different resource) → drift', () => {
@@ -303,6 +382,13 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       const baseline = roleTrustingAccount('111111111111')
       const changed = roleTrustingAccount('999999999999')
       expect(cfnDifferences(baseline, changed).length).toBeGreaterThan(0)
+    })
+
+    it('a stateful resource DeletionPolicy / UpdateReplacePolicy flipped Retain → Delete → drift (data-durability)', () => {
+      const baseline = bucketWithDeletionPolicy('Retain')
+      const candidate = bucketWithDeletionPolicy('Delete')
+      expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
     })
   })
 })

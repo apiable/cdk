@@ -78,4 +78,28 @@ describe('013-1-17 retarget engine — edge & error paths', () => {
     const renamed: Tmpl = JSON.parse(JSON.stringify(base).split('Gw').join('RenamedGw'))
     expect([...resourceShapes(renamed).entries()].sort()).toEqual([...resourceShapes(base).entries()].sort())
   })
+
+  it('a top-level Condition change on a resource → drift (the resource is conditionally present)', () => {
+    const withCondition = (cond: string): Tmpl => ({ Resources: { Q: { Type: 'AWS::SQS::Queue', Condition: cond, Properties: { QueueName: 'q' } } } })
+    expect(cfnDifferences(withCondition('IsProd'), withCondition('IsStaging')).length).toBeGreaterThan(0)
+  })
+
+  it('a top-level CreationPolicy / UpdatePolicy change by value → drift (rollout behaviour changed)', () => {
+    const withPolicies = (minInstances: number): Tmpl => ({
+      Resources: {
+        Asg: {
+          Type: 'AWS::AutoScaling::AutoScalingGroup',
+          CreationPolicy: { ResourceSignal: { Count: minInstances } },
+          UpdatePolicy: { AutoScalingRollingUpdate: { MinInstancesInService: minInstances } },
+          Properties: { MaxSize: '4', MinSize: '1' },
+        },
+      },
+    })
+    expect(cfnDifferences(withPolicies(1), withPolicies(2)).length).toBeGreaterThan(0)
+  })
+
+  it('a Metadata-only difference is NOT drift (Metadata is cosmetic, excluded from the shape)', () => {
+    const withMetadata = (note: string): Tmpl => ({ Resources: { B: { Type: 'AWS::S3::Bucket', Metadata: { 'aws:cdk:path': note }, Properties: { BucketName: 'b' } } } })
+    expect(cfnDifferences(withMetadata('Stack/A'), withMetadata('Stack/B'))).toEqual([])
+  })
 })
