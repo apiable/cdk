@@ -187,7 +187,7 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
 
     // token HAS the scope for a mapped method → allow
     expect(verifyScope('apiable/cicd apiable/read', map, 'GET /products')).toBe(true)
-    // method NOT in the map → deny (the spike's fail-OPEN bug, inverted)
+    // method NOT in the map → deny (fail-closed on an unmapped route)
     expect(verifyScope('apiable/cicd', map, 'DELETE /products')).toBe(false)
     // mapped method with an EMPTY required value → deny (fail-closed)
     expect(verifyScope('apiable/cicd', map, 'POST /orders')).toBe(false)
@@ -213,6 +213,14 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
     __setVerifyResult({ client_id: 'c1', sub: 's1', scope: 'apiable/cicd' })
     const allowed = await handler({ authorizationToken: 'Bearer tok', methodArn: methodArn('GET', 'products') })
     expect(allowed.policyDocument.Statement[0].Effect).toBe('Allow')
+
+    // a malformed/absent methodArn (post-verification) denies through the same explicit 403 channel,
+    // never an uncaught throw — fail-closed on structurally-bad input
+    __setVerifyResult({ client_id: 'c1', sub: 's1', scope: 'apiable/cicd' })
+    const deniedMalformed = await handler({ authorizationToken: 'Bearer tok', methodArn: 'not-an-arn' })
+    expect(deniedMalformed).toBe(defaultDenyAllPolicy)
+    const deniedMissingArn = await handler({ authorizationToken: 'Bearer tok' })
+    expect(deniedMissingArn).toBe(defaultDenyAllPolicy)
 
     // the construct ships an EMPTY required-scope map by default (so an un-configured authorizer denies)
     expect(lambdaEnv(concreteTemplate()).REQUIRED_SCOPE_MAP).toBe('{}')

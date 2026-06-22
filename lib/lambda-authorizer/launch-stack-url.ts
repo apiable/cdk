@@ -75,6 +75,8 @@ export const generateLaunchStackUrl = (input: LaunchStackUrlInput): string => {
     stackName: CONSTRUCT_NAME,
     param_TenantName: tenantName,
     param_UserPoolId: userPoolId,
+    // RestApiId is the published stack's third required parameter; it is intentionally left for the
+    // customer to enter in the console, since the existing gateway's id is not known at link time.
   })
   return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/create/review?${params.toString()}`
 }
