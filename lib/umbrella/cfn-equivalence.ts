@@ -100,11 +100,16 @@ const TOP_LEVEL_SHAPE_ATTRIBUTES = [
  * and the rename is tolerated. The surrogate is memoised per logical id and is fixed-width, so a deep
  * chain or a wide lattice resolves in time and space proportional to the template's size.
  */
-// Defence-in-depth ceiling on the resolution stack: a graph deeper than this degrades to a stable
-// depth-capped token rather than recursing until V8's call stack throws a raw `RangeError`. The memo
-// already keeps a well-formed template's resolution proportional to its size, so this only fires on a
-// pathological chain far past anything CDK synth produces; it is a graceful floor, not the hot path.
-const RESOLUTION_DEPTH_CEILING = 10_000
+// Defence-in-depth ceiling on the live resolution-stack depth. The cache is pre-warmed in dependency
+// order through an explicit work-stack (see `prewarmCache`), so a cross-resource reference is always a
+// cache hit by the time the recursive resolve meets it and the live recursion only descends one
+// resource's own property tree — never a chain of resources, in any insertion order. So nothing the
+// gate processes approaches this depth; it caps a single resource's pathologically nested own
+// properties at a stable depth-capped token rather than recursing until V8's call stack throws a raw
+// `RangeError`. The value sits well below the native call-stack floor measured under a Jest worker
+// thread (the smaller-stack runner), so the graceful token would fire first; it is a floor, not the
+// hot path.
+const RESOLUTION_DEPTH_CEILING = 800
 
 const targetTokenResolver = (resources: Record<string, CfnResource>) => {
   const logicalIds = new Set(Object.keys(resources))
@@ -146,6 +151,87 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
     if (!subtree.tainted) cache.set(id, token)
     else context.tainted = true
     return token
+  }
+
+  // Pre-resolves every acyclic logical id's surrogate into the cache in dependency (post-order) order,
+  // walking the reference graph with an EXPLICIT work-stack instead of native recursion so the resolved
+  // depth is bounded by the heap, not V8's call stack. Once this completes, every cross-resource
+  // reference `shapeToken` later meets is a cache hit, so the recursive resolve of any one resource only
+  // descends that resource's own (shallow) property tree — never a chain of other resources. This is what
+  // keeps an adversarially reverse-ordered deep chain O(nodes) rather than O(nodes × depth): without it,
+  // resolving a reverse-ordered chain top-down recurses the full live depth before any descendant is
+  // cached. A resource is pushed once (`seen`), then revisited after its referenced ids are on the stack;
+  // on revisit, every referenced id is either cached or a cycle back-edge (still on the active `path`),
+  // so its surrogate computes with all children resolved. A back-edge taints the in-flight resolution
+  // exactly as the recursive path does, so a cycle member is NOT cached — preserving the memo invariant
+  // that only a context-free, fully-resolved surrogate is memoised.
+  const prewarmCache = (): void => {
+    const referencedIds = (id: string): string[] => {
+      const found = new Set<string>()
+      const collect = (v: unknown): void => {
+        if (Array.isArray(v)) return v.forEach(collect)
+        if (!v || typeof v !== 'object') return
+        const obj = v as Record<string, unknown>
+        const keys = Object.keys(obj)
+        if (keys.length === 1 && typeof obj.Ref === 'string' && logicalIds.has(obj.Ref)) found.add(obj.Ref)
+        const getAtt = keys.length === 1 ? obj['Fn::GetAtt'] : undefined
+        if (Array.isArray(getAtt) && typeof getAtt[0] === 'string' && logicalIds.has(getAtt[0])) found.add(getAtt[0])
+        else if (typeof getAtt === 'string') {
+          const head = getAtt.indexOf('.') >= 0 ? getAtt.slice(0, getAtt.indexOf('.')) : getAtt
+          if (getAtt.indexOf('.') >= 0 && logicalIds.has(head)) found.add(head)
+        }
+        const sub = keys.length === 1 ? obj['Fn::Sub'] : undefined
+        const subString = typeof sub === 'string' ? sub : Array.isArray(sub) && typeof sub[0] === 'string' ? sub[0] : undefined
+        if (subString !== undefined) {
+          for (const [, inner] of subString.matchAll(/\$\{([^}]+)\}/g)) {
+            const trimmed = inner.trim()
+            const head = trimmed.indexOf('.') >= 0 ? trimmed.slice(0, trimmed.indexOf('.')) : trimmed
+            if (logicalIds.has(head)) found.add(head)
+          }
+        }
+        for (const k of keys) {
+          if (k === 'PolicyName' && typeof obj[k] === 'string' && logicalIds.has(obj[k] as string)) found.add(obj[k] as string)
+          else if (k === 'DependsOn') for (const d of Array.isArray(obj[k]) ? (obj[k] as unknown[]) : [obj[k]]) {
+            if (typeof d === 'string' && logicalIds.has(d)) found.add(d)
+            else collect(d)
+          } else collect(obj[k])
+        }
+      }
+      const resource = resources[id]
+      collect(resource.Properties ?? null)
+      for (const attr of TOP_LEVEL_SHAPE_ATTRIBUTES) {
+        if (resource[attr] === undefined) continue
+        if (attr === 'DependsOn') for (const d of Array.isArray(resource[attr]) ? (resource[attr] as unknown[]) : [resource[attr]]) {
+          if (typeof d === 'string' && logicalIds.has(d)) found.add(d)
+        }
+      }
+      return [...found]
+    }
+
+    const seen = new Set<string>()
+    for (const root of logicalIds) {
+      if (cache.has(root) || seen.has(root)) continue
+      const path = new Set<string>()
+      const stack: Array<{ id: string; expanded: boolean }> = [{ id: root, expanded: false }]
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1]
+        if (!frame.expanded) {
+          frame.expanded = true
+          if (cache.has(frame.id)) { stack.pop(); continue }
+          seen.add(frame.id)
+          path.add(frame.id)
+          for (const child of referencedIds(frame.id)) {
+            if (!cache.has(child) && !path.has(child)) stack.push({ id: child, expanded: false })
+          }
+        } else {
+          stack.pop()
+          path.delete(frame.id)
+          // Children are resolved (cached) or cycle back-edges (still on `path`); resolving now descends
+          // only this resource's own property tree, with every cross-resource reference a cache hit.
+          if (!cache.has(frame.id)) shapeToken(frame.id, new Set<string>(), { tainted: false })
+        }
+      }
+    }
   }
 
   // The single source of truth for a resource's comparison shape — its type, its reference-normalised
@@ -246,6 +332,10 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
     }
     return normalise(sub, resolving, context)
   }
+
+  // Resolve every acyclic id's surrogate up front (heap-bounded work-stack) so the recursive resolves
+  // the public helpers trigger only ever descend a single resource's own property tree.
+  prewarmCache()
 
   return {
     // The public reference-normaliser (fresh resolution stack) — rewrites every cross-resource
