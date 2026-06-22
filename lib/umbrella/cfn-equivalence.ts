@@ -11,7 +11,18 @@
  * different resource (a policy re-attached to another role, a stream re-wired to another bucket) reads
  * as drift. By-value identity (a trusted account, an ARN, a principal) is compared as the literal it
  * is, so an IAM trust/principal re-target is a property change the whole-shape comparison reports.
+ *
+ * A reference carries a fixed-width *surrogate* of its target's resolved shape (a content hash),
+ * memoised per logical id, rather than the target's whole canonical subtree inlined by value. Inlining
+ * grows the referrer's token by the target's full size at every reference and re-escapes it at each
+ * level, so a deep chain or a wide fan-out lattice balloons the token super-linearly; the surrogate
+ * keeps every reference O(1) and the per-id memo keeps each resource resolved once, so the whole walk
+ * is proportional to the template's size. The surrogate still encodes the target's full shape (so a
+ * re-target to a differently-shaped resource changes it and reads as drift) and a consistent rename
+ * leaves the resolved shape — and thus the surrogate — unchanged.
  */
+
+import { createHash } from 'crypto'
 
 type CfnResource = { Type: string; Properties?: unknown; [k: string]: unknown }
 
@@ -79,33 +90,61 @@ const TOP_LEVEL_SHAPE_ATTRIBUTES = [
 ] as const
 
 /**
- * Resolves a logical-id reference to a token that encodes *what the reference points at* — the target
- * resource's shape (its type + recursively reference-normalised properties AND its load-bearing
- * top-level attributes), never its renameable logical-id identity. Two references to differently-shaped
- * targets get different tokens, so a re-target (a policy re-attached to another role, a stream re-wired
- * to another bucket, a reference re-pointed from a durable resource to a disposable near-twin) changes
- * the referrer's canonical shape and registers as drift; a consistent logical-id rename leaves the
- * target's shape unchanged, so the token is stable and the rename is tolerated.
+ * Resolves a logical-id reference to a fixed-width surrogate of *what the reference points at* — a
+ * content hash of the target resource's resolved shape (its type + recursively reference-normalised
+ * properties AND its load-bearing top-level attributes), never its renameable logical-id identity. Two
+ * references to differently-shaped targets get different surrogates, so a re-target (a policy
+ * re-attached to another role, a stream re-wired to another bucket, a reference re-pointed from a
+ * durable resource to a disposable near-twin) changes the referrer's canonical shape and registers as
+ * drift; a consistent logical-id rename leaves the target's shape unchanged, so the surrogate is stable
+ * and the rename is tolerated. The surrogate is memoised per logical id and is fixed-width, so a deep
+ * chain or a wide lattice resolves in time and space proportional to the template's size.
  */
+// Defence-in-depth ceiling on the resolution stack: a graph deeper than this degrades to a stable
+// depth-capped token rather than recursing until V8's call stack throws a raw `RangeError`. The memo
+// already keeps a well-formed template's resolution proportional to its size, so this only fires on a
+// pathological chain far past anything CDK synth produces; it is a graceful floor, not the hot path.
+const RESOLUTION_DEPTH_CEILING = 10_000
+
 const targetTokenResolver = (resources: Record<string, CfnResource>) => {
   const logicalIds = new Set(Object.keys(resources))
+  // Each logical id's fully-resolved surrogate, memoised so a resource is resolved once regardless of
+  // how many references reach it or how deep the recursion is. A resolution that touched a cycle
+  // back-edge OR the depth ceiling is context-dependent (its `ref-cycle`/`ref-depth-capped` anchor is
+  // relative to the ancestors on the stack at the time), so it is NOT cached — only a context-free,
+  // fully-resolved surrogate goes in, which keeps the memo sound under arbitrary reference order.
   const cache = new Map<string, string>()
 
-  // `resolving` breaks reference cycles (a target whose own properties reference back to the referrer):
-  // a target already on the resolution stack anchors on its type alone, which terminates while keeping
-  // the cycle's shape distinct from an acyclic target of the same type. Only the full token computed
-  // with an empty stack is cached — a token computed inside a cycle is truncated to its referrer's
-  // context, so caching it would leak that context's `ref-cycle` truncation into an unrelated resolve.
-  const shapeToken = (id: string, resolving: Set<string>): string => {
-    if (resolving.size === 0) {
-      const cached = cache.get(id)
-      if (cached !== undefined) return cached
-    }
+  // A reference carries this fixed-width surrogate of the target's resolved shape, not the shape itself,
+  // so a reference costs O(1) bytes regardless of how large the target's subtree is. The hash encodes
+  // the full resolved shape, so two differently-shaped targets get different surrogates (a re-target is
+  // drift) while a consistent rename leaves the shape — and the surrogate — unchanged.
+  const surrogate = (resolvedShapeToken: string): string =>
+    `ref→#${createHash('sha256').update(resolvedShapeToken).digest('hex')}`
+
+  // Resolves a logical-id reference to its target's surrogate. `resolving` is the ancestor stack on the
+  // current path; `context.tainted` records whether this subtree's resolution leaned on a back-edge or
+  // the depth ceiling (an anchor relative to those ancestors), which gates whether the surrogate is
+  // safe to memoise. A target already on the stack anchors on its type alone (`ref-cycle→<Type>`), which
+  // terminates the recursion while keeping a cyclic target's shape distinct from an acyclic one.
+  const shapeToken = (id: string, resolving: Set<string>, context: { tainted: boolean }): string => {
+    const cached = cache.get(id)
+    if (cached !== undefined) return cached
     const target = resources[id]
     if (!target) return 'ref→<unknown>'
-    if (resolving.has(id)) return `ref-cycle→${target.Type}`
-    const token = `ref→${canonical(shapeOf(target, new Set(resolving).add(id)))}`
-    if (resolving.size === 0) cache.set(id, token)
+    if (resolving.has(id)) {
+      context.tainted = true
+      return `ref-cycle→${target.Type}`
+    }
+    if (resolving.size >= RESOLUTION_DEPTH_CEILING) {
+      context.tainted = true
+      return `ref-depth-capped→${target.Type}`
+    }
+    const subtree = { tainted: false }
+    const resolvedShape = canonical(shapeOf(target, new Set(resolving).add(id), subtree))
+    const token = surrogate(resolvedShape)
+    if (!subtree.tainted) cache.set(id, token)
+    else context.tainted = true
     return token
   }
 
@@ -115,14 +154,14 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
   // the cycle-extended stack) and the owner shape (`resourceShapes`, with a fresh stack) build through
   // this, so the two paths can never drift apart: a reference re-pointed between two resources that
   // differ only in a top-level attribute now changes the referent token, just as it changes the owner.
-  const shapeOf = (resource: CfnResource, resolving: Set<string>): Record<string, unknown> => {
+  const shapeOf = (resource: CfnResource, resolving: Set<string>, context: { tainted: boolean }): Record<string, unknown> => {
     const shape: Record<string, unknown> = {
       type: resource.Type,
-      properties: normalise(resource.Properties ?? null, resolving),
+      properties: normalise(resource.Properties ?? null, resolving, context),
     }
     for (const attr of TOP_LEVEL_SHAPE_ATTRIBUTES) {
       if (resource[attr] === undefined) continue
-      shape[attr] = attr === 'DependsOn' ? normaliseDependsOn(resource[attr], resolving) : resource[attr]
+      shape[attr] = attr === 'DependsOn' ? normaliseDependsOn(resource[attr], resolving, context) : resource[attr]
     }
     return shape
   }
@@ -131,9 +170,9 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
   // token (a non-id entry normalises as ordinary data). Shared by the `normalise` walk (a `DependsOn`
   // nested inside a walked object) and `shapeOf` (the top-level `DependsOn`, the only valid CFN
   // placement), so the dependency-declaration reference form normalises identically in both paths.
-  const normaliseDependsOn = (dep: unknown, resolving: Set<string>): unknown =>
+  const normaliseDependsOn = (dep: unknown, resolving: Set<string>, context: { tainted: boolean }): unknown =>
     (Array.isArray(dep) ? dep : [dep]).map((d) =>
-      typeof d === 'string' && logicalIds.has(d) ? shapeToken(d, resolving) : normalise(d, resolving),
+      typeof d === 'string' && logicalIds.has(d) ? shapeToken(d, resolving, context) : normalise(d, resolving, context),
     )
 
   /**
@@ -142,39 +181,39 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
    * `Fn::Sub`-embedded `${LogicalId}` and `${LogicalId.Attr}`, `DependsOn`, and the CDK default-policy
    * `PolicyName` echo.
    */
-  const normalise = (value: unknown, resolving: Set<string>): unknown => {
+  const normalise = (value: unknown, resolving: Set<string>, context: { tainted: boolean }): unknown => {
     const walk = (v: unknown): unknown => {
       if (Array.isArray(v)) return v.map(walk)
       if (v && typeof v === 'object') {
         const obj = v as Record<string, unknown>
         const keys = Object.keys(obj)
         if (keys.length === 1 && typeof obj.Ref === 'string' && logicalIds.has(obj.Ref)) {
-          return { Ref: shapeToken(obj.Ref, resolving) }
+          return { Ref: shapeToken(obj.Ref, resolving, context) }
         }
         if (keys.length === 1 && obj['Fn::GetAtt'] !== undefined) {
           const getAtt = obj['Fn::GetAtt']
           if (Array.isArray(getAtt)) {
             const [target, ...rest] = getAtt as unknown[]
             if (typeof target === 'string' && logicalIds.has(target)) {
-              return { 'Fn::GetAtt': [shapeToken(target, resolving), ...rest.map(walk)] }
+              return { 'Fn::GetAtt': [shapeToken(target, resolving, context), ...rest.map(walk)] }
             }
           } else if (typeof getAtt === 'string') {
             const dot = getAtt.indexOf('.')
             const target = dot >= 0 ? getAtt.slice(0, dot) : getAtt
             if (dot >= 0 && logicalIds.has(target)) {
-              return { 'Fn::GetAtt': `${shapeToken(target, resolving)}${getAtt.slice(dot)}` }
+              return { 'Fn::GetAtt': `${shapeToken(target, resolving, context)}${getAtt.slice(dot)}` }
             }
           }
         }
         if (keys.length === 1 && obj['Fn::Sub'] !== undefined) {
-          return { 'Fn::Sub': normaliseSub(obj['Fn::Sub'], resolving) }
+          return { 'Fn::Sub': normaliseSub(obj['Fn::Sub'], resolving, context) }
         }
         const out: Record<string, unknown> = {}
         for (const k of keys) {
           if (k === 'PolicyName' && typeof obj[k] === 'string' && logicalIds.has(obj[k] as string)) {
-            out[k] = shapeToken(obj[k] as string, resolving)
+            out[k] = shapeToken(obj[k] as string, resolving, context)
           } else if (k === 'DependsOn') {
-            out[k] = normaliseDependsOn(obj[k], resolving)
+            out[k] = normaliseDependsOn(obj[k], resolving, context)
           } else {
             out[k] = walk(obj[k])
           }
@@ -191,30 +230,32 @@ const targetTokenResolver = (resources: Record<string, CfnResource>) => {
   // the logical id, the suffix the attribute, mirroring string-form `Fn::GetAtt`), so a consistent
   // rename of the target is tolerated while a re-target reads as drift. A `${!Literal}` escape (head
   // `!Literal`, never a logical id) and a non-resource `${Param}` are left untouched.
-  const normaliseSub = (sub: unknown, resolving: Set<string>): unknown => {
+  const normaliseSub = (sub: unknown, resolving: Set<string>, context: { tainted: boolean }): unknown => {
     const rewriteString = (s: string): string =>
       s.replace(/\$\{([^}]+)\}/g, (match, inner: string) => {
         const trimmed = inner.trim()
         const dot = trimmed.indexOf('.')
         const head = dot >= 0 ? trimmed.slice(0, dot) : trimmed
-        return logicalIds.has(head) ? `\${${shapeToken(head, resolving)}${dot >= 0 ? trimmed.slice(dot) : ''}}` : match
+        return logicalIds.has(head) ? `\${${shapeToken(head, resolving, context)}${dot >= 0 ? trimmed.slice(dot) : ''}}` : match
       })
     if (typeof sub === 'string') return rewriteString(sub)
     if (Array.isArray(sub)) {
       const [template, vars, ...rest] = sub as unknown[]
-      const head = typeof template === 'string' ? rewriteString(template) : normalise(template, resolving)
-      return [head, normalise(vars, resolving), ...rest.map((r) => normalise(r, resolving))]
+      const head = typeof template === 'string' ? rewriteString(template) : normalise(template, resolving, context)
+      return [head, normalise(vars, resolving, context), ...rest.map((r) => normalise(r, resolving, context))]
     }
-    return normalise(sub, resolving)
+    return normalise(sub, resolving, context)
   }
 
   return {
     // The public reference-normaliser (fresh resolution stack) — rewrites every cross-resource
-    // reference in an arbitrary value to its target-shape token. Used for export values.
-    normalise: (value: unknown): unknown => normalise(value, new Set<string>()),
+    // reference in an arbitrary value to its target-shape surrogate. Used for export values. A
+    // throwaway taint context: at the top level there is no enclosing resolution whose memoisation
+    // a back-edge below could poison, so the flag is only consumed by the per-id memo inside.
+    normalise: (value: unknown): unknown => normalise(value, new Set<string>(), { tainted: false }),
     // A resource's full comparison shape (fresh resolution stack), so the multiset key and the
-    // referent token are built by one helper and cannot diverge.
-    shapeOf: (resource: CfnResource): Record<string, unknown> => shapeOf(resource, new Set<string>()),
+    // referent surrogate are built by one helper and cannot diverge.
+    shapeOf: (resource: CfnResource): Record<string, unknown> => shapeOf(resource, new Set<string>(), { tainted: false }),
   }
 }
 
