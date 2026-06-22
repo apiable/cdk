@@ -18,6 +18,9 @@ const CFN_KIND: Readonly<Record<string, string>> = {
   'AWS::ApiGateway::Authorizer': 'apigateway-authorizer',
   'AWS::S3::Bucket': 's3-bucket',
   'AWS::S3::BucketPolicy': 's3-bucket-policy',
+  'AWS::KinesisFirehose::DeliveryStream': 'firehose-delivery-stream',
+  'AWS::Logs::LogGroup': 'logs-log-group',
+  'AWS::Logs::LogStream': 'logs-log-stream',
 }
 
 const TF_KIND: Readonly<Record<string, string>> = {
@@ -34,6 +37,9 @@ const TF_KIND: Readonly<Record<string, string>> = {
   aws_api_gateway_authorizer: 'apigateway-authorizer',
   aws_s3_bucket: 's3-bucket',
   aws_s3_bucket_policy: 's3-bucket-policy',
+  aws_kinesis_firehose_delivery_stream: 'firehose-delivery-stream',
+  aws_cloudwatch_log_group: 'logs-log-group',
+  aws_cloudwatch_log_stream: 'logs-log-stream',
 }
 
 /** Canonical kind for a CloudFormation resource type; an unmapped type keeps its raw name so an unexpected resource still surfaces in the graph rather than vanishing. */
@@ -106,11 +112,14 @@ export const ENFORCED_DECLARED_ID_KINDS: ReadonlySet<string> = new Set([
  * other's value last-write-wins and hide a widening on the loser, so the gate fails the collision
  * itself. The axis is VALUE-BEARING, not primary-vs-attached: the taggable {@link DECLARED_ID_KINDS},
  * the two cognito kinds keyed by an author-declared natural key (resource-server Identifier, client
- * name), the api-gateway authorizer (self-keyed by Name), and the s3 bucket-policy (anchored to its
- * bucket — AWS permits one policy per bucket, so two on one bucket are a duplicate identity). The
- * pooled inline-policy / lambda-permission / user-pool-domain kinds are excluded because they emit NO
- * value row (their security is the grant multiset, which enlarges rather than clobbers), never because
- * they are "attached". A structural test keeps this set in step with the reducers' value-writing sites.
+ * name), the api-gateway authorizer (self-keyed by Name), the s3 bucket-policy (anchored to its
+ * bucket — AWS permits one policy per bucket, so two on one bucket are a duplicate identity), and the
+ * firehose delivery stream (anchored to its delivery role, whose declared id keys it — its destination,
+ * routing prefix, compression, and server-side-logging flag are load-bearing value rows). The pooled
+ * inline-policy / lambda-permission / user-pool-domain kinds are excluded because they emit NO value row
+ * (their security is the grant multiset, which enlarges rather than clobbers), never because they are
+ * "attached"; the presence-only log-group / log-stream kinds carry no value row either. A structural
+ * test keeps this set in step with the reducers' value-writing sites.
  */
 export const VALUE_BEARING_KINDS: ReadonlySet<string> = new Set<string>([
   ...DECLARED_ID_KINDS,
@@ -118,6 +127,7 @@ export const VALUE_BEARING_KINDS: ReadonlySet<string> = new Set<string>([
   'cognito-user-pool-client',
   'apigateway-authorizer',
   's3-bucket-policy',
+  'firehose-delivery-stream',
 ])
 
 /** A sentinel marking a taggable primary that should carry a declared id but does not in this channel. */

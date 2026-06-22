@@ -188,8 +188,41 @@ const securedBucketName = (bucketNodeRef: string | undefined): string | undefine
   return bucketNodeRef.startsWith(prefix) ? bucketNodeRef.slice(prefix.length) : undefined
 }
 
-const collectValues = (kind: string, props: Record<string, unknown>): Record<string, string> => {
+/**
+ * The S3 destination block a firehose delivery stream writes through, normalised over the two CDK
+ * shapes — the legacy `S3DestinationConfiguration` and the richer `ExtendedS3DestinationConfiguration`
+ * — so the stream's routing/logging settings read identically whichever the channel emitted.
+ */
+const streamS3Destination = (props: Record<string, unknown>): Record<string, unknown> => {
+  const extended = asRecord(props.ExtendedS3DestinationConfiguration)
+  if (Object.keys(extended).length > 0) return extended
+  return asRecord(props.S3DestinationConfiguration)
+}
+
+const collectValues = (
+  kind: string,
+  props: Record<string, unknown>,
+  resolve: (v: unknown) => string,
+): Record<string, string> => {
   const values: Record<string, string> = {}
+  if (kind === 'firehose-delivery-stream') {
+    // The routing prefixes the downstream token pipeline keys off, the compression format, and whether
+    // server-side delivery logging is on — load-bearing value rows, so a divergent destination routing
+    // or a dropped logging block is caught BY VALUE cross-channel. The destination bucket and delivery
+    // role are NOT value rows here: the bucket is a deploy-time input that reads as a parameter ref in
+    // the CFN channels and a literal in Terraform (it cannot reconcile by raw value), and both are
+    // already gate-compared — the bucket by the delivery role's S3 inline-policy grant (the ARN by
+    // value) and the role binding by the stream's parent-anchor to the role's declared id.
+    const destination = streamS3Destination(props)
+    const prefix = resolve(destination.Prefix)
+    if (prefix !== '') values['destination-prefix'] = prefix
+    const errorPrefix = resolve(destination.ErrorOutputPrefix)
+    if (errorPrefix !== '') values['destination-error-prefix'] = errorPrefix
+    const compression = asString(destination.CompressionFormat)
+    if (compression !== undefined) values['compression-format'] = compression
+    const logging = asRecord(destination.CloudWatchLoggingOptions)
+    if (logging.Enabled !== undefined) values['cloudwatch-logging-enabled'] = String(logging.Enabled)
+  }
   if (kind === 'cognito-user-pool') {
     const lambdaConfig = asRecord(props.LambdaConfig)
     const preTokenConfig = asRecord(lambdaConfig.PreTokenGenerationConfig)
@@ -376,6 +409,15 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       const bucketName = securedBucketName(bucketTarget !== undefined ? refToNode.get(bucketTarget.id) : undefined)
       refToNode.set(id, nodeRef('s3-bucket-policy', bucketName))
     }
+    // A delivery stream's channel-stable identity is the delivery role it assumes (its own name is a
+    // tenant-scoped `amazon-apigateway-<name>`); anchor it to the role's declared id, the same parent-
+    // anchoring the bucket-policy uses, so the usage-log and api-key-token streams stay distinct refs
+    // (each carries its own delivery role) and a stream rebound to a different role diverges on identity.
+    if (kind === 'firehose-delivery-stream') {
+      const roleTarget = resourceRefsIn(streamS3Destination(res.properties).RoleARN, resourceIds)[0]
+      const roleDisc = roleTarget !== undefined ? discriminatorOf(refToNode.get(roleTarget.id) ?? roleTarget.id) : undefined
+      refToNode.set(id, nodeRef('firehose-delivery-stream', roleDisc !== undefined ? `of-role:${roleDisc}` : undefined))
+    }
   }
 
   // The within-channel identity collisions among value-bearing kinds: two distinct resources that
@@ -438,7 +480,7 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       const name = normaliseLogical(resolve(res.properties[nameProperty]), region)
       if (name !== '') cosmetics[`name:${ref}`] = name
     }
-    values = { ...values, ...namespaceByRef(collectValues(kind, res.properties), ref) }
+    values = { ...values, ...namespaceByRef(collectValues(kind, res.properties, resolve), ref) }
     cosmetics = { ...cosmetics, ...collectCosmetics(kind, res.properties) }
     secrets.push(...collectSecrets(res.properties))
 
@@ -484,6 +526,13 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       values[`bucket-policy-write-accounts:${ref}`] = grantedAccountsValue(resolvedPrincipalsOf(res.properties.PolicyDocument, resolve), deployAccount)
       if (bucketTarget !== undefined) {
         edges.push({ from: ref, to: bucketNodeRef ?? bucketTarget.id, relation: 'secures-bucket' })
+      }
+    }
+    if (kind === 'firehose-delivery-stream') {
+      // The stream→delivery-role binding as a graph edge, so a stream rebound to a different (or no)
+      // role diverges on the graph tier alongside the identity anchor.
+      for (const target of resourceRefsIn(streamS3Destination(res.properties).RoleARN, resourceIds)) {
+        edges.push({ from: ref, to: refToNode.get(target.id) ?? target.id, relation: 'delivers-via' })
       }
     }
     if (kind === 'cognito-user-pool') {

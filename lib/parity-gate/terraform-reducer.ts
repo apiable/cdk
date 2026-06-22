@@ -158,8 +158,34 @@ const securedBucketName = (bucketNodeRef: string | undefined): string | undefine
   return bucketNodeRef.startsWith(prefix) ? bucketNodeRef.slice(prefix.length) : undefined
 }
 
+/**
+ * The S3 destination block a firehose delivery stream writes through, over the two Terraform shapes —
+ * the legacy `s3_configuration` and the richer `extended_s3_configuration` — so the routing/logging
+ * settings read identically to the CloudFormation channels whichever the module declared.
+ */
+const streamS3Destination = (values: Record<string, unknown>): Record<string, unknown> => {
+  const extended = block(values.extended_s3_configuration)
+  if (Object.keys(extended).length > 0) return extended
+  return block(values.s3_configuration)
+}
+
 const collectValues = (kind: string, values: Record<string, unknown>): Record<string, string> => {
   const out: Record<string, string> = {}
+  if (kind === 'firehose-delivery-stream') {
+    // The routing prefixes, compression format, and server-side logging flag as load-bearing value rows,
+    // mirroring the CloudFormation side, so a divergent destination routing or a dropped logging block is
+    // caught BY VALUE cross-channel. The destination bucket + delivery role are gate-compared elsewhere
+    // (the role's S3 grant carries the bucket ARN by value; the parent-anchor carries the role binding).
+    const destination = streamS3Destination(values)
+    const prefix = asString(destination.prefix)
+    if (prefix !== undefined) out['destination-prefix'] = prefix
+    const errorPrefix = asString(destination.error_output_prefix)
+    if (errorPrefix !== undefined) out['destination-error-prefix'] = errorPrefix
+    const compression = asString(destination.compression_format)
+    if (compression !== undefined) out['compression-format'] = compression
+    const logging = block(destination.cloudwatch_logging_options)
+    if (logging.enabled !== undefined) out['cloudwatch-logging-enabled'] = String(logging.enabled)
+  }
   if (kind === 'cognito-user-pool') {
     const lambdaConfig = block(values.lambda_config)
     const preTokenConfig = block(lambdaConfig.pre_token_generation_config)
@@ -327,6 +353,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const roleRefByPolicyAddress = new Map<string, string>()
   const functionRefByPermissionAddress = new Map<string, string>()
   const poolRefByDomainAddress = new Map<string, string>()
+  const roleRefByStreamAddress = new Map<string, string>()
   for (const entry of configResources) {
     const record = asRecord(entry)
     const address = asString(record.address)
@@ -363,6 +390,13 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       const bucketTarget = referencesOf(expressions.bucket, addresses)[0]
       if (bucketTarget !== undefined) securedBucketByPolicyAddress.set(address, refToNode.get(bucketTarget.address) ?? bucketTarget.address)
     }
+    if (kind === 'firehose-delivery-stream') {
+      // The delivery role the stream assumes, read from the destination block's role_arn reference (the
+      // role id is computed and absent from planned_values), so the stream anchors to the role's
+      // channel-stable declared identity — the Terraform counterpart of the CloudFormation RoleARN anchor.
+      const roleTarget = referencesOf(block(expressions.extended_s3_configuration).role_arn, addresses)[0]
+      if (roleTarget !== undefined) roleRefByStreamAddress.set(address, refToNode.get(roleTarget.address) ?? roleTarget.address)
+    }
   }
   // The pool disc a literal-bound resource-server anchored to, so its bound-to-pool edge can be emitted
   // to the same pool node a referenced binding resolves to (a literal binding carries no reference).
@@ -373,6 +407,12 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     const kind = kindByAddress.get(res.address)
     if (kind === 's3-bucket-policy') {
       refToNode.set(res.address, nodeRef('s3-bucket-policy', securedBucketName(securedBucketByPolicyAddress.get(res.address))))
+    }
+    // Anchor the delivery stream to its delivery role's channel-stable identity (mirrors the bucket-policy
+    // re-keying and the CloudFormation side), so the usage-log and api-key-token streams stay distinct refs.
+    if (kind === 'firehose-delivery-stream') {
+      const roleRef = roleRefByStreamAddress.get(res.address)
+      refToNode.set(res.address, nodeRef('firehose-delivery-stream', roleRef !== undefined ? `of-role:${discriminatorOf(roleRef)}` : undefined))
     }
     if (kind === 'iam-inline-policy') {
       const roleRef = roleRefByPolicyAddress.get(res.address)
@@ -553,6 +593,13 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     if (kind === 's3-bucket-policy') {
       for (const target of referencesOf(expressions.bucket, addresses)) {
         edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'secures-bucket' })
+      }
+    }
+    if (kind === 'firehose-delivery-stream') {
+      // The stream→delivery-role binding as a graph edge (matching the CloudFormation relation), so a
+      // stream rebound to a different role diverges on the graph tier alongside the identity anchor.
+      for (const target of referencesOf(block(expressions.extended_s3_configuration).role_arn, addresses)) {
+        edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation: 'delivers-via' })
       }
     }
   }
