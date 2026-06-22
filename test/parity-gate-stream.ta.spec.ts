@@ -151,6 +151,49 @@ describe('firehose-delivery-stream parent-anchor by the delivery role', () => {
   })
 })
 
+describe('firehose-delivery-stream parent-anchor (Terraform)', () => {
+  it('keys the stream node by its delivery role and emits the delivers-via edge from the configuration references', () => {
+    const model = reduceTerraformShowJson(tfStream(), 'terraform', REGION, '111111111111')
+    const node = model.graph.nodes.find((n) => n.kind === 'firehose-delivery-stream')
+    expect(node?.ref).toBe(STREAM_REF)
+    expect(model.graph.edges.some((e) => e.from === STREAM_REF && e.to === `iam-role:${ROLE_ID}` && e.relation === 'delivers-via')).toBe(true)
+  })
+})
+
+describe('firehose role embedded inline policy reduces like a separate policy resource', () => {
+  // The firehose role embeds its FirehosePolicy (CDK inlinePolicies), so the CFN reducer extracts it to
+  // the same iam-inline-policy node + grants a separate AWS::IAM::Policy / aws_iam_role_policy yields —
+  // without which the role's S3 write grant is invisible to the gate.
+  const cfnStreamWithPolicy = (): unknown => {
+    const artifact = cfnStream() as { Resources: Record<string, { Type: string; Properties: Record<string, unknown> }> }
+    artifact.Resources.FirehoseRole.Properties.Policies = [
+      {
+        PolicyName: 'FirehosePolicy',
+        PolicyDocument: {
+          Version: '2012-10-17',
+          Statement: [
+            { Effect: 'Allow', Action: ['s3:PutObject', 's3:GetObject'], Resource: [{ Ref: 'LogsBucketArn' }, { 'Fn::Join': ['', [{ Ref: 'LogsBucketArn' }, '/*']] }] },
+          ],
+        },
+      },
+    ]
+    return artifact
+  }
+
+  it('emits an iam-inline-policy node anchored to the role for an embedded policy', () => {
+    const model = reduceCloudFormation(cfnStreamWithPolicy(), 'cfn', REGION)
+    expect(model.graph.nodes.some((n) => n.ref === `iam-inline-policy:policy-of:${ROLE_ID}:s3` && n.kind === 'iam-inline-policy')).toBe(true)
+    expect(model.graph.edges.some((e) => e.relation === 'attached-to-role' && e.to === `iam-role:${ROLE_ID}`)).toBe(true)
+  })
+
+  it('reduces the embedded policy S3 grant on the deploy-time logs bucket to the shared logs-bucket token', () => {
+    const model = reduceCloudFormation(cfnStreamWithPolicy(), 'cfn', REGION)
+    const grant = model.grants.find((g) => g.ref.startsWith('grant:s3:iam-inline-policy:policy-of:'))
+    expect(grant?.resources).toContain('{logs-bucket-arn}')
+    expect(grant?.resources).toContain('{logs-bucket-arn}/*')
+  })
+})
+
 describe('firehose-delivery-stream by-value drift is caught cross-channel', () => {
   it('FAILS the gate when one channel writes records under a different destination prefix', () => {
     const result = gate([
