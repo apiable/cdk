@@ -170,6 +170,74 @@ const refToNearTwin = (bucketId: 'DurableBucket' | 'DisposableBucket'): Tmpl => 
 })
 
 /**
+ * A published export whose Output carries (or does not carry) a top-level `Condition`. The `Condition`
+ * decides whether the export exists in a given environment, so an export that *gains* a `Condition` (same
+ * name + same value) can silently vanish where the condition is false and break a dependent stack's
+ * `Fn::ImportValue` — it must read as drift. A consistent logical-id rename under a *stable* `Condition`
+ * is not observable and must stay tolerated.
+ */
+const exportWithCondition = (condition: string | undefined): Tmpl => ({
+  Resources: { GatewayRole: { Type: 'AWS::IAM::Role', Properties: { RoleName: 'gw' } } },
+  Outputs: {
+    RoleArnOut: {
+      Value: { 'Fn::GetAtt': ['GatewayRole', 'Arn'] },
+      ...(condition !== undefined ? { Condition: condition } : {}),
+      Export: { Name: 'gateway-role-arn' },
+    },
+  },
+})
+
+/**
+ * A published export whose `Export.Name` is itself an intrinsic (`Fn::Sub`), the legal CFN form for a
+ * stack-name-scoped export name. Such an export must still be compared (its presence AND a re-target of
+ * its value), not skipped because the name is not a plain string.
+ */
+const intrinsicNamedExport = (value: string): Tmpl => ({
+  Resources: { Bucket: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'b' } } },
+  Outputs: {
+    Out: { Value: value, Export: { Name: { 'Fn::Sub': '${AWS::StackName}-shared' } } },
+  },
+})
+
+/**
+ * Two distinctly-shaped resources and a consumer wired to one of them through a STRING-form
+ * `{Fn::GetAtt: 'Logical.Attr'}` (the short form). Re-pointing the string-GetAtt from one to the other is
+ * a re-target the gate must catch; the no-over-block side is already covered by `everyReferenceForm` S2.
+ */
+const stringGetAttWiredTo = (target: 'BucketA' | 'BucketB'): Tmpl => ({
+  Resources: {
+    BucketA: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'logs-alpha' } },
+    BucketB: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'logs-beta' } },
+    Consumer: {
+      Type: 'AWS::Lambda::Function',
+      Properties: { FunctionName: 'consumer', Environment: { Variables: { BucketArn: { 'Fn::GetAtt': `${target}.Arn` } } } },
+    },
+  },
+})
+
+/**
+ * Two distinctly-shaped roles and a policy whose CDK default-policy `PolicyName` echoes one role's
+ * logical id. Re-pointing only the `PolicyName` echo from one role to the other is a re-target the gate
+ * must catch (the echo resolves to its target's shape token); the no-over-block side is covered by S2.
+ */
+const policyNameEchoOf = (roleId: 'RoleA' | 'RoleB'): Tmpl => ({
+  Resources: {
+    RoleA: {
+      Type: 'AWS::IAM::Role',
+      Properties: { RoleName: 'role-alpha', AssumeRolePolicyDocument: { Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } },
+    },
+    RoleB: {
+      Type: 'AWS::IAM::Role',
+      Properties: { RoleName: 'role-beta', AssumeRolePolicyDocument: { Statement: [{ Effect: 'Allow', Principal: { Service: 'firehose.amazonaws.com' }, Action: 'sts:AssumeRole' }] } },
+    },
+    DefaultPolicy: {
+      Type: 'AWS::IAM::Policy',
+      Properties: { PolicyName: roleId, Roles: [{ Ref: roleId }], PolicyDocument: { Statement: [{ Effect: 'Allow', Action: 's3:GetObject', Resource: '*' }] } },
+    },
+  },
+})
+
+/**
  * A resource graph exercising EVERY reference form the template can express, so S2 proves no form is
  * left un-normalised: direct {Ref}, attribute {Fn::GetAtt} short (string) AND long (array) form,
  * {Fn::Sub}-embedded ${Logical} AND ${Logical.Attr}, DependsOn, and the default-policy PolicyName echo.
@@ -286,6 +354,13 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       expect(candidate.Resources).not.toEqual(baseline.Resources)
       expect(cfnDifferences(baseline, candidate)).toEqual([])
     })
+
+    it('renaming an exported resource under a STABLE Output Condition → still no drift (the Condition is unchanged)', () => {
+      const baseline = exportWithCondition('IsProd')
+      const candidate = renameAll(baseline, 'GatewayRole', 'RenamedGatewayRole')
+      expect(candidate.Resources).not.toEqual(baseline.Resources)
+      expect(cfnDifferences(baseline, candidate)).toEqual([])
+    })
   })
 
   // S3 — a re-target (by reference OR by value, incl an IAM trust/principal/resource) is caught
@@ -359,6 +434,40 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       const candidate = refToNearTwin('DisposableBucket')
       expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
       expect(isCfnEquivalent(baseline, candidate)).toBe(false)
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
+    })
+
+    it('a string-form {Fn::GetAtt:"Bucket.Arn"} re-pointed at a different bucket → drift', () => {
+      const baseline = stringGetAttWiredTo('BucketA')
+      const candidate = stringGetAttWiredTo('BucketB')
+      expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
+    })
+
+    it('a PolicyName echo re-pointed from one role to a different role → drift', () => {
+      const baseline = policyNameEchoOf('RoleA')
+      const candidate = policyNameEchoOf('RoleB')
+      expect(cfnDifferences(baseline, candidate).length).toBeGreaterThan(0)
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
+    })
+
+    it('a published export that GAINS an Output Condition (same name + same value) → drift (the export can vanish where the condition is false)', () => {
+      const baseline = exportWithCondition(undefined)
+      const candidate = exportWithCondition('IsProd')
+      expect(cfnDifferences(baseline, candidate)).toContainEqual({ kind: 'export-changed', detail: 'gateway-role-arn' })
+      expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
+    })
+
+    it('a published export whose Output Condition CHANGES (same name + same value) → drift', () => {
+      const baseline = exportWithCondition('IsProd')
+      const candidate = exportWithCondition('IsStaging')
+      expect(cfnDifferences(baseline, candidate)).toContainEqual({ kind: 'export-changed', detail: 'gateway-role-arn' })
+    })
+
+    it('an intrinsic-named export (Fn::Sub Export.Name) whose value is re-targeted → drift (the export is compared, not skipped)', () => {
+      const baseline = intrinsicNamedExport('v1')
+      const candidate = intrinsicNamedExport('v2')
+      expect(cfnDifferences(baseline, candidate).some((d) => d.kind === 'export-changed')).toBe(true)
       expect(() => assertNoStranglerDrift(baseline, candidate)).toThrow(/strangler step blocked/)
     })
   })

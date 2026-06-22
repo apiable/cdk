@@ -15,9 +15,11 @@
 
 type CfnResource = { Type: string; Properties?: unknown; [k: string]: unknown }
 
+type CfnOutput = { Value?: unknown; Export?: { Name?: unknown }; Condition?: unknown; [k: string]: unknown }
+
 type CfnTemplate = {
   Resources?: Record<string, CfnResource>
-  Outputs?: Record<string, { Value?: unknown; Export?: { Name?: unknown }; [k: string]: unknown }>
+  Outputs?: Record<string, CfnOutput>
   Parameters?: Record<string, unknown>
 }
 
@@ -27,10 +29,14 @@ export interface ResourceShape {
   readonly properties: unknown
 }
 
-/** A published cross-stack value other stacks import: its export name and its value. */
+/**
+ * A published cross-stack value other stacks import: its export name, its value, and the Output-level
+ * `Condition` that gates whether the export exists at all in a given environment.
+ */
 export interface PublishedExport {
-  readonly name: string
+  readonly name: unknown
   readonly value: unknown
+  readonly condition?: unknown
 }
 
 /** One observable difference between a baseline template and a candidate template. */
@@ -231,15 +237,22 @@ export const resourceShapes = (template: CfnTemplate): Map<string, number> => {
   return counts
 }
 
-/** Published exports keyed by export name — the contract dependent stacks import via `Fn::ImportValue`. */
+/**
+ * Published exports keyed by export name — the contract dependent stacks import via `Fn::ImportValue`.
+ * The key is the export name (a string name as-is; an intrinsic name — `Fn::Sub`/`Fn::Join` — canonicalised
+ * through the resolver so its embedded references normalise and a logical-id rename is tolerated, rather
+ * than the export being skipped). The value carries both the normalised `Value` and the Output-level
+ * `Condition` (by value), so an export that gains or changes a `Condition` — which can make it silently
+ * disappear in some environments and break a dependent stack's `Fn::ImportValue` — registers as drift.
+ */
 export const publishedExports = (template: CfnTemplate): Map<string, string> => {
   const resolver = targetTokenResolver(template.Resources ?? {})
   const exports = new Map<string, string>()
   for (const output of Object.values(template.Outputs ?? {})) {
     const exportName = output.Export?.Name
-    if (typeof exportName === 'string') {
-      exports.set(exportName, canonical(resolver.normalise(output.Value)))
-    }
+    if (exportName === undefined) continue
+    const key = typeof exportName === 'string' ? exportName : canonical(resolver.normalise(exportName))
+    exports.set(key, canonical({ value: resolver.normalise(output.Value), condition: output.Condition }))
   }
   return exports
 }
