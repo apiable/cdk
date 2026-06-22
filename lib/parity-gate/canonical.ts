@@ -130,6 +130,33 @@ export const VALUE_BEARING_KINDS: ReadonlySet<string> = new Set<string>([
   'firehose-delivery-stream',
 ])
 
+/**
+ * The stable token a firehose delivery stream's destination logs-bucket ARN reduces to. The bucket is
+ * a deploy-time input external to the stream artifact, so it reads as a parameter ref in the published
+ * CloudFormation channel and a concrete literal in Terraform — two channel-specific forms of the one
+ * "the logs bucket the customer supplies". Both reduce to this token so the delivery role's S3 grant on
+ * that bucket (and the stream's destination) reconciles cross-channel by the role's grant, while a
+ * stream wired to a genuinely different in-stack bucket (an Fn::GetAtt / address reference) still
+ * resolves to that bucket's node ref and diverges. A real bucket ARN can never equal this token.
+ */
+export const LOGS_BUCKET_ARN_TOKEN = '{logs-bucket-arn}'
+
+/**
+ * Canonicalise a grant resource that names one of a channel's firehose delivery destinations (its
+ * external logs bucket) to {@link LOGS_BUCKET_ARN_TOKEN}, preserving any trailing object path (`/ *`).
+ * `deliveryArns` is the set of each channel's own destination-bucket representations — the resolved
+ * `@ref:<param>` on the CloudFormation side, the concrete `arn:aws:s3:::…` literal on the Terraform side
+ * — so the same deploy-time bucket reduces to one token in every channel. A resource naming no delivery
+ * destination is returned unchanged.
+ */
+export const canonicaliseLogsBucketArn = (resource: string, deliveryArns: ReadonlySet<string>): string => {
+  for (const arn of deliveryArns) {
+    if (resource === arn) return LOGS_BUCKET_ARN_TOKEN
+    if (resource.startsWith(`${arn}/`)) return `${LOGS_BUCKET_ARN_TOKEN}${resource.slice(arn.length)}`
+  }
+  return resource
+}
+
 /** A sentinel marking a taggable primary that should carry a declared id but does not in this channel. */
 export const MISSING_DECLARED_ID = '∅:no-declared-logical-id'
 

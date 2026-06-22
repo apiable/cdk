@@ -28,6 +28,7 @@ import {
   SecretRef,
 } from './model'
 import {
+  canonicaliseLogsBucketArn,
   canonicalCfnKind,
   canonicalOutputAttr,
   DECLARED_ID_KINDS,
@@ -106,15 +107,18 @@ const declaredLogicalId = (kind: string, props: Record<string, unknown>): string
   return undefined
 }
 
-/** The sorted IAM service set an inline policy grants on — its channel-stable per-parent local key. */
-const inlinePolicyServices = (props: Record<string, unknown>): string => {
-  const statements = asArray(asRecord(props.PolicyDocument).Statement)
+/** The sorted IAM service set a policy document grants on — its channel-stable per-parent local key. */
+const policyDocumentServices = (doc: unknown): string => {
+  const statements = asArray(asRecord(doc).Statement)
   const allActions = statements.flatMap((s) => {
     const action = asRecord(s).Action
     return typeof action === 'string' ? [action] : asStringArray(action)
   })
   return policyServices(allActions)
 }
+
+/** The sorted IAM service set an inline policy resource grants on, from its `PolicyDocument`. */
+const inlinePolicyServices = (props: Record<string, unknown>): string => policyDocumentServices(props.PolicyDocument)
 
 /**
  * The discriminator for a resource whose identity is not an author-declared id: a channel-stable
@@ -441,12 +445,23 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     }
   }
 
+  // The external logs bucket each delivery stream writes to — a deploy-time input resolved here to its
+  // parameter ref (`@ref:<param>`) and a concrete literal in the Terraform channel; both reduce to the
+  // LOGS_BUCKET_ARN_TOKEN so the delivery role's S3 grant on it reconciles cross-channel.
+  const deliveryBucketArns = new Set<string>()
+  for (const res of Object.values(resources)) {
+    if (canonicalCfnKind(res.type) !== 'firehose-delivery-stream') continue
+    const bucketArn = normaliseLogical(resolve(streamS3Destination(res.properties).BucketARN), region)
+    if (bucketArn !== '') deliveryBucketArns.add(bucketArn)
+  }
+
   // A grant resource that is a `Fn::GetAtt` to a resource in this template resolves to `@getatt:<id>:<attr>`
   // with the channel-local logical id; map it back to that resource's channel-stable node ref (keeping any
-  // trailing object path) so a self-referential ARN reconciles with the Terraform-resolved literal.
+  // trailing object path) so a self-referential ARN reconciles with the Terraform-resolved literal. A
+  // grant on an external delivery destination (the deploy-time logs bucket) reduces to the shared token.
   const canonicaliseResource = (resource: string): string => {
     const match = /^@getatt:([^:]+):[^/]*(.*)$/.exec(resource)
-    if (match === null) return resource
+    if (match === null) return canonicaliseLogsBucketArn(resource, deliveryBucketArns)
     const node = refToNode.get(match[1])
     return node === undefined ? resource : `${node}${match[2]}`
   }
@@ -494,6 +509,24 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       )
       const trustAccount = trustedAccountsOf(res.properties.AssumeRolePolicyDocument, resolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount
+      // A role's INLINE `Policies` reduce to the same inline-policy node + attached-to-role edge +
+      // per-statement grants a standalone AWS::IAM::Policy (or Terraform aws_iam_role_policy) does, so a
+      // policy embedded on the role compares equal to one declared as its own resource — without this the
+      // embedded grant set (e.g. the firehose role's S3 write grant) is invisible to the gate, and a
+      // channel that embeds diverges from one that separates. The node ref is parent-anchored to this
+      // role plus its service set, identical to the standalone reducer's `policy-of:<role>:<services>`.
+      for (const entry of asArray(res.properties.Policies)) {
+        const policy = asRecord(entry)
+        const services = policyDocumentServices(policy.PolicyDocument)
+        const policyRef = nodeRef('iam-inline-policy', `policy-of:${discriminatorOf(ref)}:${services}`)
+        nodes.push({ ref: policyRef, kind: 'iam-inline-policy' })
+        edges.push({ from: policyRef, to: ref, relation: 'attached-to-role' })
+        grants.push(
+          ...grantsFromPolicyDocument(policy.PolicyDocument, resolve, region, 'inline', canonicaliseResource).map(
+            (grant) => ({ ...grant, ref: `${grant.ref}:${policyRef}` }),
+          ),
+        )
+      }
     }
     if (kind === 'iam-inline-policy') {
       // File each inline-policy grant under the policy's own node ref: the grant ref is otherwise the

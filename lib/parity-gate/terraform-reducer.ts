@@ -11,6 +11,7 @@
  * as its declared version, so the value tier catches a divergence a presence check would miss.
  */
 import {
+  ACCOUNT_TOKEN,
   Channel,
   ChannelModel,
   cognitoDiscovery,
@@ -23,11 +24,13 @@ import {
   OidcDiscovery,
   poolNameFromRef,
   PermissionGrant,
+  REGION_TOKEN,
   ResourceEdge,
   ResourceNode,
   SecretRef,
 } from './model'
 import {
+  canonicaliseLogsBucketArn,
   canonicalTfKind,
   canonicalOutputAttr,
   DECLARED_ID_KINDS,
@@ -462,18 +465,38 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   // A grant resource that is one of this plan's S3 bucket ARNs reduces to that bucket's channel-stable
   // node ref (keeping any trailing object path), so a self-referential bucket ARN reconciles with the
   // CloudFormation `Fn::GetAtt` form instead of comparing a resolved literal against a logical id.
-  const bucketArnToNode = new Map<string, string>()
+  const arnToNode = new Map<string, string>()
   for (const res of resources) {
-    if (kindByAddress.get(res.address) !== 's3-bucket') continue
-    const bucketName = normaliseLogical(tfResolve(res.values.bucket), region)
-    if (bucketName !== '') bucketArnToNode.set(`arn:aws:s3:::${bucketName}`, refToNode.get(res.address) ?? res.address)
+    if (kindByAddress.get(res.address) === 's3-bucket') {
+      const bucketName = normaliseLogical(tfResolve(res.values.bucket), region)
+      if (bucketName !== '') arnToNode.set(`arn:aws:s3:::${bucketName}`, refToNode.get(res.address) ?? res.address)
+    }
+    // A grant on the firehose log group names it by its computed `arn:aws:logs:…:log-group:<name>:*`,
+    // while the CloudFormation channel canonicalises the same grant to the log-group node ref via its
+    // Fn::GetAtt. Map this plan's log-group ARN (rebuilt from its name) to the same node ref so the
+    // delivery role's logs:PutLogEvents grant reconciles cross-channel instead of comparing a resolved
+    // literal against a logical ref. The `:*` resource suffix maps with the bare ARN prefix.
+    if (kindByAddress.get(res.address) === 'logs-log-group') {
+      const logGroupName = normaliseLogical(tfResolve(res.values.name), region)
+      if (logGroupName !== '') arnToNode.set(`arn:aws:logs:${REGION_TOKEN}:${ACCOUNT_TOKEN}:log-group:${logGroupName}`, refToNode.get(res.address) ?? res.address)
+    }
+  }
+  // The external logs bucket each delivery stream writes to — a deploy-time input that is a concrete
+  // `arn:aws:s3:::…` literal here and a parameter ref in the published CloudFormation channel; both
+  // reduce to the LOGS_BUCKET_ARN_TOKEN so the delivery role's S3 grant on it reconciles cross-channel.
+  const deliveryBucketArns = new Set<string>()
+  for (const res of resources) {
+    if (kindByAddress.get(res.address) !== 'firehose-delivery-stream') continue
+    const bucketArn = normaliseLogical(tfResolve(streamS3Destination(res.values).bucket_arn), region)
+    if (bucketArn !== '') deliveryBucketArns.add(bucketArn)
   }
   const canonicaliseResource = (resource: string): string => {
-    for (const [arn, node] of bucketArnToNode) {
+    for (const [arn, node] of arnToNode) {
       if (resource === arn) return node
+      if (resource.startsWith(`${arn}:`)) return `${node}${resource.slice(arn.length)}`
       if (resource.startsWith(`${arn}/`)) return `${node}${resource.slice(arn.length)}`
     }
-    return resource
+    return canonicaliseLogsBucketArn(resource, deliveryBucketArns)
   }
 
   const nodes: ResourceNode[] = []
