@@ -1,11 +1,8 @@
-/**
- * Default test run: synth-level specs only. The live-deploy spec is excluded by name.
- * `maxWorkers: 1` + ts-jest `isolatedModules` keep the verdict stable: the pure fixture→gate() specs
- * carry no shared state, so a parallel-worker heap-pressure flake is a runner artifact, never a gate
- * defect; a serial run with per-file transpilation (no type-checker heap per worker) is deterministic.
- */
+/** Default test run: synth-level specs only. The live-deploy spec is excluded by name. */
 module.exports = {
   testEnvironment: 'node',
+  // Serial + per-file transpilation: the pure fixture→gate() specs have no shared state, so a parallel
+  // heap-pressure flake is a runner artifact; this keeps the suite verdict deterministic.
   maxWorkers: 1,
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true }],

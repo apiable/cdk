@@ -119,8 +119,9 @@ const inlinePolicyServices = (props: Record<string, unknown>): string => {
 /**
  * The discriminator for a resource whose identity is not an author-declared id: a channel-stable
  * value derived from account/region-agnostic attributes. The taggable primaries ({@link DECLARED_ID_KINDS})
- * are keyed by their declared id in {@link identityFor} and only reach here as a name-based fall-back for
- * the kinds not yet enforced (a tag-less pool/function keeps its prior verdict).
+ * are keyed by their declared id in {@link identityFor} — a tag-less one of those kinds takes the
+ * {@link missingDeclaredId} token there, never this name fall-back, since every taggable primary kind is
+ * enforced. The non-taggable kinds (inline policy, client, resource-server, authorizer) key here.
  */
 const discriminatorFor = (
   kind: string,
