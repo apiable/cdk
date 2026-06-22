@@ -236,8 +236,9 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
       logs.push(args.map(String).join(' '))
     })
     try {
-      const SECRET_TOKEN = 'eyJhbGciOiJzZWNyZXQiLCJzdWIiOiJsZWFrIn0.payload.sig'
-      const API_KEY = 'super-secret-api-key-value'
+      // Obviously-fake sentinels (not credentials): the test asserts these strings never reach the logs.
+      const SECRET_TOKEN = 'fake-bearer-token-must-not-be-logged'
+      const API_KEY = 'fake-api-key-must-not-be-logged'
       // allow path (GET /products is mapped to apiable/cicd in the seeded map)
       __setVerifyResult({ client_id: 'c1', sub: 's1', scope: 'apiable/cicd', apiable_api_key: API_KEY })
       await handler({ authorizationToken: `Bearer ${SECRET_TOKEN}`, methodArn: methodArn('GET', 'products') })
