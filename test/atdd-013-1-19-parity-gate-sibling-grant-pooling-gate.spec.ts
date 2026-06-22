@@ -278,8 +278,8 @@ describe('013-1-19 parity check — sibling grant-pooling closure', () => {
     // The within-channel-uniqueness anti-drift guard scans the reducer source for every kind that writes a
     // load-bearing value row and asserts each is in VALUE_BEARING_KINDS. A future reducer that adds a value
     // row through the spread-merge helper form `values = { ...values, ...someHelper(ref, …) }` — the form
-    // the cognito discovery rows already use (cfn-reducer.ts:469, terraform-reducer.ts:473) — must still be
-    // seen, or that kind silently bypasses the uniqueness guarantee the entire root-fix rests on. This
+    // the cognito discovery rows already use (the `discoveryValueRows` spread in both reducers) — must still
+    // be seen, or that kind silently bypasses the uniqueness guarantee the entire root-fix rests on. This
     // forces the scan against exactly that future blind spot: a value-bearing row a NEW kind writes ONLY
     // through the spread form, with no bracket write to fall back on — invisible to a bracket-only scan.
     const futureSpreadOnlyReducer = [
