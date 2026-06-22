@@ -5,10 +5,11 @@ resource "aws_cognito_user_pool" "this" {
   # Tenant-scoped name, fixed contract with already-provisioned tenants.
   name = "apiable-${var.name}"
 
-  deletion_protection      = "INACTIVE"
-  mfa_configuration        = "OFF"
+  deletion_protection = "INACTIVE"
+  mfa_configuration   = "OFF"
   # ESSENTIALS/PLUS is mandatory for V3_0 Pre Token Generation; LITE cannot enrich an access token.
-  user_pool_tier           = var.feature_plan
+  user_pool_tier = var.feature_plan
+
   admin_create_user_config {
     allow_admin_create_user_only = true
   }
@@ -50,7 +51,7 @@ resource "aws_cognito_user_pool_client" "apiable" {
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["client_credentials"]
   # Bound to exactly the admin scope; Cognito issues the `scope` claim natively from this set.
-  allowed_oauth_scopes                 = ["${aws_cognito_resource_server.apiable.identifier}/admin"]
+  allowed_oauth_scopes = ["${aws_cognito_resource_server.apiable.identifier}/admin"]
 
   depends_on = [aws_cognito_resource_server.apiable]
 }

@@ -148,8 +148,9 @@ describe('013-1-7 apiable-cognito-pool — synth + parity contract', () => {
 
   // contract: S3 — FAIL-LOUD: a tenant without the required tier fails the deploy, never silently degrades to V1
   it('S3: deploying without the required feature tier fails with the verbatim "requires Cognito Essentials or Plus" error — never a silent V1 fallback', () => {
-    // a non-V3-capable feature plan throws the verbatim error at synth, not a silent degrade
-    expect(() => new CognitoPool(new cdk.Stack(new cdk.App(), 'S'), 'P', { name: TENANT, featurePlan: 'LITE' as never })).toThrow(
+    // LITE is a real, type-valid feature plan that simply cannot run V3_0 — the guard is the only thing
+    // stopping a LITE deploy, so it throws the verbatim error at synth rather than silently degrading
+    expect(() => new CognitoPool(new cdk.Stack(new cdk.App(), 'S'), 'P', { name: TENANT, featurePlan: 'LITE' })).toThrow(
       TIER_GUARD_ERROR,
     )
     expect(TIER_GUARD_ERROR).toBe('V3_0 PreTokenGen requires Cognito Essentials or Plus')
