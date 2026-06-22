@@ -6,7 +6,7 @@
 //   4. return usageIdentifierKey from apiable_api_key so the consumer never sends x-api-key.
 //
 // Deliberately excluded (each is a brownfield-only increment, not the greenfield core): credit-metering,
-// the adminGetUser user-pool lookup, the API-key/HYBRID fallback, in-memory caches, user-pool-sign-in.
+// the user-pool admin lookup, the API-key fallback, in-memory caches, and user-pool-sign-in mode.
 //
 // getServiceArn / generatePolicyStatement / buildAuthResponse / verifyScope are the audit-blessed
 // policy-generation core, preserved from the production authorizer minus the resource-string logging

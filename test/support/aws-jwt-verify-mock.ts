@@ -23,11 +23,15 @@ export const __setVerifyError = (message: string): void => {
   nextError = new Error(message)
 }
 
-/** Reset to the default (verify resolves with empty claims). */
+/**
+ * Reset the per-call verify outcome to the default (resolves with empty claims). The captured create
+ * config is intentionally NOT cleared: the handler creates the verifier lazily and caches it for the
+ * module's lifetime, so the config is a once-captured fact about how the handler configures the
+ * verifier (tokenUse=access) — it stays asserted across tests sharing the cached verifier.
+ */
 export const __reset = (): void => {
   nextResult = {}
   nextError = null
-  lastCreateConfig = null
 }
 
 /** The config the handler passed to `CognitoJwtVerifier.create` (so a test can assert tokenUse=access). */

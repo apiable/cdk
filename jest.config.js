@@ -11,6 +11,10 @@ module.exports = {
     '^.+\\.mjs$': ['ts-jest', { isolatedModules: true }],
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'json', 'node'],
+  // Seeds the authorizer's runtime env before its handler module is imported (cold-start parse), so the
+  // handler unit tests can exercise the allow path against a known required-scope map. Harmless to the
+  // other suites, which read neither env var.
+  setupFiles: ['<rootDir>/test/support/authorizer-env.ts'],
   roots: ['<rootDir>/test'],
   testMatch: ['**/*.spec.ts'],
   testPathIgnorePatterns: ['/node_modules/', '\\.live\\.spec\\.ts$'],
