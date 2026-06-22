@@ -382,6 +382,102 @@ describe('parity gate — grant multiset (count and inline policies)', () => {
   })
 })
 
+// ── Cross-owner sibling-grant pooling: inline-policy + lambda-permission grants are filed per owner ──
+
+// Two roles, each with its own inline policy granting the same service set, so the two grants would pool
+// under one `grant:<services>` ref before the per-owner suffix. The policy references its role so its node
+// ref is anchored to the owning role.
+const cfnTwoRolesEachWithInlinePolicy: unknown = {
+  Resources: {
+    RoleA: { Type: 'AWS::IAM::Role', Properties: { Tags: [{ Key: 'apiable:logical-id', Value: 'role-a' }], AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } } },
+    RoleB: { Type: 'AWS::IAM::Role', Properties: { Tags: [{ Key: 'apiable:logical-id', Value: 'role-b' }], AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } } },
+    PolicyA: { Type: 'AWS::IAM::Policy', Properties: { PolicyName: 'pa', Roles: [{ Ref: 'RoleA' }], PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 'cognito-idp:*', Resource: '*' }] } } },
+    PolicyB: { Type: 'AWS::IAM::Policy', Properties: { PolicyName: 'pb', Roles: [{ Ref: 'RoleB' }], PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 'cognito-idp:*', Resource: '*' }] } } },
+  },
+}
+const tfTwoRolesEachWithInlinePolicy: unknown = {
+  planned_values: {
+    root_module: {
+      resources: [
+        { address: 'aws_iam_role.a', type: 'aws_iam_role', values: { tags: { 'apiable:logical-id': 'role-a' }, assume_role_policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] }) } },
+        { address: 'aws_iam_role.b', type: 'aws_iam_role', values: { tags: { 'apiable:logical-id': 'role-b' }, assume_role_policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] }) } },
+        { address: 'aws_iam_role_policy.a', type: 'aws_iam_role_policy', values: { name: 'pa', policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 'cognito-idp:*', Resource: '*' }] }) } },
+        { address: 'aws_iam_role_policy.b', type: 'aws_iam_role_policy', values: { name: 'pb', policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 'cognito-idp:*', Resource: '*' }] }) } },
+      ],
+    },
+  },
+  configuration: {
+    root_module: {
+      resources: [
+        { address: 'aws_iam_role_policy.a', type: 'aws_iam_role_policy', expressions: { role: { references: ['aws_iam_role.a.id', 'aws_iam_role.a'] } } },
+        { address: 'aws_iam_role_policy.b', type: 'aws_iam_role_policy', expressions: { role: { references: ['aws_iam_role.b.id', 'aws_iam_role.b'] } } },
+      ],
+      outputs: {},
+    },
+  },
+}
+
+// Two functions, each invoked by the same principal, so the two invoke grants would pool under one
+// `grant:invoke:<principal>` ref before the per-owner suffix.
+const cfnTwoFunctionsEachWithInvoke: unknown = {
+  Resources: {
+    FnA: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'fn-a', Tags: [{ Key: 'apiable:logical-id', Value: 'fn-a' }] } },
+    FnB: { Type: 'AWS::Lambda::Function', Properties: { FunctionName: 'fn-b', Tags: [{ Key: 'apiable:logical-id', Value: 'fn-b' }] } },
+    InvokeA: { Type: 'AWS::Lambda::Permission', Properties: { Principal: 'cognito-idp.amazonaws.com', Action: 'lambda:InvokeFunction', FunctionName: { Ref: 'FnA' } } },
+    InvokeB: { Type: 'AWS::Lambda::Permission', Properties: { Principal: 'cognito-idp.amazonaws.com', Action: 'lambda:InvokeFunction', FunctionName: { Ref: 'FnB' } } },
+  },
+}
+
+const inlineGrantRefs = (model: ReturnType<typeof reduceCloudFormation>): string[] =>
+  model.grants.filter((grant) => grant.ref.startsWith('grant:cognito-idp')).map((grant) => grant.ref).sort()
+const invokeGrantRefs = (model: ReturnType<typeof reduceCloudFormation>): string[] =>
+  model.grants.filter((grant) => grant.ref.startsWith('grant:invoke')).map((grant) => grant.ref).sort()
+
+describe('parity gate — cross-owner sibling-grant pooling (inline-policy + invoke grants filed per owner)', () => {
+  it('files each role’s inline-policy grant under its own node ref in both reducers, so two roles’ same-service grants never share one ref', () => {
+    expect(inlineGrantRefs(reduceCloudFormation(cfnTwoRolesEachWithInlinePolicy, 'cfn'))).toEqual([
+      'grant:cognito-idp:iam-inline-policy:policy-of:role-a:cognito-idp',
+      'grant:cognito-idp:iam-inline-policy:policy-of:role-b:cognito-idp',
+    ])
+    expect(inlineGrantRefs(reduceTerraformShowJson(tfTwoRolesEachWithInlinePolicy, 'terraform'))).toEqual([
+      'grant:cognito-idp:iam-inline-policy:policy-of:role-a:cognito-idp',
+      'grant:cognito-idp:iam-inline-policy:policy-of:role-b:cognito-idp',
+    ])
+  })
+
+  it('files each function’s invoke grant under its own node ref, so two functions invoked by one principal never share one ref', () => {
+    expect(invokeGrantRefs(reduceCloudFormation(cfnTwoFunctionsEachWithInvoke, 'cfn'))).toEqual([
+      'grant:invoke:cognito-idp.amazonaws.com:lambda-permission:invoke-on:fn-a:cognito-idp.amazonaws.com',
+      'grant:invoke:cognito-idp.amazonaws.com:lambda-permission:invoke-on:fn-b:cognito-idp.amazonaws.com',
+    ])
+  })
+
+  it('catches a cross-owner inline swap where one role’s service set is WIDENED while the sibling’s is narrowed (not only a resource swap)', () => {
+    // role-a granted cognito-idp:* (broad) + role-b granted cognito-idp:ListUsers (narrow) in the intended
+    // channels; terraform swaps them — role-a narrowed, role-b widened. The pooled action multiset is equal
+    // both ways ({cognito-idp:*, cognito-idp:ListUsers}); only the per-owner ref catches that role-b widened.
+    const cfnPair = (aBroad: boolean): unknown => ({
+      Resources: {
+        RoleA: { Type: 'AWS::IAM::Role', Properties: { Tags: [{ Key: 'apiable:logical-id', Value: 'role-a' }], AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } } },
+        RoleB: { Type: 'AWS::IAM::Role', Properties: { Tags: [{ Key: 'apiable:logical-id', Value: 'role-b' }], AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { Service: 'lambda.amazonaws.com' }, Action: 'sts:AssumeRole' }] } } },
+        PolicyA: { Type: 'AWS::IAM::Policy', Properties: { PolicyName: 'pa', Roles: [{ Ref: 'RoleA' }], PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: aBroad ? 'cognito-idp:*' : 'cognito-idp:ListUsers', Resource: '*' }] } } },
+        PolicyB: { Type: 'AWS::IAM::Policy', Properties: { PolicyName: 'pb', Roles: [{ Ref: 'RoleB' }], PolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: aBroad ? 'cognito-idp:ListUsers' : 'cognito-idp:*', Resource: '*' }] } } },
+      },
+    })
+    const result = gate([
+      reduceCloudFormation(cfnPair(true), 'cdk'),
+      reduceCloudFormation(cfnPair(true), 'cfn'),
+      reduceCloudFormation(cfnPair(false), 'terraform'),
+    ])
+    expect(result.passed).toBe(false)
+    // Both owners' grants diverge under the swap (role-a narrowed, role-b widened) — each on its own
+    // per-owner ref, never pooled into one comparison that nets out. The widened role-b is named.
+    const permissionDivergences = result.divergences.filter((entry) => entry.tier === 'permission')
+    expect(permissionDivergences.some((entry) => entry.detail.includes('grant:cognito-idp:iam-inline-policy:policy-of:role-b'))).toBe(true)
+    for (const divergence of permissionDivergences) expect(divergence.channels).toEqual(['terraform'])
+  })
+})
+
 describe('parity gate — per-resource identity by declared id (two roles do not collapse)', () => {
   it('keys each role by its declared apiable:logical-id so a two-role artifact yields two distinct nodes, the name demoted to a cosmetic', () => {
     const twoRoles: unknown = {
