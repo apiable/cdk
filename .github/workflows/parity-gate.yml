@@ -60,6 +60,8 @@ jobs:
         run: |
           bash synth-launchstack.sh apiable-gateway-role
           bash synth-launchstack.sh apiable-logs-bucket
+          bash synth-launchstack.sh apiable-usagelogs-stream
+          bash synth-launchstack.sh apiable-usagetokens-stream
 
       # CFN channel well-formedness: lint every published launch-stack template before the diff.
       - name: cfn-lint the published template(s)
@@ -158,6 +160,70 @@ jobs:
           rm -f tfplan.bin
           DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
           npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-logs-bucket-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
+
+      # Terraform channel well-formedness for the usage-stream modules (no cloud account: validate needs
+      # only the provider plugin). The shared LogsStreamConstruct ships under two distribution identities.
+      - name: terraform validate (usagelogs-stream module)
+        working-directory: terraform/apiable-usagelogs-stream
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      - name: terraform validate (usagetokens-stream module)
+        working-directory: terraform/apiable-usagetokens-stream
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      # Ground-truth each stream Terraform leg: regenerate `terraform show -json` from a fresh plan and
+      # assert it reduces to the SAME parity model as the committed fixture (by meaning, not a byte diff).
+      # The stream module names no caller identity, so the plan needs no real account — fenced on the
+      # logging-account credential to keep it on the same isolated regen path as the logs-bucket leg, and
+      # the default per-PR gate (no such secret) skips it. A credential-less plan needs the provider's
+      # configure-time validation skipped, injected as a CI-only override so the committed module stays clean.
+      - name: terraform regen ground-truths the committed fixture (usagelogs-stream)
+        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        working-directory: terraform/apiable-usagelogs-stream
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.APIABLE_LOGGING_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          cat > ci_provider_override.tf <<'EOF'
+          provider "aws" {
+            region                      = "eu-central-1"
+            skip_credentials_validation = true
+            skip_requesting_account_id  = true
+            skip_metadata_api_check     = true
+          }
+          EOF
+          terraform plan -input=false -refresh=false -var name=usagelogs -var logs_bucket_arn=arn:aws:s3:::apiable-logs-ci -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f ci_provider_override.tf tfplan.bin
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usagelogs-stream-show.json ${{ env.AWS_REGION }}
+
+      - name: terraform regen ground-truths the committed fixture (usagetokens-stream)
+        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        working-directory: terraform/apiable-usagetokens-stream
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.APIABLE_LOGGING_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          cat > ci_provider_override.tf <<'EOF'
+          provider "aws" {
+            region                      = "eu-central-1"
+            skip_credentials_validation = true
+            skip_requesting_account_id  = true
+            skip_metadata_api_check     = true
+          }
+          EOF
+          terraform plan -input=false -refresh=false -var name=usagetokens -var logs_bucket_arn=arn:aws:s3:::apiable-logs-ci -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f ci_provider_override.tf tfplan.bin
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usagetokens-stream-show.json ${{ env.AWS_REGION }}
 
       # The static three-tier diff + OAuth2/OIDC conformance specs are the gate itself: a CDK ↔ CFN
       # ↔ Terraform divergence fails the build with a report naming the divergent piece. The
