@@ -1,0 +1,66 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "_comment": "Reference `terraform show -json` for the apiable-logs-guardrail module — the operator-owned deploy-time guardrail (Org SCP + sanctioned bucket policy + single-source allow-list) that constrains the usage-firehose destination, captured from a CREDENTIALED plan in the apiable-logging account / Org management account. The deploying account here is a placeholder; CI regenerates this from a fresh credentialed plan. The committed fixture is the local oracle the deploy-time guardrail spec evaluates deny/allow against. Plan vars: sanctioned_logging_buckets=[apiable-logs-prod], sanctioned_delivery_role_arns=[arn:aws:iam::111111111111:role/apiable-usagelogs-firehose, arn:aws:iam::111111111111:role/apiable-usagetokens-firehose], org_target_id=ou-root-loggingou, org_id=o-exampleorgid.",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_organizations_policy.firehose_destination_guardrail",
+          "type": "aws_organizations_policy",
+          "name": "firehose_destination_guardrail",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-firehose-destination-guardrail",
+            "description": "Deny the usage-firehose delivery role any s3:Put* outside the sanctioned logging buckets",
+            "type": "SERVICE_CONTROL_POLICY",
+            "content": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"DenyFirehoseWriteOutsideSanctionedBuckets\",\"Effect\":\"Deny\",\"Action\":[\"s3:PutObject\",\"s3:PutObjectAcl\",\"s3:PutObjectTagging\"],\"NotResource\":[\"arn:aws:s3:::apiable-logs-prod/*\"],\"Condition\":{\"ArnLike\":{\"aws:PrincipalArn\":\"arn:aws:iam::*:role/apiable-*-firehose\"}}}]}"
+          }
+        },
+        {
+          "address": "aws_organizations_policy_attachment.firehose_destination_guardrail",
+          "type": "aws_organizations_policy_attachment",
+          "name": "firehose_destination_guardrail",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "target_id": "ou-root-loggingou"
+          }
+        },
+        {
+          "address": "aws_s3_bucket_policy.sanctioned[\"apiable-logs-prod\"]",
+          "type": "aws_s3_bucket_policy",
+          "name": "sanctioned",
+          "index": "apiable-logs-prod",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "bucket": "apiable-logs-prod",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AllowSanctionedFirehoseDeliveryOnly\",\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"arn:aws:iam::111111111111:role/apiable-usagelogs-firehose\",\"arn:aws:iam::111111111111:role/apiable-usagetokens-firehose\"]},\"Action\":\"s3:PutObject\",\"Resource\":\"arn:aws:s3:::apiable-logs-prod/*\",\"Condition\":{\"StringEquals\":{\"aws:SourceAccount\":\"111111111111\",\"aws:PrincipalOrgID\":\"o-exampleorgid\"}}}]}"
+          }
+        }
+      ]
+    }
+  },
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_organizations_policy.firehose_destination_guardrail",
+          "type": "aws_organizations_policy",
+          "name": "firehose_destination_guardrail",
+          "expressions": {
+            "content": { "references": ["local.sanctioned_object_arns", "var.firehose_role_arn_pattern"] }
+          }
+        },
+        {
+          "address": "aws_s3_bucket_policy.sanctioned",
+          "type": "aws_s3_bucket_policy",
+          "name": "sanctioned",
+          "expressions": {
+            "bucket": { "references": ["var.sanctioned_logging_buckets"] },
+            "policy": { "references": ["var.sanctioned_delivery_role_arns", "var.org_id"] }
+          }
+        }
+      ]
+    }
+  }
+}
