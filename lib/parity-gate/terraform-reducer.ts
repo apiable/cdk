@@ -30,6 +30,7 @@ import {
   SecretRef,
 } from './model'
 import {
+  canonicaliseAuthorizerName,
   canonicaliseHostedDomain,
   canonicaliseLogsBucketParam,
   canonicalTfKind,
@@ -116,7 +117,7 @@ const discriminatorFor = (
     case 'cognito-resource-server':
       return asString(values.identifier) ?? 'resource-server'
     case 'apigateway-authorizer':
-      return normaliseLogical(tfResolve(values.name), region) || 'authorizer'
+      return canonicaliseAuthorizerName(normaliseLogical(tfResolve(values.name), region)) || 'authorizer'
     case 'lambda-function':
       return normaliseLogical(tfResolve(values.function_name), region) || 'function'
     default:

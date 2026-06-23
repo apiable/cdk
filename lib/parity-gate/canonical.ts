@@ -70,9 +70,12 @@ export const discriminatorOf = (ref: string): string => {
  */
 export const canonicalOutputAttr = (kind: string, attr: string): string => {
   if (kind === 's3-bucket' && (attr === 'ref' || attr === 'bucket')) return 'name'
-  if ((kind === 'cognito-user-pool' || kind === 'cognito-user-pool-client') && (attr === 'ref' || attr === 'id')) return 'id'
+  if (ID_REF_KINDS.has(kind) && (attr === 'ref' || attr === 'id')) return 'id'
   return attr
 }
+
+/** The kinds whose CloudFormation `Ref` resolves to the same id the Terraform `.id` attribute carries, so an output exporting either reconciles. */
+const ID_REF_KINDS: ReadonlySet<string> = new Set(['cognito-user-pool', 'cognito-user-pool-client', 'apigateway-authorizer'])
 
 /** The IAM service prefixes in an action set, sorted and de-duplicated — a channel-stable discriminator for an inline policy whose generated name differs per channel. */
 export const policyServices = (actions: readonly string[]): string => {
@@ -239,6 +242,28 @@ export const canonicaliseHostedDomain = (prefix: string, boundToTenantVar: boole
   if (boundToTenantVar && prefix.startsWith(HOSTED_DOMAIN_PREFIX)) return HOSTED_DOMAIN_TENANT_TOKEN
   if (prefix.startsWith(HOSTED_DOMAIN_CFN_RENDERING)) return HOSTED_DOMAIN_TENANT_TOKEN
   return prefix
+}
+
+/** The stable token the deploy-time tenant segment of a self-named resource collapses to, so the same construct reconciles across a parameter-rendered and a concrete-tenant channel. */
+export const TENANT_SEGMENT_TOKEN = '{tenant}'
+
+const AUTHORIZER_NAME_CONVENTION = /^apiable-(.+)-authz$/
+
+/**
+ * Canonicalise an API-Gateway authorizer's self-name to a tenant-stable identity. The authorizer is
+ * keyed by its `Name` (it carries no declared-id tag — AWS permits one authorizer per Name on a REST
+ * API, so the Name IS its identity), and the published convention renders it `apiable-<tenant>-authz`:
+ * the deploy-time tenant segment is the published CloudFormation parameter ref (`apiable-@ref:TenantName-authz`)
+ * and the concrete tenant in a Terraform plan (`apiable-staging-authz`). Collapsing the tenant segment to a
+ * stable token lets the same construct's authorizer reconcile across channels (its identity is the construct,
+ * tenant-independent, exactly as a declared id is), while a non-conventional name (a substituted authorizer)
+ * does not match the convention, keeps its identity, and still diverges. The authorizer's load-bearing value
+ * rows (type, identity-source, execution-role grant set) are compared independently, so a substituted
+ * authorizer that mimics the name still fails by value.
+ */
+export const canonicaliseAuthorizerName = (name: string): string => {
+  const match = AUTHORIZER_NAME_CONVENTION.exec(name)
+  return match === null ? name : `apiable-${TENANT_SEGMENT_TOKEN}-authz`
 }
 
 /** A sentinel marking a taggable primary that should carry a declared id but does not in this channel. */

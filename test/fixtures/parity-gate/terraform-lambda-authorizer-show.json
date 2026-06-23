@@ -1,0 +1,128 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "_comment": "Reference `terraform show -json` for the apiable-lambda-authorizer module, captured from a plan in a deploying account (so data.aws_caller_identity / data.aws_region resolve the lambda-permission source ARN). The deploying account here is a placeholder; CI regenerates this from a fresh plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts. Plan vars: name=staging, user_pool_id=eu-central-1_abc123, rest_api_id=cqo3riplm6, required_scope_map={}. The authorizer function and its execution role carry the channel-identical apiable:logical-id; the TOKEN authorizer reads the Authorization header and the role grants logs only.",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_iam_role.authz",
+          "type": "aws_iam_role",
+          "name": "authz",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-staging-authz-lambda-role",
+            "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+            "tags": { "apiable:logical-id": "apiable-lambda-authorizer-role" },
+            "tags_all": { "apiable:logical-id": "apiable-lambda-authorizer-role" }
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.logs",
+          "type": "aws_iam_role_policy",
+          "name": "logs",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "logs",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogGroup\",\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":\"*\"}]}"
+          }
+        },
+        {
+          "address": "aws_lambda_function.authz",
+          "type": "aws_lambda_function",
+          "name": "authz",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "function_name": "apiable-staging-authz",
+            "runtime": "nodejs20.x",
+            "handler": "index.handler",
+            "timeout": 30,
+            "environment": [{ "variables": { "APIABLE_AWS_AUTHZ_USERPOOLID": "eu-central-1_abc123", "REQUIRED_SCOPE_MAP": "{}" } }],
+            "tags": { "apiable:logical-id": "apiable-lambda-authorizer-fn" },
+            "tags_all": { "apiable:logical-id": "apiable-lambda-authorizer-fn" }
+          }
+        },
+        {
+          "address": "aws_lambda_permission.apigateway_invoke",
+          "type": "aws_lambda_permission",
+          "name": "apigateway_invoke",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "statement_id": "ApiGatewayInvoke",
+            "action": "lambda:InvokeFunction",
+            "function_name": "apiable-staging-authz",
+            "principal": "apigateway.amazonaws.com",
+            "source_arn": "arn:aws:execute-api:eu-central-1:111111111111:*"
+          }
+        },
+        {
+          "address": "aws_api_gateway_authorizer.authz",
+          "type": "aws_api_gateway_authorizer",
+          "name": "authz",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-staging-authz",
+            "type": "TOKEN",
+            "identity_source": "method.request.header.Authorization",
+            "authorizer_uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:111111111111:function:apiable-staging-authz/invocations",
+            "authorizer_result_ttl_in_seconds": 0
+          }
+        }
+      ]
+    }
+  },
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_iam_role.authz",
+          "type": "aws_iam_role",
+          "name": "authz",
+          "expressions": {
+            "name": { "references": ["var.name"] }
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.logs",
+          "type": "aws_iam_role_policy",
+          "name": "logs",
+          "expressions": {
+            "role": { "references": ["aws_iam_role.authz.id", "aws_iam_role.authz"] }
+          }
+        },
+        {
+          "address": "aws_lambda_function.authz",
+          "type": "aws_lambda_function",
+          "name": "authz",
+          "expressions": {
+            "function_name": { "references": ["var.name"] },
+            "role": { "references": ["aws_iam_role.authz.arn", "aws_iam_role.authz"] }
+          }
+        },
+        {
+          "address": "aws_lambda_permission.apigateway_invoke",
+          "type": "aws_lambda_permission",
+          "name": "apigateway_invoke",
+          "expressions": {
+            "function_name": { "references": ["aws_lambda_function.authz.function_name", "aws_lambda_function.authz"] }
+          }
+        },
+        {
+          "address": "aws_api_gateway_authorizer.authz",
+          "type": "aws_api_gateway_authorizer",
+          "name": "authz",
+          "expressions": {
+            "name": { "references": ["var.name"] },
+            "rest_api_id": { "references": ["var.rest_api_id"] },
+            "authorizer_uri": { "references": ["aws_lambda_function.authz.arn", "aws_lambda_function.authz"] }
+          }
+        }
+      ],
+      "outputs": {
+        "authorizer_function_arn": { "expression": { "references": ["aws_lambda_function.authz.arn", "aws_lambda_function.authz"] } },
+        "authorizer_role_arn": { "expression": { "references": ["aws_iam_role.authz.arn", "aws_iam_role.authz"] } },
+        "authorizer_id": { "expression": { "references": ["aws_api_gateway_authorizer.authz.id", "aws_api_gateway_authorizer.authz"] } }
+      }
+    }
+  }
+}
