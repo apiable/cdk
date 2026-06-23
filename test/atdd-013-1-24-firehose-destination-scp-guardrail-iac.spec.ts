@@ -143,8 +143,10 @@ describe('013-1-24 deploy-time firehose-destination guardrail (operator-owned, c
     // the guardrail is operator-owned IaC living OUTSIDE the per-tenant stream channel: it is the
     // apiable-logs-guardrail module, not any per-tenant stream module.
     expect(fs.existsSync(path.join(REPO_ROOT, 'terraform/apiable-logs-guardrail/main.tf'))).toBe(true)
+    expect(fs.existsSync(path.join(REPO_ROOT, 'terraform/apiable-usagelogs-stream/main.tf'))).toBe(true)
+    const streamModule = fs.readFileSync(path.join(REPO_ROOT, 'terraform/apiable-usagelogs-stream/main.tf'), 'utf8')
+    expect(streamModule).not.toContain('aws_organizations_policy') // the SCP is NOT declared in the channel
     const scpResource = resourcesOfType(show, 'aws_organizations_policy')[0]
-    expect((scpResource.type ?? 'aws_organizations_policy')).toBeDefined()
     expect(scpResource.name).toBe('apiable-firehose-destination-guardrail')
   })
 
