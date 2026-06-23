@@ -62,11 +62,17 @@ export const discriminatorOf = (ref: string): string => {
  * Canonicalise the attribute an output exports so a resource's primary identifier reconciles across
  * channels. A CloudFormation `Ref` of an S3 bucket resolves to the bucket name — the same value the
  * Terraform `bucket` attribute carries — so an output exporting the bucket name reduces to one `name`
- * attr in every channel rather than `ref` (CloudFormation) versus `bucket` (Terraform). Every other
- * attribute (an `arn`) already shares one label across channels and is left exactly as read.
+ * attr in every channel rather than `ref` (CloudFormation) versus `bucket` (Terraform). A `Ref` of a
+ * cognito user pool or app client resolves to that resource's id — the same value the Terraform `.id`
+ * attribute carries — so an output exporting the pool or client id reduces to one `id` attr in every
+ * channel rather than `ref` (CloudFormation) versus `id` (Terraform). Every other attribute (an `arn`)
+ * already shares one label across channels and is left exactly as read.
  */
-export const canonicalOutputAttr = (kind: string, attr: string): string =>
-  kind === 's3-bucket' && (attr === 'ref' || attr === 'bucket') ? 'name' : attr
+export const canonicalOutputAttr = (kind: string, attr: string): string => {
+  if (kind === 's3-bucket' && (attr === 'ref' || attr === 'bucket')) return 'name'
+  if ((kind === 'cognito-user-pool' || kind === 'cognito-user-pool-client') && (attr === 'ref' || attr === 'id')) return 'id'
+  return attr
+}
 
 /** The IAM service prefixes in an action set, sorted and de-duplicated — a channel-stable discriminator for an inline policy whose generated name differs per channel. */
 export const policyServices = (actions: readonly string[]): string => {
@@ -184,6 +190,55 @@ export const canonicaliseLogsBucketParam = (resource: string, paramDestinations:
     if (resource.startsWith(`${destination}/`)) return `${LOGS_BUCKET_PARAM_TOKEN}${resource.slice(destination.length)}`
   }
   return resource
+}
+
+/**
+ * The Terraform reference to the deploy-time tenant-name variable — the channel-twin of the published
+ * CloudFormation `TenantName` parameter. The published cognito module names the variable `name`, so a
+ * hosted-UI domain whose `domain` expression references `var.name` is rendered through the conventional
+ * deploy-time tenant input. The two spellings (`@ref:TenantName` ⇄ `var.name`) are the authored channel
+ * forms of the one input, kept together so the hosted-domain identity reduction keys both on one source.
+ */
+export const TENANT_NAME_VAR_REFERENCE = 'var.name'
+
+/** The literal prefix the conventional hosted-UI domain is rendered with — `apiable-<tenant>` on every channel. */
+export const HOSTED_DOMAIN_PREFIX = 'apiable-'
+
+/** The parameter-ref form the published CloudFormation channel renders the tenant segment of the domain as. */
+const HOSTED_DOMAIN_CFN_RENDERING = `${HOSTED_DOMAIN_PREFIX}@ref:`
+
+/**
+ * The stable token the conventional `apiable-<tenant>` hosted-UI domain reduces to. The tenant segment is
+ * a deploy-time input, so the conventional case reads as the parameter join `apiable-@ref:TenantName` in
+ * the published CloudFormation channel and a concrete `apiable-<tenant>` literal bound to `var.name` in
+ * Terraform — two channel-specific spellings of the one deploy-time tenant input the construct names. Both
+ * reduce to this token so the same tenant's hosted sign-in domain (and the authorize/token discovery
+ * endpoints derived from it) reconcile cross-channel, while a substituted host keeps its identity and
+ * still diverges by value. The token name carries the convention — "this is the declared tenant hosted
+ * domain", not "any domain". A real domain prefix that does not follow the convention can never equal it.
+ */
+export const HOSTED_DOMAIN_TENANT_TOKEN = '{apiable-tenant-domain}'
+
+/**
+ * Canonicalise a hosted-UI domain prefix to {@link HOSTED_DOMAIN_TENANT_TOKEN} *only* when it is the
+ * conventional `apiable-<tenant>` rendering of the deploy-time tenant input — so the same tenant's domain
+ * reconciles across the published-CloudFormation and Terraform channels even though each renders the tenant
+ * segment by a structurally different path. `boundToTenantVar` is the Terraform witness that the domain's
+ * literal value is the conventional deploy-time tenant rendering: its `domain` expression references the
+ * top-level `var.name`. The CloudFormation witness is structural — the resolved domain is `apiable-` joined
+ * to a single deploy-time parameter ref (`apiable-@ref:<param>`).
+ *
+ * A prefix that is neither (a bare literal not bound to the tenant input, a substituted token-minting host)
+ * is returned unchanged, so it keeps its identity and fails the gate by value on both discovery endpoints —
+ * the 013-1-20 security floor is preserved, never widened into accepting a substituted host. The tenant
+ * variable name is load-bearing exactly as the logs-bucket variable is: a hand-rolled module that renames
+ * `var.name` while still wiring it as a genuine deploy-time input fails CLOSED (its literal is unrecognised
+ * → diverges from the token), never fail open; adopting the convention realigns it.
+ */
+export const canonicaliseHostedDomain = (prefix: string, boundToTenantVar: boolean): string => {
+  if (boundToTenantVar && prefix.startsWith(HOSTED_DOMAIN_PREFIX)) return HOSTED_DOMAIN_TENANT_TOKEN
+  if (prefix.startsWith(HOSTED_DOMAIN_CFN_RENDERING)) return HOSTED_DOMAIN_TENANT_TOKEN
+  return prefix
 }
 
 /** A sentinel marking a taggable primary that should carry a declared id but does not in this channel. */

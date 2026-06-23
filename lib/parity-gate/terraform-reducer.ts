@@ -30,6 +30,7 @@ import {
   SecretRef,
 } from './model'
 import {
+  canonicaliseHostedDomain,
   canonicaliseLogsBucketParam,
   canonicalTfKind,
   canonicalOutputAttr,
@@ -41,6 +42,7 @@ import {
   missingDeclaredId,
   nodeRef,
   policyServices,
+  TENANT_NAME_VAR_REFERENCE,
   VALUE_BEARING_KINDS,
 } from './canonical'
 import { grantsFromPolicyDocument, resolvedPrincipalsOf, trustedAccountsOf } from './iam'
@@ -328,6 +330,11 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const resources: TfResource[] = plannedResources
     .map((entry) => asRecord(entry))
     .filter((entry) => asString(entry.address) !== undefined && asString(entry.type) !== undefined)
+    // An AWS-managed-policy attachment carries no custom security grant and no load-bearing value the
+    // gate compares; the CloudFormation channel expresses the same attachment as a role `ManagedPolicyArns`
+    // entry, which the CFN reducer models as no node/grant/value. So drop it here too — modelling it on
+    // only the Terraform side would be a phantom graph divergence on equivalent infrastructure.
+    .filter((entry) => asString(entry.type) !== 'aws_iam_role_policy_attachment')
     .map((entry) => ({
       address: asString(entry.address) ?? '',
       type: asString(entry.type) ?? '',
@@ -380,7 +387,14 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     if (kind === 'cognito-user-pool-domain') {
       const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
       const domainResource = resources.find((candidate) => candidate.address === address)
-      const domain = domainResource !== undefined ? asString(domainResource.values.domain) : undefined
+      const domainLiteral = domainResource !== undefined ? asString(domainResource.values.domain) : undefined
+      // The witness that the concrete `apiable-<tenant>` literal is the conventional deploy-time tenant
+      // rendering: the `domain` expression references the top-level var.name (the tenant input), read from
+      // configuration since planned_values resolves the var to its literal and hides the binding. So the
+      // same tenant's domain reconciles with the published one-click `apiable-@ref:TenantName` rendering,
+      // while a substituted host not bound to the tenant input keeps its literal and still diverges.
+      const boundToTenantVar = asStringArray(asRecord(expressions.domain).references).includes(TENANT_NAME_VAR_REFERENCE)
+      const domain = domainLiteral !== undefined ? canonicaliseHostedDomain(domainLiteral, boundToTenantVar) : undefined
       if (poolTarget !== undefined) {
         const poolRef = refToNode.get(poolTarget.address) ?? poolTarget.address
         poolRefByDomainAddress.set(address, poolRef)
@@ -600,10 +614,15 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     const from = refToNode.get(address) ?? address
     // A policy is `attached-to-role` and a permission `invokes` its function, matching the relation the
     // CloudFormation reducer emits, so a lambda-permission's invoke edge reconciles cross-channel instead
-    // of false-diverging on the relation string (CFN `invokes` vs a generic `depends-on`).
-    const relation = kind === 'iam-inline-policy' ? 'attached-to-role' : kind === 'lambda-permission' ? 'invokes' : 'depends-on'
-    for (const target of referencesOf(expressions.role ?? expressions.function_name, addresses)) {
-      edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation })
+    // of false-diverging on the relation string (CFN `invokes` vs a generic `depends-on`). A lambda
+    // function's own `role` attribute is NOT an edge — the CloudFormation channel models no function→role
+    // edge from its `Role`, so emitting one only on the Terraform side is a phantom graph divergence; the
+    // function's execution role is gate-compared by its own node, trust grant, and inline-policy grants.
+    if (kind === 'iam-inline-policy' || kind === 'lambda-permission') {
+      const relation = kind === 'iam-inline-policy' ? 'attached-to-role' : 'invokes'
+      for (const target of referencesOf(expressions.role ?? expressions.function_name, addresses)) {
+        edges.push({ from, to: refToNode.get(target.address) ?? target.address, relation })
+      }
     }
     // The cognito reference edges: a client/resource-server→pool, a pool→pre-token function, and an
     // authorizer→rest-api/pool binding, so a resource bound to a different (or no) pool diverges.

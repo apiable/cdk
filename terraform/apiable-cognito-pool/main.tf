@@ -100,6 +100,11 @@ resource "aws_iam_role" "pretokengen" {
       }
     ]
   })
+
+  # Channel-stable identity the release-time parity gate keys this role on, identical to the CDK/CFN channels.
+  tags = {
+    "apiable:logical-id" = "apiable-cognito-pool-pretoken-fn"
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "pretokengen_basic" {

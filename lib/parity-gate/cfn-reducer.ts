@@ -28,6 +28,7 @@ import {
   SecretRef,
 } from './model'
 import {
+  canonicaliseHostedDomain,
   canonicaliseLogsBucketParam,
   canonicalCfnKind,
   canonicalOutputAttr,
@@ -204,10 +205,38 @@ const streamS3Destination = (props: Record<string, unknown>): Record<string, unk
   return asRecord(props.S3DestinationConfiguration)
 }
 
+/**
+ * Resolve a client's `AllowedOAuthScopes` to the channel-stable `<resource-server-identifier>/<scope>`
+ * form. The published one-click template binds a scope as `Fn::Join["", [{Ref: <ResourceServer>}, "/admin"]]`
+ * — a cross-resource reference whose `Ref` resolves to the resource server's id, which Cognito makes equal
+ * to its declared `Identifier`. `identifierByRef` maps a resource-server logical id to that identifier, so
+ * the bound scope reduces to `apiable/admin` — the same literal the Terraform channel's plan carries — and
+ * the client's scope binding reconciles cross-channel. A scope that is already a literal passes through.
+ */
+const resolveOAuthScopes = (
+  raw: unknown,
+  resolve: (v: unknown) => string,
+  identifierByRef: ReadonlyMap<string, string>,
+): string[] =>
+  asArray(raw).map((entry) => {
+    const join = asRecord(entry)['Fn::Join']
+    if (Array.isArray(join) && join.length === 2) {
+      const parts = asArray(join[1])
+      const head = asRecord(parts[0])
+      const headIdentifier = identifierByRef.get(asString(head.Ref) ?? '')
+      if (headIdentifier !== undefined) {
+        const rest = parts.slice(1).map((part) => resolve(part)).join(asString(join[0]) ?? '')
+        return `${headIdentifier}${rest}`
+      }
+    }
+    return resolve(entry)
+  })
+
 const collectValues = (
   kind: string,
   props: Record<string, unknown>,
   resolve: (v: unknown) => string,
+  resourceServerIdentifierByRef: ReadonlyMap<string, string> = new Map(),
 ): Record<string, string> => {
   const values: Record<string, string> = {}
   if (kind === 'firehose-delivery-stream') {
@@ -241,7 +270,7 @@ const collectValues = (
   if (kind === 'cognito-user-pool-client') {
     const flows = asStringArray(props.AllowedOAuthFlows)
     if (flows.length > 0) values['oauth-flows'] = [...flows].sort().join(',')
-    const scopes = asStringArray(props.AllowedOAuthScopes)
+    const scopes = resolveOAuthScopes(props.AllowedOAuthScopes, resolve, resourceServerIdentifierByRef).filter((scope) => scope !== '')
     if (scopes.length > 0) values['oauth-scopes'] = [...scopes].sort().join(',')
     // GenerateSecret defaults to false when omitted, so an explicit `false` and an omitted value
     // describe the same client and must read identically rather than as present-vs-absent.
@@ -283,9 +312,14 @@ const collectSecrets = (props: Record<string, unknown>): SecretRef[] => {
     }))
 }
 
-const oauthFrom = (props: Record<string, unknown>, discovery?: OidcDiscovery): OAuthConfig | undefined => {
+const oauthFrom = (
+  props: Record<string, unknown>,
+  resolve: (v: unknown) => string,
+  resourceServerIdentifierByRef: ReadonlyMap<string, string>,
+  discovery?: OidcDiscovery,
+): OAuthConfig | undefined => {
   const flows = asStringArray(props.AllowedOAuthFlows)
-  const scopes = asStringArray(props.AllowedOAuthScopes)
+  const scopes = resolveOAuthScopes(props.AllowedOAuthScopes, resolve, resourceServerIdentifierByRef).filter((scope) => scope !== '')
   if (flows.length === 0 && scopes.length === 0) return undefined
   return { flows: [...flows].sort(), scopes: [...scopes].sort(), ...(discovery !== undefined ? { discovery } : {}) }
 }
@@ -352,6 +386,16 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     if (type !== undefined) resources[id] = { type, properties: asRecord(asRecord(spec).Properties) }
   }
   const resourceIds = new Set(Object.keys(resources))
+
+  // Each resource-server's declared Identifier keyed by its logical id, so a client's `AllowedOAuthScopes`
+  // bound as `Fn::Join[{Ref: <ResourceServer>}, "/admin"]` resolves to the `<identifier>/admin` literal the
+  // Terraform plan carries, and the scope binding reconciles cross-channel.
+  const resourceServerIdentifierByRef = new Map<string, string>()
+  for (const [id, res] of Object.entries(resources)) {
+    if (canonicalCfnKind(res.type) !== 'cognito-resource-server') continue
+    const identifier = asString(res.properties.Identifier)
+    if (identifier !== undefined) resourceServerIdentifierByRef.set(id, identifier)
+  }
 
   const refToNode = new Map<string, string>()
   for (const [id, res] of Object.entries(resources)) {
@@ -435,12 +479,17 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
   )
 
   // The hosted-UI domain prefix per pool node ref, so a client's discovery document can carry the
-  // pool's authorize/token endpoints. A UserPoolDomain references its pool via UserPoolId.
+  // pool's authorize/token endpoints. A UserPoolDomain references its pool via UserPoolId. The Domain is
+  // resolved (not read as a bare string), so the published one-click rendering `apiable-@ref:TenantName`
+  // canonicalises to the shared tenant-domain token and reconciles with the Terraform channel's concrete
+  // `apiable-<tenant>` for the same tenant; a substituted host that is not the conventional rendering keeps
+  // its identity and still diverges on both discovery endpoints.
   const domainByPoolRef = new Map<string, string>()
   for (const res of Object.values(resources)) {
     if (canonicalCfnKind(res.type) !== 'cognito-user-pool-domain') continue
-    const domain = asString(res.properties.Domain)
-    if (domain === undefined) continue
+    const rendered = resolve(res.properties.Domain)
+    if (rendered === '') continue
+    const domain = canonicaliseHostedDomain(rendered, false)
     for (const target of resourceRefsIn(res.properties.UserPoolId, resourceIds)) {
       domainByPoolRef.set(refToNode.get(target.id) ?? target.id, domain)
     }
@@ -500,7 +549,7 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       const name = normaliseLogical(resolve(res.properties[nameProperty]), region)
       if (name !== '') cosmetics[`name:${ref}`] = name
     }
-    values = { ...values, ...namespaceByRef(collectValues(kind, res.properties, resolve), ref) }
+    values = { ...values, ...namespaceByRef(collectValues(kind, res.properties, resolve, resourceServerIdentifierByRef), ref) }
     cosmetics = { ...cosmetics, ...collectCosmetics(kind, res.properties) }
     secrets.push(...collectSecrets(res.properties))
 
@@ -593,7 +642,12 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       cognitoEdge(ref, res.properties.UserPoolId, 'bound-to-pool')
       const poolTargets = resourceRefsIn(res.properties.UserPoolId, resourceIds)
       const poolRef = poolTargets.length > 0 ? refToNode.get(poolTargets[0].id) ?? poolTargets[0].id : nodeRef('cognito-user-pool', 'pool')
-      const clientOauth = oauthFrom(res.properties, cognitoDiscovery(poolNameFromRef(poolRef), region, domainByPoolRef.get(poolRef)))
+      const clientOauth = oauthFrom(
+        res.properties,
+        resolve,
+        resourceServerIdentifierByRef,
+        cognitoDiscovery(poolNameFromRef(poolRef), region, domainByPoolRef.get(poolRef)),
+      )
       if (clientOauth !== undefined) {
         // Key by the channel-local logical id, not the de-duplicating node ref: two same-named or
         // nameless clients share a ref, so ref-keying would drop one client's conformance check.
