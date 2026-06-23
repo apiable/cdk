@@ -60,6 +60,8 @@ jobs:
         run: |
           bash synth-launchstack.sh apiable-gateway-role
           bash synth-launchstack.sh apiable-logs-bucket
+          bash synth-launchstack.sh apiable-cognito-pool
+          bash synth-launchstack.sh apiable-lambda-authorizer
           bash synth-launchstack.sh apiable-usagelogs-stream
           bash synth-launchstack.sh apiable-usagetokens-stream
 
@@ -160,6 +162,54 @@ jobs:
           rm -f tfplan.bin
           DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
           npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-logs-bucket-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
+
+      # Terraform channel well-formedness for the cognito-pool module (no cloud account: validate needs
+      # only the provider plugin). The module names the caller identity (the lambda-permission source ARN),
+      # so its regen ground-truth runs credentialed, on the same isolated path as the logs-bucket leg.
+      - name: terraform validate (cognito-pool module)
+        working-directory: terraform/apiable-cognito-pool
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      - name: terraform regen ground-truths the committed fixture (cognito-pool, credentialed)
+        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        working-directory: terraform/apiable-cognito-pool
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.APIABLE_LOGGING_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          terraform plan -input=false -refresh=false -var name=staging -var feature_plan=ESSENTIALS -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f tfplan.bin
+          DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-cognito-pool-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
+
+      # Terraform channel well-formedness for the lambda-authorizer module (no cloud account: validate needs
+      # only the provider plugin). The module names the caller identity (the lambda-permission source ARN),
+      # so its regen ground-truth runs credentialed, on the same isolated path as the logs-bucket leg.
+      - name: terraform validate (lambda-authorizer module)
+        working-directory: terraform/apiable-lambda-authorizer
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      - name: terraform regen ground-truths the committed fixture (lambda-authorizer, credentialed)
+        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        working-directory: terraform/apiable-lambda-authorizer
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.APIABLE_LOGGING_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          terraform plan -input=false -refresh=false -var name=staging -var user_pool_id=eu-central-1_abc123 -var rest_api_id=cqo3riplm6 -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f tfplan.bin
+          DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-lambda-authorizer-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
 
       # Terraform channel well-formedness for the usage-stream modules (no cloud account: validate needs
       # only the provider plugin). The shared LogsStreamConstruct ships under two distribution identities.
