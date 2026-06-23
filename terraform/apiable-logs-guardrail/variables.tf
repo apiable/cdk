@@ -25,10 +25,20 @@ variable "sanctioned_delivery_role_arns" {
   }
 }
 
-variable "firehose_role_arn_pattern" {
-  description = "aws:PrincipalArn ArnLike pattern scoping the SCP Deny to the firehose delivery roles, so it does not over-deny other account writers"
-  type        = string
-  default     = "arn:aws:iam::*:role/apiable-*-firehose"
+# Closed operator carve-out: the known logging-account principals that legitimately write to S3 outside
+# the sanctioned buckets (service-linked roles, break-glass admin). The SCP Deny exempts exactly these
+# via StringNotLike aws:PrincipalArn; everything else — including a renamed hand-rolled delivery role — is
+# denied by default. Patterns are allowed (account-scoped role-path globs) but never a bare "*", which
+# would exempt every principal and defeat the guardrail. Empty is allowed: it means no exemptions.
+variable "operator_writer_arns" {
+  description = "aws:PrincipalArn allow-list (StringNotLike) of operator principals exempt from the firehose-destination Deny — the closed carve-out, never a bare wildcard"
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.operator_writer_arns : can(regex("^arn:aws:iam::[0-9*][0-9*]*:", arn)) && arn != "*" && !strcontains(arn, "::*:role/*")])
+    error_message = "operator_writer_arns must be account-scoped IAM principal ARNs/patterns, never a bare '*' or an all-roles glob that would exempt every principal."
+  }
 }
 
 variable "org_target_id" {

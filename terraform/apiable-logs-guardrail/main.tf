@@ -1,28 +1,29 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  # Single operator-owned source of the sanctioned destination set: every enforcement layer below
-  # (the Org SCP NotResource, each sanctioned bucket policy, the exported allow-list output) derives
-  # from this one list. The set is concrete bucket ARNs, never a name-prefix wildcard — a wildcard
-  # such as arn:aws:s3:::apiable-logs-* would admit an attacker-named apiable-logs-evil bucket.
+  # Single operator-owned source of the sanctioned destination set; every layer below derives from it.
+  # Concrete bucket ARNs only, never a wildcard (arn:aws:s3:::apiable-logs-* would admit an attacker bucket).
   sanctioned_bucket_arns = [for name in var.sanctioned_logging_buckets : "arn:aws:s3:::${name}"]
   sanctioned_object_arns = [for arn in local.sanctioned_bucket_arns : "${arn}/*"]
 }
 
-# Authoritative control. Denies the firehose delivery path s3:Put* to anything outside the sanctioned
-# set, attached at the Org OU spanning the tenant + logging accounts so it holds above every channel —
-# including a hand-rolled one. The Deny is scoped by aws:PrincipalArn to the delivery-role pattern, so
-# it constrains only the distrusted delivery path and never a legitimate non-firehose writer.
+# Authoritative control, attached at the Org OU spanning the tenant + logging accounts so it holds above
+# every channel — including a hand-rolled one. The Deny is principal-UNSCOPED on purpose: it denies the
+# write to any destination outside the sanctioned set for every principal in the logging-account family,
+# carving out only operator_writer_arns. A renamed delivery role a distrusted channel hand-rolls is thus
+# denied by default — the control trusts an operator-owned closed allow-list, never the role's own name
+# (a name the distrusted channel chooses). The allow-list family scope (this is the metering logging
+# account, not a general-purpose workload account) keeps the carve-out small and known.
 resource "aws_organizations_policy" "firehose_destination_guardrail" {
   name        = "apiable-firehose-destination-guardrail"
-  description = "Deny the usage-firehose delivery role any s3:Put* outside the sanctioned logging buckets"
+  description = "Deny any logging-family principal s3:Put* outside the sanctioned buckets, except the operator carve-out"
   type        = "SERVICE_CONTROL_POLICY"
 
   content = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "DenyFirehoseWriteOutsideSanctionedBuckets"
+        Sid    = "DenyWriteOutsideSanctionedBuckets"
         Effect = "Deny"
         Action = [
           "s3:PutObject",
@@ -31,8 +32,8 @@ resource "aws_organizations_policy" "firehose_destination_guardrail" {
         ]
         NotResource = local.sanctioned_object_arns
         Condition = {
-          ArnLike = {
-            "aws:PrincipalArn" = var.firehose_role_arn_pattern
+          StringNotLike = {
+            "aws:PrincipalArn" = var.operator_writer_arns
           }
         }
       }

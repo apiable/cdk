@@ -8,7 +8,10 @@
  *   - default is implicit deny,
  *   - an SCP can only DENY or be not-applicable (it is a permission boundary, never a grant),
  *   - a resource (bucket) policy and an identity (delivery-role) policy each contribute an Allow,
- *   - `aws:PrincipalArn` ArnLike, `aws:SourceAccount`/`aws:PrincipalOrgID` StringEquals are honoured.
+ *   - `aws:PrincipalArn` (StringLike/ArnLike and the negated StringNotLike/ArnNotLike that expresses the
+ *     operator carve-out), `aws:SourceAccount`/`aws:PrincipalOrgID` StringEquals are honoured,
+ *   - a condition operator the evaluator does not model is drift: it bites on a Deny and never grants an
+ *     Allow (fail closed both ways), so a divergent policy cannot slip an unmodelled operator past it.
  *
  * Static IaC-shape assertions in the spec back this simulator-as-oracle so policy-document drift the
  * evaluator would tolerate (a narrowed action set, a dropped condition) is still caught.
@@ -54,17 +57,31 @@ const resourcesOf = (key: 'Resource' | 'NotResource', statement: Record<string, 
 const resourceMatches = (statement: Record<string, unknown>, resourceArn: string): boolean =>
   resourcesOf('Resource', statement).some((pattern) => globMatch(pattern, resourceArn))
 
-/** Whether the request resource falls OUTSIDE a statement's `NotResource` (none of the entries glob it). */
+/**
+ * Whether the request resource falls OUTSIDE a statement's `NotResource` (none of the entries glob it).
+ * An empty NotResource excludes nothing, so the statement names every resource (AWS semantics) — a bare
+ * `Deny … NotResource []` denies everything; treating it as matching nothing would silently fail open.
+ */
 const notResourceMatches = (statement: Record<string, unknown>, resourceArn: string): boolean => {
   const notResources = resourcesOf('NotResource', statement)
-  if (notResources.length === 0) return false
+  if (notResources.length === 0) return true
   return !notResources.some((pattern) => globMatch(pattern, resourceArn))
 }
 
-/** Whether a statement's `Condition` block is satisfied by the request. Unmodelled operators fail closed. */
-const conditionSatisfied = (statement: Record<string, unknown>, request: AccessRequest): boolean => {
+/**
+ * Tri-state evaluation of a statement's `Condition` block:
+ *   - `'satisfied'`   — every operator/key matched (or there is no condition),
+ *   - `'unsatisfied'` — a modelled operator's test failed (the principal/account/org did not match),
+ *   - `'unknown'`     — an operator the evaluator does not model appeared (policy drift).
+ * The caller resolves `'unknown'` per effect: on a Deny it bites (fail closed), on an Allow it does not
+ * grant (also fail closed). Collapsing `'unknown'` into `'unsatisfied'` here would let a drifted Deny be
+ * skipped — the exact fail-open this distinction exists to prevent.
+ */
+type ConditionResult = 'satisfied' | 'unsatisfied' | 'unknown'
+
+const conditionSatisfied = (statement: Record<string, unknown>, request: AccessRequest): ConditionResult => {
   const condition = statement.Condition
-  if (condition === undefined) return true
+  if (condition === undefined) return 'satisfied'
   const block = asRecord(condition)
   for (const [operator, operandsUnknown] of Object.entries(block)) {
     const operands = asRecord(operandsUnknown)
@@ -72,16 +89,19 @@ const conditionSatisfied = (statement: Record<string, unknown>, request: AccessR
       const expected = toList(expectedUnknown).map((v) => asString(v) ?? '')
       const actual = contextValue(key, request)
       if (operator === 'StringEquals') {
-        if (actual === undefined || !expected.includes(actual)) return false
+        if (actual === undefined || !expected.includes(actual)) return 'unsatisfied'
+      } else if (operator === 'StringNotEquals') {
+        if (actual !== undefined && expected.includes(actual)) return 'unsatisfied'
       } else if (operator === 'ArnLike' || operator === 'StringLike') {
-        if (actual === undefined || !expected.some((pattern) => globMatch(pattern, actual))) return false
+        if (actual === undefined || !expected.some((pattern) => globMatch(pattern, actual))) return 'unsatisfied'
+      } else if (operator === 'ArnNotLike' || operator === 'StringNotLike') {
+        if (actual !== undefined && expected.some((pattern) => globMatch(pattern, actual))) return 'unsatisfied'
       } else {
-        // An operator the guardrail does not use appearing here is drift — fail closed rather than ignore.
-        return false
+        return 'unknown'
       }
     }
   }
-  return true
+  return 'satisfied'
 }
 
 const contextValue = (key: string, request: AccessRequest): string | undefined => {
@@ -120,7 +140,8 @@ export const evaluateScp = (scpDoc: unknown, request: AccessRequest): 'Deny' | '
   for (const statement of statementsOf(scpDoc)) {
     if (effectOf(statement) !== 'Deny') continue
     if (!actionMatches(statement, request.action)) continue
-    if (!conditionSatisfied(statement, request)) continue
+    // Only a definitively-unsatisfied condition lets the Deny pass; an unmodelled operator (drift) bites.
+    if (conditionSatisfied(statement, request) === 'unsatisfied') continue
     const denied =
       notResourceMatches(statement, request.resourceArn) || resourceMatches(statement, request.resourceArn)
     if (denied) return 'Deny'
@@ -141,9 +162,10 @@ export const evaluateResourcePolicy = (
     if (!actionMatches(statement, request.action)) continue
     if (!resourceMatches(statement, request.resourceArn)) continue
     if (!principalMatches(statement, request.principalArn)) continue
-    if (!conditionSatisfied(statement, request)) continue
-    if (effectOf(statement) === 'Deny') return 'Deny'
-    allowed = true
+    const condition = conditionSatisfied(statement, request)
+    if (condition === 'unsatisfied') continue
+    if (effectOf(statement) === 'Deny') return 'Deny' // a Deny bites on satisfied OR drift (fail closed)
+    if (condition === 'satisfied') allowed = true // an Allow grants only when fully satisfied — never on drift
   }
   return allowed ? 'Allow' : 'NotApplicable'
 }
@@ -160,9 +182,10 @@ export const evaluateIdentityPolicy = (
   for (const statement of statementsOf(policyDoc)) {
     if (!actionMatches(statement, request.action)) continue
     if (!resourceMatches(statement, request.resourceArn)) continue
-    if (!conditionSatisfied(statement, request)) continue
-    if (effectOf(statement) === 'Deny') return 'Deny'
-    allowed = true
+    const condition = conditionSatisfied(statement, request)
+    if (condition === 'unsatisfied') continue
+    if (effectOf(statement) === 'Deny') return 'Deny' // a Deny bites on satisfied OR drift (fail closed)
+    if (condition === 'satisfied') allowed = true // an Allow grants only when fully satisfied — never on drift
   }
   return allowed ? 'Allow' : 'NotApplicable'
 }

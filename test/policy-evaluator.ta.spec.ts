@@ -3,9 +3,10 @@
  *
  * The evaluator is the trust anchor of the 013-1-24 acceptance specs: if it false-allows or false-denies,
  * every Sx scenario silently lies. These cases exercise the evaluator's decision edges directly — the
- * SCP scoping that must NOT over-deny, the write-equivalent action coverage, the bucket-policy conditions,
- * default-deny, glob behaviour, and fail-closed on an unmodelled condition operator — beyond the six
- * contract scenarios' channel-level assertions.
+ * principal-unscoped Deny with its operator carve-out (which must catch a renamed hand-rolled role yet
+ * NOT over-deny an exempt operator principal), the write-equivalent action coverage, the bucket-policy
+ * conditions, default-deny, glob behaviour, and fail-closed on an unmodelled condition operator — beyond
+ * the six contract scenarios' channel-level assertions.
  */
 import {
   AccessRequest,
@@ -16,20 +17,24 @@ import {
 } from './support/policy-evaluator'
 
 const FIREHOSE_ROLE = 'arn:aws:iam::111111111111:role/apiable-usagelogs-firehose'
-const APP_ROLE = 'arn:aws:iam::111111111111:role/some-app-role'
+// A logging-account service-linked role the operator legitimately exempts (the closed carve-out).
+const OPERATOR_WRITER = 'arn:aws:iam::111111111111:role/aws-service-role/backup.amazonaws.com/AWSServiceRoleForBackup'
+// A hand-rolled in-Org delivery role named OUTSIDE the apiable-*-firehose convention — the F1 escape.
+const RENAMED_HANDROLLED_ROLE = 'arn:aws:iam::111111111111:role/usage-delivery'
 const SANCTIONED_OBJ = 'arn:aws:s3:::apiable-logs-prod/x'
 const EXFIL_OBJ = 'arn:aws:s3:::attacker-exfil-bucket/x'
 
-// The guardrail SCP as the module renders it.
+// The guardrail SCP as the module renders it: a principal-UNSCOPED Deny that exempts only the operator
+// carve-out via StringNotLike aws:PrincipalArn — so it cannot be evaded by a role's chosen name.
 const SCP = {
   Version: '2012-10-17',
   Statement: [
     {
-      Sid: 'DenyFirehoseWriteOutsideSanctionedBuckets',
+      Sid: 'DenyWriteOutsideSanctionedBuckets',
       Effect: 'Deny',
       Action: ['s3:PutObject', 's3:PutObjectAcl', 's3:PutObjectTagging'],
       NotResource: ['arn:aws:s3:::apiable-logs-prod/*'],
-      Condition: { ArnLike: { 'aws:PrincipalArn': 'arn:aws:iam::*:role/apiable-*-firehose' } },
+      Condition: { StringNotLike: { 'aws:PrincipalArn': [OPERATOR_WRITER] } },
     },
   ],
 }
@@ -57,17 +62,23 @@ const inOrg = (over: Partial<AccessRequest>): AccessRequest => ({
   ...over,
 })
 
-describe('013-1-24 guardrail oracle — SCP scoping does not over-deny', () => {
-  it('a non-firehose account role writing outside the allow-list is NOT denied by the SCP (the Deny is scoped to the firehose role)', () => {
-    expect(evaluateScp(SCP, inOrg({ principalArn: APP_ROLE, resourceArn: EXFIL_OBJ }))).toBe('NotApplicable')
+describe('013-1-24 guardrail oracle — the carve-out gates the Deny, the role name does not', () => {
+  it('an operator carve-out principal writing outside the allow-list is NOT denied (no false-deny of a known writer)', () => {
+    expect(evaluateScp(SCP, inOrg({ principalArn: OPERATOR_WRITER, resourceArn: EXFIL_OBJ }))).toBe('NotApplicable')
   })
 
-  it('a firehose role writing INSIDE the allow-list is not denied by the SCP', () => {
+  it('the sanctioned firehose role writing INSIDE the allow-list is not denied by the SCP', () => {
     expect(evaluateScp(SCP, inOrg({ resourceArn: SANCTIONED_OBJ }))).toBe('NotApplicable')
   })
 
-  it('a firehose role writing OUTSIDE the allow-list is denied by the SCP', () => {
+  it('the sanctioned firehose role writing OUTSIDE the allow-list is denied by the SCP', () => {
     expect(evaluateScp(SCP, inOrg({ resourceArn: EXFIL_OBJ }))).toBe('Deny')
+  })
+
+  it('a hand-rolled role named OUTSIDE apiable-*-firehose (not in the carve-out) is STILL denied outside the allow-list (closes the F1 name-escape)', () => {
+    // The forgeable-name design returned NotApplicable here — the role name no longer buys an exemption;
+    // only membership of the operator-owned carve-out does, and a hand-rolled channel cannot add itself.
+    expect(evaluateScp(SCP, inOrg({ principalArn: RENAMED_HANDROLLED_ROLE, resourceArn: EXFIL_OBJ }))).toBe('Deny')
   })
 })
 
@@ -134,7 +145,17 @@ describe('013-1-24 guardrail oracle — end-to-end deny-overrides', () => {
       ],
     }
     // An operator the evaluator does not model must not silently skip the Deny — the statement still bites.
-    expect(evaluateScp(scpWithUnknownOp, inOrg({ resourceArn: EXFIL_OBJ }))).toBe('NotApplicable')
+    expect(evaluateScp(scpWithUnknownOp, inOrg({ resourceArn: EXFIL_OBJ }))).toBe('Deny')
+  })
+
+  it('an empty NotResource on a Deny names every resource (a bare exfil-everything Deny bites)', () => {
+    // AWS: NotResource [] excludes nothing, so the Deny applies to all resources; the evaluator must not
+    // treat the empty list as matching nothing (that would fail open on a real-but-malformed Deny).
+    const scpDenyAll = {
+      Version: '2012-10-17',
+      Statement: [{ Effect: 'Deny', Action: 's3:PutObject', NotResource: [] }],
+    }
+    expect(evaluateScp(scpDenyAll, inOrg({ resourceArn: SANCTIONED_OBJ }))).toBe('Deny')
   })
 })
 
