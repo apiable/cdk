@@ -124,8 +124,9 @@ const withTfTrustCondition = (plan: TfShow, declaredId: string, condition: unkno
 }
 
 /** A copy of a reduced channel with each role's trust grant re-pooled — the per-owner `:<role-ref>` suffix
- * stripped back to the bare `grant:assume-role`, the pre-013-1-19 form where two roles' trusts share one
- * multiset. Used to prove the trust swap is caught BY the per-owner discipline: re-pooled, the swap nets out. */
+ * stripped back to the bare `grant:assume-role`, so two roles' trusts share one multiset. This isolates the
+ * per-owner discipline: in the re-pooled multiset a cross-owner trust swap nets out, so a gate that still
+ * fails the swap must be failing it on the per-owner keying. */
 const trustGrantsRepooled = (model: ChannelModel): ChannelModel => ({
   ...model,
   grants: model.grants.map((grant) => (grant.ref.startsWith('grant:assume-role:') ? { ...grant, ref: 'grant:assume-role' } : grant)),
