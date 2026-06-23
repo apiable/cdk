@@ -14,12 +14,6 @@ const POOL_ID = 'apiable-authz-pool'
 
 // ── hosted-domain canonicalisation boundaries (NEW-1 floor) ──────────────────────────────────────
 
-interface DomainShape {
-  readonly cfnDomain: unknown
-  readonly tfDomain: string
-  readonly tfBoundToTenantVar: boolean
-}
-
 const cfnPool = (domain: unknown): unknown => ({
   Resources: {
     Pool: { Type: 'AWS::Cognito::UserPool', Properties: { UserPoolName: 'authz', UserPoolTags: { [TAG]: POOL_ID } } },
@@ -27,7 +21,12 @@ const cfnPool = (domain: unknown): unknown => ({
   },
 })
 
-const tfPool = (domain: string, boundToTenantVar: boolean): unknown => ({
+// `tenantInput` is the concrete value of the deploy-time tenant variable carried in the plan's top-level
+// `variables` block — the anchor the hosted-UI domain witness reconciles against. A conventional
+// `apiable-${var.name}` reconciles only when the resolved domain equals `apiable-<tenantInput>` exactly;
+// passing it `undefined` models a plan with no tenant input recorded (the witness then fails CLOSED).
+const tfPool = (domain: string, boundToTenantVar: boolean, tenantInput: string | undefined = undefined): unknown => ({
+  ...(tenantInput !== undefined ? { variables: { name: { value: tenantInput } } } : {}),
   planned_values: {
     root_module: {
       resources: [
@@ -58,9 +57,9 @@ const authorizeRow = (model: ReturnType<typeof reduceCloudFormation>): string | 
 const cfnJoinDomain = { 'Fn::Join': ['', ['apiable-', { Ref: 'TenantName' }]] }
 
 describe('013-1-23 TA — hosted-domain canonicalisation boundaries (NEW-1 floor)', () => {
-  it('the conventional apiable-<tenant> domain canonicalises to the shared token on BOTH channels (CFN Fn::Join + TF literal bound to var.name)', () => {
+  it('the conventional apiable-<tenant> domain canonicalises to the shared token on BOTH channels (CFN Fn::Join + TF literal == apiable-<tenant input>)', () => {
     const cfn = reduceCloudFormation(cfnPool(cfnJoinDomain), 'cfn', REGION)
-    const tf = reduceTerraformShowJson(tfPool('apiable-staging', true), 'terraform', REGION)
+    const tf = reduceTerraformShowJson(tfPool('apiable-staging', true, 'staging'), 'terraform', REGION)
     expect(authorizeRow(cfn)).toContain(HOSTED_DOMAIN_TENANT_TOKEN)
     expect(authorizeRow(tf)).toContain(HOSTED_DOMAIN_TENANT_TOKEN)
     expect(authorizeRow(cfn)).toBe(authorizeRow(tf))
@@ -72,6 +71,15 @@ describe('013-1-23 TA — hosted-domain canonicalisation boundaries (NEW-1 floor
     const tf = reduceTerraformShowJson(tfPool('apiable-evil', false), 'terraform', REGION)
     expect(authorizeRow(tf)).not.toContain(HOSTED_DOMAIN_TENANT_TOKEN)
     expect(authorizeRow(tf)).toContain('apiable-evil')
+  })
+
+  it('a TF domain bound to var.name but carrying an INJECTED literal (`apiable-evil-${var.name}` → apiable-evil-<tenant>) does NOT get the token — the witness is the deploy-time tenant input, not a mere apiable- prefix (fail-closed)', () => {
+    // The injection variant: bound to var.name AND apiable-prefixed, but the resolved literal carries an
+    // extra `evil-` between the prefix and the tenant input value, so it is not `apiable-<tenant input>` and
+    // keeps its identity. Rewriting the cosmetic pool name to match changes nothing — the witness never reads it.
+    const tf = reduceTerraformShowJson(tfPool('apiable-evil-staging', true, 'staging'), 'terraform', REGION)
+    expect(authorizeRow(tf)).not.toContain(HOSTED_DOMAIN_TENANT_TOKEN)
+    expect(authorizeRow(tf)).toContain('apiable-evil-staging')
   })
 
   it('a substituted non-apiable host (bound to var.name or not) stays a literal and FAILS the gate on both discovery endpoints', () => {
@@ -88,11 +96,11 @@ describe('013-1-23 TA — hosted-domain canonicalisation boundaries (NEW-1 floor
     }
   })
 
-  it('two channels both rendering the conventional domain (one via Fn::Join, one via the literal) reconcile — no false-FAIL', () => {
+  it('two channels both rendering the conventional domain (one via Fn::Join, one via the literal == apiable-<tenant input>) reconcile — no false-FAIL', () => {
     const result = gate([
       reduceCloudFormation(cfnPool(cfnJoinDomain), 'cdk', REGION),
       reduceCloudFormation(cfnPool(cfnJoinDomain), 'cfn', REGION),
-      reduceTerraformShowJson(tfPool('apiable-staging', true), 'terraform', REGION),
+      reduceTerraformShowJson(tfPool('apiable-staging', true, 'staging'), 'terraform', REGION),
     ])
     expect(result.divergences.find((e) => e.detail.includes('oauth-discovery'))).toBeUndefined()
   })

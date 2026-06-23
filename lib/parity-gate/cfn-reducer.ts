@@ -490,7 +490,7 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     if (canonicalCfnKind(res.type) !== 'cognito-user-pool-domain') continue
     const rendered = resolve(res.properties.Domain)
     if (rendered === '') continue
-    const domain = canonicaliseHostedDomain(rendered, false)
+    const domain = canonicaliseHostedDomain(rendered)
     for (const target of resourceRefsIn(res.properties.UserPoolId, resourceIds)) {
       domainByPoolRef.set(refToNode.get(target.id) ?? target.id, domain)
     }

@@ -1,7 +1,11 @@
 {
   "format_version": "1.2",
   "terraform_version": "1.8.5",
-  "_comment": "Reference `terraform show -json` for the apiable-cognito-pool module, captured from a plan in a deploying account (so data.aws_caller_identity / data.aws_region resolve the lambda-permission source ARN). The deploying account here is a placeholder; CI regenerates this from a fresh plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts. Plan vars: name=staging, feature_plan=ESSENTIALS. The pool, pre-token function, and the function's execution role all carry the channel-identical apiable:logical-id; the hosted-UI domain is rendered apiable-${var.name} so it canonicalises to the shared tenant-domain token and reconciles with the published one-click apiable-@ref:TenantName for the same tenant.",
+  "_comment": "Reference `terraform show -json` for the apiable-cognito-pool module, captured from a plan in a deploying account (so data.aws_caller_identity / data.aws_region resolve the lambda-permission source ARN). The deploying account here is a placeholder; CI regenerates this from a fresh plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts. Plan vars: name=staging, feature_plan=ESSENTIALS. The pool, pre-token function, and the function's execution role all carry the channel-identical apiable:logical-id; the hosted-UI domain is rendered apiable-${var.name} so it canonicalises to the shared tenant-domain token and reconciles with the published one-click apiable-@ref:TenantName for the same tenant. The top-level variables block carries the concrete tenant input (name); the hosted-UI domain witness reconciles only when the resolved domain equals apiable-<that input> exactly, so an injected literal (apiable-evil-${var.name}) diverges even if the cosmetic pool name is rewritten to match.",
+  "variables": {
+    "feature_plan": { "value": "ESSENTIALS" },
+    "name": { "value": "staging" }
+  },
   "planned_values": {
     "root_module": {
       "resources": [

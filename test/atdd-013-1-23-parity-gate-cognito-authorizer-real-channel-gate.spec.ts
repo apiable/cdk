@@ -65,6 +65,9 @@ const plannedResource = (plan: TfShow, type: string): Record<string, unknown> =>
 
 /** Merge the two real channels' TF show -json into one multi-owner plan (the real combined grant surface). */
 const combinedTf = (cognitoPlan: TfShow, authorizerPlan: TfShow): unknown => ({
+  // Carry the deploy inputs through, the way a real combined `terraform show -json` would: the hosted-UI
+  // domain witness reconciles only against the concrete tenant input (var.name) the variables block carries.
+  variables: { ...((cognitoPlan as unknown as { variables?: unknown }).variables ?? {}), ...((authorizerPlan as unknown as { variables?: unknown }).variables ?? {}) },
   planned_values: {
     root_module: { resources: [...cognitoPlan.planned_values.root_module.resources, ...authorizerPlan.planned_values.root_module.resources] },
   },
@@ -77,6 +80,55 @@ const combinedTf = (cognitoPlan: TfShow, authorizerPlan: TfShow): unknown => ({
 const combinedCfn = (a: { Resources: Record<string, unknown> }, b: { Resources: Record<string, unknown> }): unknown => ({
   Resources: { ...a.Resources, ...b.Resources },
   Outputs: {},
+})
+
+// ── F3: the poolable trust-grant pair (the two roles' sts:AssumeRole trusts) ────────────────────
+// Both the pool's pre-token role and the authorizer's execution role trust the same service principal
+// (lambda.amazonaws.com) with the same action — the genuinely-poolable shape. A load-bearing trust
+// condition planted on each (and swapped on one channel) is the trust analog of the 1-19 inline/invoke
+// pooling forcing fixtures: pooled, the two conditions net out; only the per-owner ref tells them apart.
+interface CfnRoleResource {
+  readonly Type?: string
+  readonly Properties?: {
+    readonly Tags?: { readonly Key: string; readonly Value: unknown }[]
+    readonly AssumeRolePolicyDocument?: { readonly Statement: Record<string, unknown>[] }
+  }
+}
+
+const declaredIdOfCfnRole = (resource: CfnRoleResource): unknown =>
+  (resource.Properties?.Tags ?? []).find((tag) => tag.Key === 'apiable:logical-id')?.Value
+
+/** Plant a load-bearing trust `Condition` on the role carrying `declaredId` in a CloudFormation template. */
+const withCfnTrustCondition = (template: { Resources: Record<string, unknown> }, declaredId: string, condition: unknown): { Resources: Record<string, unknown> } => {
+  const next = clone(template)
+  for (const resource of Object.values(next.Resources) as CfnRoleResource[]) {
+    if (resource.Type === 'AWS::IAM::Role' && declaredIdOfCfnRole(resource) === declaredId) {
+      const statement = resource.Properties?.AssumeRolePolicyDocument?.Statement?.[0]
+      if (statement !== undefined) statement.Condition = condition
+    }
+  }
+  return next
+}
+
+/** Plant a load-bearing trust `Condition` on the role carrying `declaredId` in a terraform show -json plan. */
+const withTfTrustCondition = (plan: TfShow, declaredId: string, condition: unknown): TfShow => {
+  const next = clone(plan)
+  for (const resource of next.planned_values.root_module.resources as { type: string; values: Record<string, unknown> }[]) {
+    if (resource.type === 'aws_iam_role' && (resource.values.tags as Record<string, unknown> | undefined)?.['apiable:logical-id'] === declaredId) {
+      const document = JSON.parse(resource.values.assume_role_policy as string) as { Statement: Record<string, unknown>[] }
+      document.Statement[0].Condition = condition
+      resource.values.assume_role_policy = JSON.stringify(document)
+    }
+  }
+  return next
+}
+
+/** A copy of a reduced channel with each role's trust grant re-pooled — the per-owner `:<role-ref>` suffix
+ * stripped back to the bare `grant:assume-role`, the pre-013-1-19 form where two roles' trusts share one
+ * multiset. Used to prove the trust swap is caught BY the per-owner discipline: re-pooled, the swap nets out. */
+const trustGrantsRepooled = (model: ChannelModel): ChannelModel => ({
+  ...model,
+  grants: model.grants.map((grant) => (grant.ref.startsWith('grant:assume-role:') ? { ...grant, ref: 'grant:assume-role' } : grant)),
 })
 
 describe('013-1-23 release parity check — real cognito + authorizer channels', () => {
@@ -167,6 +219,39 @@ describe('013-1-23 release parity check — real cognito + authorizer channels',
     expect(evilResult.divergences.find((entry) => entry.tier === 'value' && entry.detail.includes('oauth-discovery-token'))?.channels).toEqual(['terraform'])
   })
 
+  // contract: S3 — the injected-literal token-minting host is caught even while bound to the tenant input
+  // (the deceptive `apiable-evil-${var.name}` variant — the same security floor, pinned by the gate not a reviewer)
+  it('S3: an INJECTED-LITERAL token-minting host on the Terraform leg (domain `apiable-evil-${var.name}`, still bound to var.name) does NOT reconcile to the tenant token and still FAILS on both discovery endpoints — even when the cosmetic pool name is rewritten to match; the legitimate `apiable-${var.name}` reconciles with no false-FAIL', () => {
+    const poolRef = 'cognito-user-pool:apiable-cognito-pool'
+
+    // (a) The deceptive plant: the domain renders `apiable-evil-${var.name}` → `apiable-evil-staging`, still
+    // bound to the tenant input (references var.name). It must NOT collapse to the legit tenant token — it
+    // keeps its identity and diverges on BOTH discovery endpoints against the legit CDK/CFN channels.
+    const injected = clone(cognitoTfPlan()) as TfShow
+    plannedResource(injected, 'aws_cognito_user_pool_domain').domain = 'apiable-evil-staging'
+    const injectedResult = gate([cognitoCdk(), cognitoCfn(), cognitoTf(injected)])
+    expect(injectedResult.passed).toBe(false)
+    expect(injectedResult.divergences.find((entry) => entry.tier === 'value' && entry.detail.includes('oauth-discovery-authorize'))?.channels).toEqual(['terraform'])
+    expect(injectedResult.divergences.find((entry) => entry.tier === 'value' && entry.detail.includes('oauth-discovery-token'))?.channels).toEqual(['terraform'])
+
+    // (b) The legitimate conventional rendering `apiable-${var.name}` → `apiable-staging` reconciles to the
+    // shared tenant token: no discovery divergence (no false-FAIL on equivalent infrastructure).
+    const legit = gate([cognitoCdk(), cognitoCfn(), cognitoTf()])
+    expect(legit.divergences.find((entry) => entry.detail.includes('oauth-discovery'))).toBeUndefined()
+    expect(cognitoTf().values[`oauth-discovery-authorize:${poolRef}`]).toContain(HOSTED_DOMAIN_TENANT_TOKEN)
+
+    // (c) Defeat-proof: the same injected-literal plant with the cosmetic pool `name` ALSO rewritten to
+    // `apiable-evil-staging` STILL fails — the witness is anchored on the deploy-time tenant input, never the
+    // attacker-controllable pool name, so rewriting the name to match does not buy the substituted host parity.
+    const injectedAndNamed = clone(cognitoTfPlan()) as TfShow
+    plannedResource(injectedAndNamed, 'aws_cognito_user_pool_domain').domain = 'apiable-evil-staging'
+    plannedResource(injectedAndNamed, 'aws_cognito_user_pool').name = 'apiable-evil-staging'
+    const defeatResult = gate([cognitoCdk(), cognitoCfn(), cognitoTf(injectedAndNamed)])
+    expect(defeatResult.passed).toBe(false)
+    expect(defeatResult.divergences.find((entry) => entry.tier === 'value' && entry.detail.includes('oauth-discovery-authorize'))?.channels).toEqual(['terraform'])
+    expect(defeatResult.divergences.find((entry) => entry.tier === 'value' && entry.detail.includes('oauth-discovery-token'))?.channels).toEqual(['terraform'])
+  })
+
   // contract: S4 — a tag-less function is an explicit missing-identity divergence, not a silent name fallback (NEW-2)
   it('S4: the customisation/authorizer function carrying its declared identity in one channel but tag-less in another → explicit missingDeclaredId divergence (NOT a fallback to its name-derived discriminator, now lambda-function is ENFORCED); both tagged → one node ref', () => {
     // The pre-token customisation function tag-less on the Terraform leg → an explicit missing-declared-identity
@@ -240,6 +325,76 @@ describe('013-1-23 release parity check — real cognito + authorizer channels',
     expect(ownerDivergences.some((entry) => entry.detail.includes('apiable-cognito-pool-pretoken-fn'))).toBe(true)
     expect(ownerDivergences.some((entry) => entry.detail.includes('apiable-lambda-authorizer-fn'))).toBe(true)
     for (const divergence of ownerDivergences) expect(divergence.channels).toEqual(['terraform'])
+
+    // ── The genuinely-poolable TRUST-grant pair (013-1-19's anti-pooling discipline on the real surface) ──
+    // The two roles trust the SAME service principal with the SAME action, so their trust grants are the
+    // genuinely-poolable pair. Plant a distinct load-bearing trust condition on each across ALL channels (the
+    // intended, reconciling baseline), then swap them on the Terraform leg. Pooled into one grant:assume-role
+    // multiset the two conditions net out; only filing each trust under its owning role's ref catches the swap.
+    const POOL_ROLE = 'apiable-cognito-pool-pretoken-fn'
+    const AUTHZ_ROLE = 'apiable-lambda-authorizer-role'
+    const condPool = { StringEquals: { 'aws:SourceAccount': TF_DEPLOY_ACCOUNT } }
+    const condAuthz = { StringEquals: { 'sts:ExternalId': 'authz-external-id' } }
+
+    const cfnWith = (a: unknown, b: unknown): { Resources: Record<string, unknown> } =>
+      withCfnTrustCondition(
+        withCfnTrustCondition(
+          combinedCfn(loadYaml(PUBLISHED_COGNITO) as { Resources: Record<string, unknown> }, loadYaml(PUBLISHED_AUTHORIZER) as { Resources: Record<string, unknown> }) as {
+            Resources: Record<string, unknown>
+          },
+          POOL_ROLE,
+          a,
+        ),
+        AUTHZ_ROLE,
+        b,
+      )
+    const cdkWith = (a: unknown, b: unknown): { Resources: Record<string, unknown> } =>
+      withCfnTrustCondition(
+        withCfnTrustCondition(
+          combinedCfn(
+            Template.fromStack(buildCognitoStack(new cdk.App())).toJSON() as { Resources: Record<string, unknown> },
+            Template.fromStack(buildAuthorizerStack(new cdk.App())).toJSON() as { Resources: Record<string, unknown> },
+          ) as { Resources: Record<string, unknown> },
+          POOL_ROLE,
+          a,
+        ),
+        AUTHZ_ROLE,
+        b,
+      )
+    const tfWith = (a: unknown, b: unknown): unknown =>
+      combinedTf(
+        withTfTrustCondition(cognitoTfPlan() as TfShow, POOL_ROLE, a),
+        withTfTrustCondition(authorizerTfPlan() as TfShow, AUTHZ_ROLE, b),
+      )
+
+    // Baseline: each role keeps its own condition on every channel → trusts reconcile, no false-FAIL.
+    const trustBaseline = gate([
+      reduceCloudFormation(cdkWith(condPool, condAuthz), 'cdk', TF_REGION),
+      reduceCloudFormation(cfnWith(condPool, condAuthz), 'cfn', TF_REGION),
+      combinedTfModel(tfWith(condPool, condAuthz)),
+    ])
+    expect(trustBaseline.divergences.filter((entry) => entry.detail.includes('grant:assume-role'))).toEqual([])
+
+    // The cross-owner trust swap on the Terraform leg: the pool role now carries the authorizer's condition
+    // and vice versa. The intended CDK/CFN keep pool→condPool, authz→condAuthz.
+    const swappedModels = [
+      reduceCloudFormation(cdkWith(condPool, condAuthz), 'cdk', TF_REGION),
+      reduceCloudFormation(cfnWith(condPool, condAuthz), 'cfn', TF_REGION),
+      combinedTfModel(tfWith(condAuthz, condPool)),
+    ]
+    const trustSwapped = gate(swappedModels)
+    expect(trustSwapped.passed).toBe(false)
+    const trustDivergences = trustSwapped.divergences.filter((entry) => entry.tier === 'permission' && entry.detail.includes('grant:assume-role'))
+    // Each owner's trust diverges, named under its own role's node ref — the swap did not pool away.
+    expect(trustDivergences.some((entry) => entry.detail.includes(POOL_ROLE))).toBe(true)
+    expect(trustDivergences.some((entry) => entry.detail.includes(AUTHZ_ROLE))).toBe(true)
+    for (const divergence of trustDivergences) expect(divergence.channels).toEqual(['terraform'])
+
+    // Proof the swap is caught BY the per-owner discipline (not a distinct-principal side-effect): re-pool the
+    // trust grants (strip the per-owner :<role-ref> suffix to the pre-1-19 shared multiset) and the SAME swap
+    // PASSES — the two conditions net out, exactly the fail-open the per-owner keying closes.
+    const repooled = gate(swappedModels.map(trustGrantsRepooled))
+    expect(repooled.divergences.filter((entry) => entry.detail.includes('grant:assume-role'))).toEqual([])
   })
 
   // contract: S6 — no regression; the construct-story per-channel checks agree with the release check

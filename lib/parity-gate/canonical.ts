@@ -204,11 +204,22 @@ export const canonicaliseLogsBucketParam = (resource: string, paramDestinations:
  */
 export const TENANT_NAME_VAR_REFERENCE = 'var.name'
 
+/** The plan-level variable key the {@link TENANT_NAME_VAR_REFERENCE} resolves against — the top-level
+ * `variables` block keys the tenant input under its bare name (`name`), not the `var.`-qualified reference. */
+export const TENANT_NAME_VAR_KEY = 'name'
+
 /** The literal prefix the conventional hosted-UI domain is rendered with — `apiable-<tenant>` on every channel. */
 export const HOSTED_DOMAIN_PREFIX = 'apiable-'
 
-/** The parameter-ref form the published CloudFormation channel renders the tenant segment of the domain as. */
-const HOSTED_DOMAIN_CFN_RENDERING = `${HOSTED_DOMAIN_PREFIX}@ref:`
+/**
+ * The only form a hosted-UI domain reconciles from: `apiable-` *immediately* followed by the deploy-time
+ * tenant marker `@ref:`, with no literal in between. Every channel must render its conventional domain into
+ * this exact shape to reconcile — the CloudFormation channel resolves `Fn::Join["apiable-", {Ref: TenantName}]`
+ * to it natively, and the Terraform reducer reconstructs it from a `domain` expression that is the bare tenant
+ * variable interpolation under the `apiable-` prefix. A domain that carries an injected literal between the
+ * prefix and the tenant marker (`apiable-evil-@ref:…`) is not this shape, keeps its identity, and diverges.
+ */
+const HOSTED_DOMAIN_TENANT_RENDERING = `${HOSTED_DOMAIN_PREFIX}@ref:`
 
 /**
  * The stable token the conventional `apiable-<tenant>` hosted-UI domain reduces to. The tenant segment is
@@ -223,26 +234,27 @@ const HOSTED_DOMAIN_CFN_RENDERING = `${HOSTED_DOMAIN_PREFIX}@ref:`
 export const HOSTED_DOMAIN_TENANT_TOKEN = '{apiable-tenant-domain}'
 
 /**
- * Canonicalise a hosted-UI domain prefix to {@link HOSTED_DOMAIN_TENANT_TOKEN} *only* when it is the
- * conventional `apiable-<tenant>` rendering of the deploy-time tenant input — so the same tenant's domain
- * reconciles across the published-CloudFormation and Terraform channels even though each renders the tenant
- * segment by a structurally different path. `boundToTenantVar` is the Terraform witness that the domain's
- * literal value is the conventional deploy-time tenant rendering: its `domain` expression references the
- * top-level `var.name`. The CloudFormation witness is structural — the resolved domain is `apiable-` joined
- * to a single deploy-time parameter ref (`apiable-@ref:<param>`).
+ * Canonicalise a hosted-UI domain witness to {@link HOSTED_DOMAIN_TENANT_TOKEN} *only* when it is the
+ * conventional rendering of the deploy-time tenant input — `apiable-` immediately followed by the tenant
+ * marker `@ref:`, with no injected literal between them ({@link HOSTED_DOMAIN_TENANT_RENDERING}). Every
+ * channel reduces its conventional domain into that one shape before this check, so the same tenant's domain
+ * reconciles across channels even though each renders the tenant segment by a structurally different path:
+ * the CloudFormation channel resolves its parameter join to the shape natively, and the Terraform reducer
+ * reconstructs it from a `domain` expression whose entire value under the `apiable-` prefix is the bare
+ * tenant variable interpolation. The check is identical for both channels, so neither is looser than the
+ * other.
  *
- * A prefix that is neither (a bare literal not bound to the tenant input, a substituted token-minting host)
- * is returned unchanged, so it keeps its identity and fails the gate by value on both discovery endpoints —
- * the 013-1-20 security floor is preserved, never widened into accepting a substituted host. The tenant
- * variable name is load-bearing exactly as the logs-bucket variable is: a hand-rolled module that renames
- * `var.name` while still wiring it as a genuine deploy-time input fails CLOSED (its literal is unrecognised
- * → diverges from the token), never fail open; adopting the convention realigns it.
+ * A witness that is not this exact shape is returned unchanged. A substituted token-minting host, a bare
+ * literal not wired to the tenant input, and — the case this tightness exists to catch — a domain that
+ * smuggles an injected literal between the prefix and the tenant marker (`apiable-evil-@ref:…`, the rendered
+ * form of `apiable-evil-${var.name}`) all keep their identity and fail the gate by value on both discovery
+ * endpoints. The equivalence is never widened into accepting such a host; the security floor is preserved,
+ * not weakened. A hand-rolled module that renames the tenant variable while still wiring it as a genuine
+ * deploy-time input fails CLOSED (its reconstructed witness is unrecognised → diverges from the token), never
+ * fail open; adopting the convention realigns it.
  */
-export const canonicaliseHostedDomain = (prefix: string, boundToTenantVar: boolean): string => {
-  if (boundToTenantVar && prefix.startsWith(HOSTED_DOMAIN_PREFIX)) return HOSTED_DOMAIN_TENANT_TOKEN
-  if (prefix.startsWith(HOSTED_DOMAIN_CFN_RENDERING)) return HOSTED_DOMAIN_TENANT_TOKEN
-  return prefix
-}
+export const canonicaliseHostedDomain = (witness: string): string =>
+  witness.startsWith(HOSTED_DOMAIN_TENANT_RENDERING) ? HOSTED_DOMAIN_TENANT_TOKEN : witness
 
 /** The stable token the deploy-time tenant segment of a self-named resource collapses to, so the same construct reconciles across a parameter-rendered and a concrete-tenant channel. */
 export const TENANT_SEGMENT_TOKEN = '{tenant}'

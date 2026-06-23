@@ -33,6 +33,7 @@ import {
   canonicaliseAuthorizerName,
   canonicaliseHostedDomain,
   canonicaliseLogsBucketParam,
+  HOSTED_DOMAIN_PREFIX,
   canonicalTfKind,
   canonicalOutputAttr,
   DECLARED_ID_KINDS,
@@ -43,6 +44,7 @@ import {
   missingDeclaredId,
   nodeRef,
   policyServices,
+  TENANT_NAME_VAR_KEY,
   TENANT_NAME_VAR_REFERENCE,
   VALUE_BEARING_KINDS,
 } from './canonical'
@@ -68,6 +70,29 @@ const parseJson = (value: unknown): unknown => {
   } catch {
     return undefined
   }
+}
+
+/**
+ * Reconstruct the channel-stable hosted-UI domain witness from a `terraform show -json` domain. The
+ * conventional rendering is `apiable-${var.name}`: the resolved literal is `apiable-<tenant>`, its `domain`
+ * expression references the deploy-time tenant input `var.name`, and the literal is exactly the prefix
+ * followed by that input's concrete value with nothing injected between them. Only then is the witness the
+ * tenant-marker form `apiable-@ref:name` — the same shape the published-CloudFormation channel resolves its
+ * parameter join to — so the same tenant's domain reconciles cross-channel.
+ *
+ * The deploy-time input's value (`var.name`) is read from the plan's top-level `variables` block — the
+ * deploy input itself, not a resource attribute that an author could desync. So an injected literal
+ * (`apiable-evil-${var.name}` → literal `apiable-evil-<tenant>`) does not equal `apiable-` + the input
+ * value, fails the equality, keeps its literal, and diverges by value — even when the author also rewrites
+ * the cosmetic pool name to match, because the witness never reads the pool name. A domain not bound to the
+ * tenant input, or one carrying an injected literal, returns its literal unchanged and fails CLOSED.
+ */
+const hostedDomainWitness = (domainLiteral: string, domainExpression: unknown, tenantInput: string | undefined): string => {
+  const boundToTenantVar = asStringArray(asRecord(domainExpression).references).includes(TENANT_NAME_VAR_REFERENCE)
+  if (boundToTenantVar && tenantInput !== undefined && domainLiteral === `${HOSTED_DOMAIN_PREFIX}${tenantInput}`) {
+    return `${HOSTED_DOMAIN_PREFIX}@ref:${TENANT_NAME_VAR_REFERENCE}`
+  }
+  return domainLiteral
 }
 
 interface TfResource {
@@ -328,6 +353,11 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const plannedResources = asArray(asRecord(asRecord(root.planned_values).root_module).resources)
   const wellFormed = isRecord(plan) && isRecord(root.planned_values) && plannedResources.length > 0
 
+  // The concrete value of the deploy-time tenant input (`var.name`), read from the plan's top-level
+  // `variables` block — the deploy input itself, the trustworthy anchor a hosted-UI domain is checked
+  // against (a resource attribute carrying it could be desynced by the author; the deploy input cannot be).
+  const tenantInput = asString(asRecord(asRecord(root.variables)[TENANT_NAME_VAR_KEY]).value)
+
   const resources: TfResource[] = plannedResources
     .map((entry) => asRecord(entry))
     .filter((entry) => asString(entry.address) !== undefined && asString(entry.type) !== undefined)
@@ -389,13 +419,7 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
       const domainResource = resources.find((candidate) => candidate.address === address)
       const domainLiteral = domainResource !== undefined ? asString(domainResource.values.domain) : undefined
-      // The witness that the concrete `apiable-<tenant>` literal is the conventional deploy-time tenant
-      // rendering: the `domain` expression references the top-level var.name (the tenant input), read from
-      // configuration since planned_values resolves the var to its literal and hides the binding. So the
-      // same tenant's domain reconciles with the published one-click `apiable-@ref:TenantName` rendering,
-      // while a substituted host not bound to the tenant input keeps its literal and still diverges.
-      const boundToTenantVar = asStringArray(asRecord(expressions.domain).references).includes(TENANT_NAME_VAR_REFERENCE)
-      const domain = domainLiteral !== undefined ? canonicaliseHostedDomain(domainLiteral, boundToTenantVar) : undefined
+      const domain = domainLiteral !== undefined ? canonicaliseHostedDomain(hostedDomainWitness(domainLiteral, expressions.domain, tenantInput)) : undefined
       if (poolTarget !== undefined) {
         const poolRef = refToNode.get(poolTarget.address) ?? poolTarget.address
         poolRefByDomainAddress.set(address, poolRef)
