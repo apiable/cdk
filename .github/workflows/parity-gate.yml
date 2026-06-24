@@ -287,24 +287,30 @@ jobs:
           terraform fmt -check
           terraform validate
 
-      # Engine-level no-widen proof for the guardrail: a bare-wildcard operator carve-out (which would
-      # exempt every principal and defeat the Deny) must be refused by the module's own variable validation.
+      # Engine-level no-widen proof for the guardrail: an operator carve-out that matches every principal
+      # via StringNotLike — defeating the Deny (NotApplicable for all writers, a total fail-OPEN) — must be
+      # refused by the module's own variable validation. The bare "*", the wildcard-account ::*:* and the
+      # all-roles ::*:role/* are the exact bypasses, each fed here and each required to fail the plan.
       - name: terraform rejects a carve-out-widening value
         working-directory: terraform/apiable-logs-guardrail
         env:
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
         run: |
-          if terraform plan -input=false \
-            -var 'sanctioned_logging_buckets=["apiable-logs-prod"]' \
-            -var 'sanctioned_delivery_role_arns=["arn:aws:iam::111111111111:role/apiable-usagelogs-firehose"]' \
-            -var 'operator_writer_arns=["*"]' \
-            -var org_target_id=ou-root-loggingou \
-            -var org_id=o-exampleorgid 2>plan-err.log; then
-            echo "expected the bare-wildcard operator_writer_arns to be rejected, but the plan succeeded"
-            exit 1
-          fi
-          grep -q 'never a bare' plan-err.log
+          for bad in '["*"]' '["arn:aws:iam::*:*"]' '["arn:aws:iam::*:role/*"]'; do
+            if terraform plan -input=false \
+              -var 'sanctioned_logging_buckets=["apiable-logs-prod"]' \
+              -var 'sanctioned_delivery_role_arns=["arn:aws:iam::111111111111:role/apiable-usagelogs-firehose"]' \
+              -var "operator_writer_arns=${bad}" \
+              -var org_target_id=ou-root-loggingou \
+              -var org_id=o-exampleorgid 2>plan-err.log; then
+              echo "expected operator_writer_arns=${bad} to be rejected, but the plan succeeded"
+              exit 1
+            fi
+            grep -q 'concrete 12-digit account' plan-err.log || {
+              echo "operator_writer_arns=${bad} was rejected but not by the account-id validation"; cat plan-err.log; exit 1;
+            }
+          done
 
       # Ground-truth the guardrail Terraform leg under genuine credentials: the bucket policy grants by the
       # deploying account (data.aws_caller_identity), which only a credentialed plan in the apiable-logging

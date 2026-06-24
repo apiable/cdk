@@ -28,21 +28,23 @@ variable "sanctioned_delivery_role_arns" {
 # Closed operator carve-out: the known logging-account principals that legitimately write to S3 outside
 # the sanctioned buckets (service-linked roles, break-glass admin). The SCP Deny exempts exactly these
 # via StringNotLike aws:PrincipalArn; everything else — including a renamed hand-rolled delivery role — is
-# denied by default. Patterns are allowed (account-scoped role-path globs) but never a bare "*", which
-# would exempt every principal and defeat the guardrail. Empty is allowed: it means no exemptions.
+# denied by default. Each entry must name a CONCRETE 12-digit account: a role-path glob is allowed
+# (arn:aws:iam::123456789012:role/*) but a wildcard account (arn:aws:iam::*:*) would match every
+# principal via StringNotLike and turn the Deny into NotApplicable — a total fail-OPEN. Empty is allowed:
+# it means no exemptions.
 variable "operator_writer_arns" {
-  description = "aws:PrincipalArn allow-list (StringNotLike) of operator principals exempt from the firehose-destination Deny — the closed carve-out, never a bare wildcard"
+  description = "aws:PrincipalArn allow-list (StringNotLike) of operator principals exempt from the firehose-destination Deny — the closed carve-out, account-scoped, never a wildcard account"
   type        = list(string)
   default     = []
 
   validation {
-    condition     = alltrue([for arn in var.operator_writer_arns : can(regex("^arn:aws:iam::[0-9*][0-9*]*:", arn)) && arn != "*" && !strcontains(arn, "::*:role/*")])
-    error_message = "operator_writer_arns must be account-scoped IAM principal ARNs/patterns, never a bare '*' or an all-roles glob that would exempt every principal."
+    condition     = alltrue([for arn in var.operator_writer_arns : can(regex("^arn:aws:iam::[0-9]{12}:[a-z-]+/", arn)) && arn != "*"])
+    error_message = "operator_writer_arns must be IAM principal ARNs scoped to a concrete 12-digit account (e.g. arn:aws:iam::123456789012:role/usage-delivery or .../role/*), never a wildcard account such as arn:aws:iam::*:* that would exempt every principal."
   }
 }
 
 variable "org_target_id" {
-  description = "Organizations OU or account id the SCP attaches to (spans the tenant + logging accounts)"
+  description = "Organizations OU or account id the SCP attaches to (spans the tenant + logging accounts). Attach to a logging-scoped OU, not the Org root, in a multi-account Org — a root attachment denies org-wide except the sanctioned bucket."
   type        = string
 
   validation {

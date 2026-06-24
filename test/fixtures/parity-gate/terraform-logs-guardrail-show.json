@@ -14,7 +14,7 @@
             "name": "apiable-firehose-destination-guardrail",
             "description": "Deny any logging-family principal s3:Put* outside the sanctioned buckets, except the operator carve-out",
             "type": "SERVICE_CONTROL_POLICY",
-            "content": "{\"Statement\":[{\"Action\":[\"s3:PutObject\",\"s3:PutObjectAcl\",\"s3:PutObjectTagging\"],\"Condition\":{\"StringNotLike\":{\"aws:PrincipalArn\":[\"arn:aws:iam::111111111111:role/aws-service-role/backup.amazonaws.com/AWSServiceRoleForBackup\"]}},\"Effect\":\"Deny\",\"NotResource\":[\"arn:aws:s3:::apiable-logs-prod/*\"],\"Sid\":\"DenyWriteOutsideSanctionedBuckets\"}],\"Version\":\"2012-10-17\"}"
+            "content": "{\"Statement\":[{\"Action\":[\"s3:Put*\"],\"Condition\":{\"StringNotLike\":{\"aws:PrincipalArn\":[\"arn:aws:iam::111111111111:role/aws-service-role/backup.amazonaws.com/AWSServiceRoleForBackup\"]}},\"Effect\":\"Deny\",\"NotResource\":[\"arn:aws:s3:::apiable-logs-prod/*\"],\"Sid\":\"DenyWriteOutsideSanctionedBuckets\"}],\"Version\":\"2012-10-17\"}"
           }
         },
         {

@@ -17,10 +17,14 @@ channel scopes its own delivery role.
    `var.sanctioned_logging_buckets`. The SCP `NotResource`, every sanctioned bucket policy, and the
    exported allow-list output all derive from this one list. Entries are concrete bucket names, never
    a glob: a `apiable-logs-*` wildcard would admit an attacker-named `apiable-logs-evil` bucket.
-2. **Authoritative Organizations SCP** — denies the firehose delivery role any `s3:PutObject` /
-   `s3:PutObjectAcl` / `s3:PutObjectTagging` to a resource outside the sanctioned set, scoped by
-   `aws:PrincipalArn` to the delivery-role pattern so it does not over-deny other account writers.
-   Attached at the Org OU spanning the tenant + logging accounts, so it holds for every channel.
+2. **Authoritative Organizations SCP** — a **principal-unscoped** Deny on `s3:Put*` to any resource
+   outside the sanctioned set, attached at the logging OU spanning the tenant + logging accounts. The
+   Deny is *not* keyed on the delivery-role name (a name a distrusted channel chooses and could forge);
+   it bites by default on every principal and carves out only a **closed operator allow-list** via
+   `StringNotLike aws:PrincipalArn = operator_writer_arns` (service-linked roles, break-glass admin). A
+   hand-rolled channel that renames its delivery role is therefore denied whatever it is named, and only
+   the operator can widen the carve-out — which the variable validation pins to concrete-account ARNs so
+   a wildcard-account entry cannot silently exempt everyone.
 3. **Defence-in-depth bucket policy** — on each sanctioned bucket, only a sanctioned firehose delivery
    role may `PutObject`, and only from the central account within the Apiable Org
    (`aws:SourceAccount` + `aws:PrincipalOrgID`).
@@ -32,10 +36,17 @@ module "apiable_logs_guardrail" {
   source                        = "./terraform/apiable-logs-guardrail"
   sanctioned_logging_buckets    = ["apiable-logs-prod"]
   sanctioned_delivery_role_arns = ["arn:aws:iam::111111111111:role/apiable-usagelogs-firehose"]
+  # The closed operator carve-out: principals exempt from the Deny (StringNotLike aws:PrincipalArn).
+  # Account-scoped ARNs only — a wildcard account would exempt every principal. Empty = no exemptions.
+  operator_writer_arns          = ["arn:aws:iam::111111111111:role/aws-service-role/backup.amazonaws.com/AWSServiceRoleForBackup"]
   org_target_id                 = "ou-root-loggingou"
   org_id                        = "o-exampleorgid"
 }
 ```
+
+Attach `org_target_id` to a **logging-scoped OU**, not the Org root, in a multi-account Org: a root
+attachment applies the Deny org-wide, denying `s3:Put*` everywhere except the sanctioned bucket. (A
+single-account Org whose root is the only attach point is the deliberate exception.)
 
 ## Why a bucket policy alone is not enough
 

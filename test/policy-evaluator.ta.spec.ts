@@ -24,15 +24,15 @@ const RENAMED_HANDROLLED_ROLE = 'arn:aws:iam::111111111111:role/usage-delivery'
 const SANCTIONED_OBJ = 'arn:aws:s3:::apiable-logs-prod/x'
 const EXFIL_OBJ = 'arn:aws:s3:::attacker-exfil-bucket/x'
 
-// The guardrail SCP as the module renders it: a principal-UNSCOPED Deny that exempts only the operator
-// carve-out via StringNotLike aws:PrincipalArn — so it cannot be evaded by a role's chosen name.
+// The guardrail SCP as the module renders it: a principal-UNSCOPED Deny on s3:Put* that exempts only the
+// operator carve-out via StringNotLike aws:PrincipalArn — so it cannot be evaded by a role's chosen name.
 const SCP = {
   Version: '2012-10-17',
   Statement: [
     {
       Sid: 'DenyWriteOutsideSanctionedBuckets',
       Effect: 'Deny',
-      Action: ['s3:PutObject', 's3:PutObjectAcl', 's3:PutObjectTagging'],
+      Action: ['s3:Put*'],
       NotResource: ['arn:aws:s3:::apiable-logs-prod/*'],
       Condition: { StringNotLike: { 'aws:PrincipalArn': [OPERATOR_WRITER] } },
     },
@@ -82,13 +82,65 @@ describe('013-1-24 guardrail oracle — the carve-out gates the Deny, the role n
   })
 })
 
+describe('013-1-24 guardrail oracle — the carve-out exempts ONLY its listed principal, never everyone (F-R1)', () => {
+  // The tightest LEGAL carve-out the variable validation now admits: a single concrete-account principal.
+  // The fail-OPEN this closes is a carve-out of arn:aws:iam::*:* (or ::*:role/*), which StringNotLike would
+  // match against EVERY principal, turning the Deny into NotApplicable for all writers — a total fail-open.
+  // The validation rejects those wildcard-account carve-outs (proven by the CI no-widen leg); here we prove
+  // the EFFECT a legal carve-out has: it exempts exactly the named principal and no one else.
+  const TIGHT_CARVE_OUT = 'arn:aws:iam::123456789012:role/usage-delivery'
+  const scpWithCarveOut = (carveOut: string[]) => ({
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Sid: 'DenyWriteOutsideSanctionedBuckets',
+        Effect: 'Deny',
+        Action: ['s3:Put*'],
+        NotResource: ['arn:aws:s3:::apiable-logs-prod/*'],
+        Condition: { StringNotLike: { 'aws:PrincipalArn': carveOut } },
+      },
+    ],
+  })
+
+  it('the exact carved-out principal writing outside the allow-list is exempt (NotApplicable)', () => {
+    const scp = scpWithCarveOut([TIGHT_CARVE_OUT])
+    expect(evaluateScp(scp, inOrg({ principalArn: TIGHT_CARVE_OUT, resourceArn: EXFIL_OBJ }))).toBe('NotApplicable')
+  })
+
+  it('a DIFFERENT attacker principal sharing the carved-out role NAME is STILL denied — the carve-out is the exact ARN, not the name', () => {
+    // A same-named role in a different account, the exact bypass a name-keyed carve-out would have let
+    // through: it is not the carved-out ARN, so the StringNotLike does not exempt it and the Deny bites.
+    const scp = scpWithCarveOut([TIGHT_CARVE_OUT])
+    const attacker = 'arn:aws:iam::999988887777:role/usage-delivery'
+    expect(evaluateScp(scp, inOrg({ principalArn: attacker, resourceArn: EXFIL_OBJ }))).toBe('Deny')
+  })
+
+  it('an arbitrary attacker principal is STILL denied under the tightest legal carve-out (the carve-out is not "everyone")', () => {
+    const scp = scpWithCarveOut([TIGHT_CARVE_OUT])
+    expect(evaluateScp(scp, inOrg({ principalArn: RENAMED_HANDROLLED_ROLE, resourceArn: EXFIL_OBJ }))).toBe('Deny')
+  })
+
+  it('the fail-OPEN a wildcard-account carve-out WOULD cause is exhibited at the oracle (which is why the variable validation rejects it)', () => {
+    // This proves the threat the F-R1 validation guards against is real: were arn:aws:iam::*:* ever to reach
+    // the rendered SCP, StringNotLike would match every principal and the Deny would never apply. The
+    // variable validation (and the CI no-widen leg) prevent this value from ever being deployed.
+    const scp = scpWithCarveOut(['arn:aws:iam::*:*'])
+    expect(evaluateScp(scp, inOrg({ principalArn: RENAMED_HANDROLLED_ROLE, resourceArn: EXFIL_OBJ }))).toBe('NotApplicable')
+  })
+})
+
 describe('013-1-24 guardrail oracle — write-equivalent actions are covered', () => {
-  it.each(['s3:PutObject', 's3:PutObjectAcl', 's3:PutObjectTagging'])(
-    'the firehose role is denied %s outside the allow-list (ACL/tag are write-equivalent exfil vectors)',
-    (action) => {
-      expect(evaluateScp(SCP, inOrg({ action, resourceArn: EXFIL_OBJ }))).toBe('Deny')
-    },
-  )
+  // s3:Put* sweeps every object-write verb: PutObject + its ACL/tagging exfil vectors AND the object-lock
+  // verbs (legal-hold / retention) a narrow PutObject-only enumeration would have missed.
+  it.each([
+    's3:PutObject',
+    's3:PutObjectAcl',
+    's3:PutObjectTagging',
+    's3:PutObjectLegalHold',
+    's3:PutObjectRetention',
+  ])('the firehose role is denied %s outside the allow-list', (action) => {
+    expect(evaluateScp(SCP, inOrg({ action, resourceArn: EXFIL_OBJ }))).toBe('Deny')
+  })
 
   it('a read action outside the allow-list is NOT denied by this guardrail (it governs writes only)', () => {
     expect(evaluateScp(SCP, inOrg({ action: 's3:GetObject', resourceArn: EXFIL_OBJ }))).toBe('NotApplicable')

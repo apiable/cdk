@@ -1,10 +1,8 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  # Single operator-owned source of the sanctioned destination set; the operator-owned layers below (the
-  # SCP NotResource + the per-bucket policy) derive from it. The channel's own delivery scope is BACKSTOPPED
-  # by these, not derived — the channel is the distrusted party, so it is constrained, never trusted to derive.
-  # Concrete bucket ARNs only, never a wildcard (arn:aws:s3:::apiable-logs-* would admit an attacker bucket).
+  # The single operator-owned source of the sanctioned destination set; the SCP NotResource and the
+  # per-bucket policy below both derive from it. Concrete bucket ARNs only — never a wildcard.
   sanctioned_bucket_arns = [for name in var.sanctioned_logging_buckets : "arn:aws:s3:::${name}"]
   sanctioned_object_arns = [for arn in local.sanctioned_bucket_arns : "${arn}/*"]
 }
@@ -25,9 +23,7 @@ resource "aws_organizations_policy" "firehose_destination_guardrail" {
         Sid    = "DenyWriteOutsideSanctionedBuckets"
         Effect = "Deny"
         Action = [
-          "s3:PutObject",
-          "s3:PutObjectAcl",
-          "s3:PutObjectTagging",
+          "s3:Put*",
         ]
         NotResource = local.sanctioned_object_arns
         Condition = {
