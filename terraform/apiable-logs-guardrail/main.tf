@@ -1,19 +1,18 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  # Single operator-owned source of the sanctioned destination set; every layer below derives from it.
+  # Single operator-owned source of the sanctioned destination set; the operator-owned layers below (the
+  # SCP NotResource + the per-bucket policy) derive from it. The channel's own delivery scope is BACKSTOPPED
+  # by these, not derived — the channel is the distrusted party, so it is constrained, never trusted to derive.
   # Concrete bucket ARNs only, never a wildcard (arn:aws:s3:::apiable-logs-* would admit an attacker bucket).
   sanctioned_bucket_arns = [for name in var.sanctioned_logging_buckets : "arn:aws:s3:::${name}"]
   sanctioned_object_arns = [for arn in local.sanctioned_bucket_arns : "${arn}/*"]
 }
 
-# Authoritative control, attached at the Org OU spanning the tenant + logging accounts so it holds above
-# every channel — including a hand-rolled one. The Deny is principal-UNSCOPED on purpose: it denies the
-# write to any destination outside the sanctioned set for every principal in the logging-account family,
-# carving out only operator_writer_arns. A renamed delivery role a distrusted channel hand-rolls is thus
-# denied by default — the control trusts an operator-owned closed allow-list, never the role's own name
-# (a name the distrusted channel chooses). The allow-list family scope (this is the metering logging
-# account, not a general-purpose workload account) keeps the carve-out small and known.
+# Authoritative control, attached at the Org OU above every channel (incl. a hand-rolled one). The Deny is
+# principal-UNSCOPED on purpose, carving out only operator_writer_arns: a renamed delivery role is denied by
+# default whatever it is named (the control trusts an operator-owned closed allow-list, never the role name
+# the distrusted channel chooses). Scoped to the metering logging family, so the carve-out stays small.
 resource "aws_organizations_policy" "firehose_destination_guardrail" {
   name        = "apiable-firehose-destination-guardrail"
   description = "Deny any logging-family principal s3:Put* outside the sanctioned buckets, except the operator carve-out"

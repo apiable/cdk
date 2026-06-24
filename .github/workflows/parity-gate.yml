@@ -275,6 +275,61 @@ jobs:
           rm -f ci_provider_override.tf tfplan.bin
           npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usagetokens-stream-show.json ${{ env.AWS_REGION }}
 
+      # Terraform channel well-formedness for the operator-owned firehose-destination guardrail (no cloud
+      # account: validate needs only the provider plugin). The committed terraform-logs-guardrail-show.json
+      # is the entire oracle for the deploy-time guardrail spec's six scenarios, so its regen ground-truth
+      # below fails the gate if the fixture drifts from main.tf (the SCP Deny action set, allow-list, and
+      # operator carve-out are modelled by value — see scripts/parity-tf-regen-check.ts).
+      - name: terraform validate (logs-guardrail module)
+        working-directory: terraform/apiable-logs-guardrail
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      # Engine-level no-widen proof for the guardrail: a bare-wildcard operator carve-out (which would
+      # exempt every principal and defeat the Deny) must be refused by the module's own variable validation.
+      - name: terraform rejects a carve-out-widening value
+        working-directory: terraform/apiable-logs-guardrail
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: |
+          if terraform plan -input=false \
+            -var 'sanctioned_logging_buckets=["apiable-logs-prod"]' \
+            -var 'sanctioned_delivery_role_arns=["arn:aws:iam::111111111111:role/apiable-usagelogs-firehose"]' \
+            -var 'operator_writer_arns=["*"]' \
+            -var org_target_id=ou-root-loggingou \
+            -var org_id=o-exampleorgid 2>plan-err.log; then
+            echo "expected the bare-wildcard operator_writer_arns to be rejected, but the plan succeeded"
+            exit 1
+          fi
+          grep -q 'never a bare' plan-err.log
+
+      # Ground-truth the guardrail Terraform leg under genuine credentials: the bucket policy grants by the
+      # deploying account (data.aws_caller_identity), which only a credentialed plan in the apiable-logging
+      # account resolves — so it runs on the same isolated path as the logs-bucket leg, fenced on the
+      # logging-account credential (the default per-PR gate, with no such secret, skips it).
+      - name: terraform regen ground-truths the committed fixture (logs-guardrail, credentialed)
+        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        working-directory: terraform/apiable-logs-guardrail
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.APIABLE_LOGGING_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          terraform plan -input=false -refresh=false \
+            -var 'sanctioned_logging_buckets=["apiable-logs-prod"]' \
+            -var 'sanctioned_delivery_role_arns=["arn:aws:iam::111111111111:role/apiable-usagelogs-firehose","arn:aws:iam::111111111111:role/apiable-usagetokens-firehose"]' \
+            -var 'operator_writer_arns=["arn:aws:iam::111111111111:role/aws-service-role/backup.amazonaws.com/AWSServiceRoleForBackup"]' \
+            -var org_target_id=ou-root-loggingou \
+            -var org_id=o-exampleorgid \
+            -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f tfplan.bin
+          DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-logs-guardrail-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
+
       # The static three-tier diff + OAuth2/OIDC conformance specs are the gate itself: a CDK ↔ CFN
       # ↔ Terraform divergence fails the build with a report naming the divergent piece. The
       # Terraform side diffs the committed `terraform show -json` fixture; refreshing that fixture
