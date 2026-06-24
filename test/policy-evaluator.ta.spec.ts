@@ -76,8 +76,8 @@ describe('013-1-24 guardrail oracle — the carve-out gates the Deny, the role n
   })
 
   it('a hand-rolled role named OUTSIDE apiable-*-firehose (not in the carve-out) is STILL denied outside the allow-list (closes the F1 name-escape)', () => {
-    // The forgeable-name design returned NotApplicable here — the role name no longer buys an exemption;
-    // only membership of the operator-owned carve-out does, and a hand-rolled channel cannot add itself.
+    // The role name buys no exemption: only membership of the operator-owned carve-out does, and a
+    // hand-rolled channel cannot add itself — so a renamed delivery role is denied by default.
     expect(evaluateScp(SCP, inOrg({ principalArn: RENAMED_HANDROLLED_ROLE, resourceArn: EXFIL_OBJ }))).toBe('Deny')
   })
 })
