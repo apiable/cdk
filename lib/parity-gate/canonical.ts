@@ -40,6 +40,8 @@ const TF_KIND: Readonly<Record<string, string>> = {
   aws_kinesis_firehose_delivery_stream: 'firehose-delivery-stream',
   aws_cloudwatch_log_group: 'logs-log-group',
   aws_cloudwatch_log_stream: 'logs-log-stream',
+  aws_organizations_policy: 'organizations-scp',
+  aws_organizations_policy_attachment: 'organizations-policy-attachment',
 }
 
 /** Canonical kind for a CloudFormation resource type; an unmapped type keeps its raw name so an unexpected resource still surfaces in the graph rather than vanishing. */
@@ -124,11 +126,14 @@ export const ENFORCED_DECLARED_ID_KINDS: ReadonlySet<string> = new Set([
  * name), the api-gateway authorizer (self-keyed by Name), the s3 bucket-policy (anchored to its
  * bucket — AWS permits one policy per bucket, so two on one bucket are a duplicate identity), and the
  * firehose delivery stream (anchored to its delivery role, whose declared id keys it — its destination,
- * routing prefix, compression, and server-side-logging flag are load-bearing value rows). The pooled
- * inline-policy / lambda-permission / user-pool-domain kinds are excluded because they emit NO value row
- * (their security is the grant multiset, which enlarges rather than clobbers), never because they are
- * "attached"; the presence-only log-group / log-stream kinds carry no value row either. A structural
- * test keeps this set in step with the reducers' value-writing sites.
+ * routing prefix, compression, and server-side-logging flag are load-bearing value rows), and the
+ * Organizations SCP (self-keyed by its policy name — AWS permits one policy per name; its Deny action
+ * set, NotResource allow-list, and condition are load-bearing value rows the regen-check compares so the
+ * committed fixture cannot drift from main.tf). The pooled inline-policy / lambda-permission /
+ * user-pool-domain kinds are excluded because they emit NO value row (their security is the grant
+ * multiset, which enlarges rather than clobbers), never because they are "attached"; the presence-only
+ * log-group / log-stream kinds carry no value row either. A structural test keeps this set in step with
+ * the reducers' value-writing sites.
  */
 export const VALUE_BEARING_KINDS: ReadonlySet<string> = new Set<string>([
   ...DECLARED_ID_KINDS,
@@ -137,6 +142,7 @@ export const VALUE_BEARING_KINDS: ReadonlySet<string> = new Set<string>([
   'apigateway-authorizer',
   's3-bucket-policy',
   'firehose-delivery-stream',
+  'organizations-scp',
 ])
 
 /**

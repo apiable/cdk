@@ -145,6 +145,10 @@ const discriminatorFor = (
       return canonicaliseAuthorizerName(normaliseLogical(tfResolve(values.name), region)) || 'authorizer'
     case 'lambda-function':
       return normaliseLogical(tfResolve(values.function_name), region) || 'function'
+    case 'organizations-scp':
+      // The SCP is self-keyed by its policy name (AWS permits one policy per name); its Deny document is
+      // gate-compared by value below, so two SCPs sharing a name collide on identity rather than clobber.
+      return asString(values.name) ?? 'scp'
     default:
       return undefined
   }
@@ -201,8 +205,50 @@ const streamS3Destination = (values: Record<string, unknown>): Record<string, un
   return block(values.s3_configuration)
 }
 
+/**
+ * An Organizations SCP statement reduced to one stable string capturing the whole security decision —
+ * effect, the sorted action set, the sorted allow-list it denies OUTSIDE of (`NotResource`) or names
+ * (`Resource`), and the sorted condition (the operator carve-out). Sorting every axis means a channel's
+ * key order never matters, while a narrowed action, a widened allow-list, or a loosened carve-out all
+ * change the string and fail the regen-check — the drift the committed fixture could otherwise hide.
+ */
+const scpStatementValue = (statement: Record<string, unknown>): string => {
+  const effect = asString(statement.Effect) ?? 'Allow'
+  // Action / NotResource / Resource each render as a string or a list in a policy document; coerce a
+  // bare string to a one-element list so both forms compare alike.
+  const listOf = (value: unknown): string[] => (typeof value === 'string' ? [value] : asStringArray(value))
+  const actions = [...new Set(listOf(statement.Action))].sort()
+  const notResource = [...new Set(listOf(statement.NotResource))].sort()
+  const resource = [...new Set(listOf(statement.Resource))].sort()
+  const condition = scpConditionValue(statement.Condition)
+  return JSON.stringify({ effect, actions, notResource, resource, condition })
+}
+
+/** A statement's `Condition` reduced to a stable, key-order-independent value (the operator carve-out).
+ * Each operand renders as a string or a list; a bare string is coerced to a one-element list. */
+const scpConditionValue = (condition: unknown): unknown => {
+  if (!isRecord(condition)) return null
+  const listOf = (value: unknown): string[] => (typeof value === 'string' ? [value] : asStringArray(value))
+  return Object.keys(condition)
+    .sort()
+    .map((operator) => {
+      const operands = asRecord(condition[operator])
+      return [operator, Object.keys(operands).sort().map((key) => [key, [...listOf(operands[key])].sort()] as const)] as const
+    })
+}
+
 const collectValues = (kind: string, values: Record<string, unknown>): Record<string, string> => {
   const out: Record<string, string> = {}
+  if (kind === 'organizations-scp') {
+    // The SCP's Deny document is the entire control; serialise each statement by value so a drifted
+    // action set / allow-list / carve-out between main.tf and the committed fixture fails the regen-check.
+    const doc = asRecord(parseJson(values.content))
+    asArray(doc.Statement).forEach((stmtUnknown, index) => {
+      const statement = asRecord(stmtUnknown)
+      const sid = asString(statement.Sid) ?? String(index)
+      out[`scp-statement:${sid}`] = scpStatementValue(statement)
+    })
+  }
   if (kind === 'firehose-delivery-stream') {
     // The routing prefixes, compression format, and server-side logging flag as load-bearing value rows,
     // mirroring the CloudFormation side, so a divergent destination routing or a dropped logging block is
