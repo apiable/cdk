@@ -472,11 +472,14 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
     })
   })
 
-  // S5 — the gate stays unwired from any live baseline until the closure lands (guardrail)
-  // Asserted as a static-source invariant: assertNoStranglerDrift / isCfnEquivalent / cfnDifferences
-  // are reachable only from test specs and the lib barrel — never a deploy step, CI workflow, or the
-  // parity harness — so the fail-open cannot ship against a real before/after pair.
-  it('S5: the strangler API is not wired to any real baseline (deploy / CI / parity harness)', () => {
+  // S5 — the closure has LANDED: the gate is now legitimately wired to real baselines.
+  // 1-17's pre-closure guardrail required the strangler API (assertNoStranglerDrift / isCfnEquivalent /
+  // cfnDifferences) to stay test-only UNTIL the closure — 1-22 made the resolver scale-safe; 1-23 wired
+  // the real cognito/authorizer channels through it. Both are now `done`, so the API is wired beyond test
+  // specs (deploy / CI / parity harness) BY DESIGN. Updated from the "must stay unwired" guard to its
+  // fulfilled post-closure form: the gate IS wired — a regression that un-wired it fails here.
+  // [1-17 S5/AC4 guardrail superseded by 013-1-23 (done); the fail-open is verified-safe by that story.]
+  it('S5: the closure landed — the strangler API is now wired to real baselines (1-22 scale-safe + 1-23)', () => {
     const fs = require('fs') as typeof import('fs')
     const path = require('path') as typeof import('path')
     const repoRoot = path.resolve(__dirname, '..')
@@ -499,9 +502,10 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       }
     }
     walk(repoRoot)
-    // every caller must be a test spec — no deploy-*.sh, no .github workflow, no parity-gate harness
+    // the closure landed (1-22 scale-safe + 1-23 real-channel wiring): the gate is now wired beyond test
+    // specs into real baselines (deploy / CI / parity harness), by design — confirm the wiring shipped.
     const nonTestCallers = callers.filter((f) => !/\.spec\.ts$/.test(f))
-    expect(nonTestCallers).toEqual([])
+    expect(nonTestCallers.length).toBeGreaterThan(0)
   })
 
   // S6 — the existing drift verdicts are unchanged (regression)
