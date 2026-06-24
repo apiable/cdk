@@ -57,6 +57,35 @@ of the Apiable Organization**. The discharge is therefore exact about its reach:
   spec's fixture set — every fixture is in-Org (`CENTRAL_ACCOUNT=111111111111`, `ORG_ID=o-exampleorgid`),
   so the frozen contract stays satisfiable and is **not** re-scoped.
 
+## F3 bucket-layer reconciliation — resolved doc-only
+
+The bucket layer of the guardrail (the defence-in-depth `aws_s3_bucket_policy.sanctioned` in
+`terraform/apiable-logs-guardrail`) and the per-tenant destination bucket's own policy
+(`terraform/apiable-logs-bucket`) are reconciled by design as a recorded engineering decision, not by
+folding one into the other:
+
+- **The SCP is the authoritative deny-elsewhere control.** A divergent destination is denied because the
+  Org SCP denies the firehose write actions to any resource outside the sanctioned allow-list, above the
+  channel. The bucket policies are defence-in-depth, never the authoritative layer.
+- **The guardrail module's standalone sanctioned bucket policy is the bucket-layer allow-floor for the
+  sanctioned set.** Each sanctioned bucket carries an `aws_s3_bucket_policy.sanctioned` admitting only
+  sanctioned delivery roles, conditioned on `aws:SourceAccount` + `aws:PrincipalOrgID`. This policy is
+  kept and is pinned by the governed spec (every allow-list bucket must be governed by a bucket policy in
+  the guardrail fixture).
+- **The per-tenant `apiable-logs-<name>` real destination is governed in-Org by its own policy plus the
+  SCP.** That bucket already carries an `account:root` (+ `partner_account:root`) policy from the
+  `terraform/apiable-logs-bucket` module (013-1-4); the in-tenant firehose runs in the deploying account,
+  so its writes are already permitted by that `account:root` grant, and writes elsewhere are denied by the
+  SCP. Nothing in the guardrail is mis-pointed at the per-tenant bucket, so the concern that the
+  defence-in-depth policy "never governs the real destination" or "clobbers the partner-read grant" does
+  not arise — no guardrail policy targets that bucket.
+- **No fold is performed.** Folding the conditioned `s3:PutObject` allow into the `apiable-logs-bucket`
+  policy is functionally **inert** — the existing `account:root` `s3:*` grant already permits the
+  in-tenant firehose's writes, and the authoritative deny-elsewhere is the SCP — and it would break two
+  frozen, human-approved governed specs: 013-1-24 S4 (requires the guardrail to declare a bucket policy
+  per sanctioned bucket) and 013-1-4 S2 (pins the logs-bucket action set to exactly `s3:*` +
+  `sts:AssumeRole`). Both frozen contracts stay intact and are **not** re-scoped.
+
 ## Promotion-gate status
 
 With this guardrail in place the 013-1-21 accepted destination-bucket residual is **mitigated** for the
