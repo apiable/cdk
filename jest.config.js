@@ -6,9 +6,10 @@ module.exports = {
   maxWorkers: 1,
   transform: {
     '^.+\\.tsx?$': ['ts-jest', { isolatedModules: true }],
-    // The greenfield authorizer ships as an ESM .mjs asset; transform it so its real functions execute
-    // in handler unit tests (no copied logic), rather than only asserting on its source text.
-    '^.+\\.mjs$': ['ts-jest', { isolatedModules: true }],
+    // The greenfield authorizer ships as an ESM .mjs asset. ts-jest cannot down-level it (TypeScript forces
+    // ESM emit by the .mjs extension), so a dedicated transformer compiles it to CommonJS — the real handler
+    // functions then execute in the handler unit tests rather than only being asserted against as source text.
+    '^.+\\.mjs$': '<rootDir>/test/support/mjs-commonjs-transformer.cjs',
   },
   moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'json', 'node'],
   // Seeds the authorizer's runtime env before its handler module is imported (cold-start parse), so the
