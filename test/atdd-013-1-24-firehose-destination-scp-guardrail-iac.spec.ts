@@ -31,8 +31,27 @@ const ORG_ID = 'o-exampleorgid'
 // The sanctioned destination + the sanctioned delivery roles the committed fixture provisions.
 const SANCTIONED_BUCKET = 'apiable-logs-prod'
 const SANCTIONED_BUCKET_ARN = `arn:aws:s3:::${SANCTIONED_BUCKET}`
-const USAGELOGS_ROLE_ARN = `arn:aws:iam::${CENTRAL_ACCOUNT}:role/apiable-usagelogs-firehose`
-const USAGETOKENS_ROLE_ARN = `arn:aws:iam::${CENTRAL_ACCOUNT}:role/apiable-usagetokens-firehose`
+
+// The delivery-role name a channel resolves to at deploy time. Both publishing channels mint the role
+// from the SAME convention — the CDK construct's `roleName` (lib/logs-stream/logs-stream.ts) and the
+// hand-rolled Terraform module's `name` (terraform/apiable-usagelogs-stream/main.tf) — so the three
+// channels are NOT distinguished by their legitimate role identity. The deliveryRoleArn helper below
+// reads that convention from the real sources, and a guard test fails if either source drifts from it,
+// so this spec cannot silently pass on a stale hard-coded ARN (the F5 hazard).
+const deliveryRoleArn = (variant: string): string =>
+  `arn:aws:iam::${CENTRAL_ACCOUNT}:role/apiable-${variant}-firehose`
+const USAGELOGS_ROLE_ARN = deliveryRoleArn('usagelogs')
+const USAGETOKENS_ROLE_ARN = deliveryRoleArn('usagetokens')
+
+// A hand-rolled in-Org channel that mints its delivery role under a name OUTSIDE the apiable-*-firehose
+// convention — the exact F1 evasion the forgeable name-match let through. The non-forgeable guardrail
+// must deny it on its destination, not on its (channel-chosen) name.
+const RENAMED_HANDROLLED_ROLE_ARN = `arn:aws:iam::${CENTRAL_ACCOUNT}:role/usage-delivery`
+
+// The two real publishing-channel sources the deliveryRoleArn convention is read from: the CDK construct
+// (mints `roleName: apiable-${name}-firehose`) and the hand-rolled Terraform module (`name = "apiable-${var.name}-firehose"`).
+const CDK_CONSTRUCT_SOURCE = path.join(REPO_ROOT, 'lib/logs-stream/logs-stream.ts')
+const TF_STREAM_SOURCE = path.join(REPO_ROOT, 'terraform/apiable-usagelogs-stream/main.tf')
 
 // The divergent / attacker-controlled destination S1/S3/S5 point a channel at.
 const EXFIL_BUCKET = 'attacker-exfil-bucket'
@@ -220,5 +239,66 @@ describe('013-1-24 deploy-time firehose-destination guardrail (operator-owned, c
     for (const channel of CHANNELS) {
       expect(evaluateDelivery(context, divergentWrite(channel.roleArn))).toBe('Denied')
     }
+  })
+})
+
+// RB1 — the non-forgeable-identity forcing test (closes the F1 role-name escape). NOT a contract scenario
+// (the frozen contract stays intact); it strengthens S1/S5's "hand-rolled" leg by exercising the exact
+// evasion the old forgeable name-match let through: an in-Org hand-rolled channel that names its delivery
+// role OUTSIDE the apiable-*-firehose convention and is NOT in the operator carve-out.
+describe('013-1-24 guardrail — the SCP Deny is non-forgeable (keyed on the operator carve-out, not the role name)', () => {
+  it('a renamed in-Org hand-rolled delivery role (outside apiable-*-firehose, not in the carve-out) writing to a non-sanctioned bucket is STILL denied — by the SCP itself, not a default-deny fallthrough', () => {
+    const show = readGuardrail()
+    const request = divergentWrite(RENAMED_HANDROLLED_ROLE_ARN)
+    // The SCP itself bites: a renamed role buys no exemption — only the operator-owned carve-out does, and
+    // a hand-rolled channel cannot add itself to it. (The forgeable name-match design returned NotApplicable.)
+    expect(evaluateScp(scpDocument(show), request)).toBe('Deny')
+    // and the full delivery decision is Denied across the operator-owned layers.
+    expect(evaluateDelivery(guardrailContext(show), request)).toBe('Denied')
+  })
+
+  it('the renamed hand-rolled role does NOT escape by widening its own identity policy to Resource "*" (S5-style, but with the non-conforming name)', () => {
+    const show = readGuardrail()
+    const widenedIdentityPolicy = {
+      Version: '2012-10-17',
+      Statement: [{ Effect: 'Allow', Action: 's3:PutObject', Resource: '*' }],
+    }
+    const context: GuardrailContext = {
+      scp: scpDocument(show),
+      bucketPolicies: bucketPolicies(show),
+      identityPolicy: widenedIdentityPolicy,
+    }
+    expect(evaluateDelivery(context, divergentWrite(RENAMED_HANDROLLED_ROLE_ARN))).toBe('Denied')
+  })
+
+  it('the SCP does NOT over-deny: an operator carve-out principal writing outside the allow-list is NOT denied (no false-deny of a known operator writer — the SR2/AC3 availability boundary)', () => {
+    const show = readGuardrail()
+    // The carve-out principal is the one the fixture exempts via StringNotLike aws:PrincipalArn. Reading it
+    // from the SCP itself keeps this test honest if the carve-out membership ever changes.
+    const scp = scpDocument(show) as { Statement: { Condition?: { StringNotLike?: { 'aws:PrincipalArn'?: string[] } } }[] }
+    const carveOut = scp.Statement.flatMap((s) => s.Condition?.StringNotLike?.['aws:PrincipalArn'] ?? [])
+    expect(carveOut.length).toBeGreaterThan(0) // the Deny is not naked — it has an operator carve-out
+    const operatorWrite: AccessRequest = {
+      principalArn: carveOut[0],
+      action: 's3:PutObject',
+      resourceArn: `${EXFIL_BUCKET_ARN}/some/object`,
+      sourceAccount: CENTRAL_ACCOUNT,
+      principalOrgId: ORG_ID,
+    }
+    expect(evaluateScp(scpDocument(show), operatorWrite)).toBe('NotApplicable')
+  })
+})
+
+// F5/RB6 — guard the deliveryRoleArn convention against drift in the REAL channel sources, so this spec
+// cannot silently pass on a stale hard-coded ARN if a channel renames its delivery role.
+describe('013-1-24 guardrail — the delivery-role convention is read from the real channel sources (anti-stale)', () => {
+  it('the CDK construct still mints the delivery role as apiable-<name>-firehose (the convention deliveryRoleArn encodes)', () => {
+    const source = fs.readFileSync(CDK_CONSTRUCT_SOURCE, 'utf8')
+    expect(source).toContain('roleName: `apiable-${name}-firehose`')
+  })
+
+  it('the hand-rolled Terraform module still mints the delivery role as apiable-<name>-firehose', () => {
+    const source = fs.readFileSync(TF_STREAM_SOURCE, 'utf8')
+    expect(source).toContain('name = "apiable-${var.name}-firehose"')
   })
 })
