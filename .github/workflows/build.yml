@@ -13,8 +13,7 @@ on:
       - '*.md'
 
 env:
-  # node 20 (lts/iron) is EOL; its synth emits published-template YAML the parity gate cannot parse.
-  NODE_VERSION: '24'
+  NODE_VERSION: lts/iron
   AWS_REGION: eu-central-1
 
 jobs:
