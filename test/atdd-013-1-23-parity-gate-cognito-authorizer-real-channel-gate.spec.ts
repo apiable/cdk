@@ -18,7 +18,6 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack as buildCognitoStack } from '@apiable/cdk-cognito-pool'
@@ -31,24 +30,23 @@ const TF_REGION = 'eu-central-1'
 // deploying account tokenises exactly as the published channel's AWS::AccountId pseudo-parameter.
 const TF_DEPLOY_ACCOUNT = '111111111111'
 
-const PUBLISHED_COGNITO = path.join(REPO_ROOT, 'dist/launchstack/apiable-cognito-pool/1.0.0/template.yaml')
-const PUBLISHED_AUTHORIZER = path.join(REPO_ROOT, 'dist/launchstack/apiable-lambda-authorizer/1.0.0/template.yaml')
+const PUBLISHED_COGNITO = path.join(REPO_ROOT, 'dist/launchstack/apiable-cognito-pool/1.0.0/template.json')
+const PUBLISHED_AUTHORIZER = path.join(REPO_ROOT, 'dist/launchstack/apiable-lambda-authorizer/1.0.0/template.json')
 const TF_COGNITO = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-cognito-pool-show.json')
 const TF_AUTHORIZER = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-lambda-authorizer-show.json')
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
-const loadYaml = (file: string): unknown => yaml.load(fs.readFileSync(file, 'utf8'))
 const loadJson = (file: string): unknown => JSON.parse(fs.readFileSync(file, 'utf8'))
 
 // ── The real cognito-pool channels ───────────────────────────────────────────────────────────────
 const cognitoCdk = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildCognitoStack(new cdk.App())).toJSON(), 'cdk', TF_REGION)
-const cognitoCfn = (): ChannelModel => reduceCloudFormation(loadYaml(PUBLISHED_COGNITO), 'cfn', TF_REGION)
+const cognitoCfn = (): ChannelModel => reduceCloudFormation(loadJson(PUBLISHED_COGNITO), 'cfn', TF_REGION)
 const cognitoTfPlan = (): unknown => loadJson(TF_COGNITO)
 const cognitoTf = (plan: unknown = cognitoTfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
 
 // ── The real authorizer channels ─────────────────────────────────────────────────────────────────
 const authorizerCdk = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildAuthorizerStack(new cdk.App())).toJSON(), 'cdk', TF_REGION)
-const authorizerCfn = (): ChannelModel => reduceCloudFormation(loadYaml(PUBLISHED_AUTHORIZER), 'cfn', TF_REGION)
+const authorizerCfn = (): ChannelModel => reduceCloudFormation(loadJson(PUBLISHED_AUTHORIZER), 'cfn', TF_REGION)
 const authorizerTfPlan = (): unknown => loadJson(TF_AUTHORIZER)
 const authorizerTf = (plan: unknown = authorizerTfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
 
@@ -294,7 +292,7 @@ describe('013-1-23 release parity check — real cognito + authorizer channels',
       TF_REGION,
     )
     const cfnModel = reduceCloudFormation(
-      combinedCfn(loadYaml(PUBLISHED_COGNITO) as { Resources: Record<string, unknown> }, loadYaml(PUBLISHED_AUTHORIZER) as { Resources: Record<string, unknown> }),
+      combinedCfn(loadJson(PUBLISHED_COGNITO) as { Resources: Record<string, unknown> }, loadJson(PUBLISHED_AUTHORIZER) as { Resources: Record<string, unknown> }),
       'cfn',
       TF_REGION,
     )
@@ -340,7 +338,7 @@ describe('013-1-23 release parity check — real cognito + authorizer channels',
     const cfnWith = (a: unknown, b: unknown): { Resources: Record<string, unknown> } =>
       withCfnTrustCondition(
         withCfnTrustCondition(
-          combinedCfn(loadYaml(PUBLISHED_COGNITO) as { Resources: Record<string, unknown> }, loadYaml(PUBLISHED_AUTHORIZER) as { Resources: Record<string, unknown> }) as {
+          combinedCfn(loadJson(PUBLISHED_COGNITO) as { Resources: Record<string, unknown> }, loadJson(PUBLISHED_AUTHORIZER) as { Resources: Record<string, unknown> }) as {
             Resources: Record<string, unknown>
           },
           POOL_ROLE,
@@ -410,10 +408,10 @@ describe('013-1-23 release parity check — real cognito + authorizer channels',
     // The construct stories assert the declared-id tag is present on every taggable primary of each channel;
     // the gate's reconciliation depends on exactly that, so re-assert it here on the real published templates
     // (consistency with the 013-1-7 / 013-1-8 in-spec per-channel cross-checks).
-    const cognitoTemplate = loadYaml(PUBLISHED_COGNITO) as { Resources: Record<string, { Type: string; Properties?: { Tags?: { Key: string; Value: unknown }[]; UserPoolTags?: Record<string, unknown> } }> }
+    const cognitoTemplate = loadJson(PUBLISHED_COGNITO) as { Resources: Record<string, { Type: string; Properties?: { Tags?: { Key: string; Value: unknown }[]; UserPoolTags?: Record<string, unknown> } }> }
     const pool = Object.values(cognitoTemplate.Resources).find((r) => r.Type === 'AWS::Cognito::UserPool')
     expect(pool?.Properties?.UserPoolTags?.['apiable:logical-id']).toBe('apiable-cognito-pool')
-    const authorizerTemplate = loadYaml(PUBLISHED_AUTHORIZER) as { Resources: Record<string, { Type: string; Properties?: { Tags?: { Key: string; Value: unknown }[] } }> }
+    const authorizerTemplate = loadJson(PUBLISHED_AUTHORIZER) as { Resources: Record<string, { Type: string; Properties?: { Tags?: { Key: string; Value: unknown }[] } }> }
     const authorizerFunction = Object.values(authorizerTemplate.Resources).find((r) => r.Type === 'AWS::Lambda::Function')
     const authorizerTag = (authorizerFunction?.Properties?.Tags ?? []).find((tag) => tag.Key === 'apiable:logical-id')
     expect(authorizerTag?.Value).toBe('apiable-lambda-authorizer-fn')

@@ -10,14 +10,13 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack } from '@apiable/cdk-logs-bucket'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-logs-bucket/1.0.0/template.yaml')
+const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-logs-bucket/1.0.0/template.json')
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-logs-bucket-show.json')
 const TF_REGION = 'eu-central-1'
 // The committed fixture's deploying account (CI regenerates it credentialed); supplied so the incidental
@@ -29,7 +28,7 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 // The published one-click stack reduced from a live synth (the CDK channel) and the committed published
 // template (the one-click channel); the hand-rolled module reduced from its committed `terraform show -json`.
 const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk')
-const cfnModel = (): ChannelModel => reduceCloudFormation(yaml.load(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn')
+const cfnModel = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn')
 const tfPlan = (): unknown => JSON.parse(fs.readFileSync(TF_FIXTURE, 'utf8'))
 const tfModel = (plan: unknown = tfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
 
@@ -45,7 +44,7 @@ describe('013-1-15 logs-bucket parity — real CDK + one-click + Terraform artif
   })
 
   it('the published one-click template carries the apiable:logical-id declared identity on its taggable primaries', () => {
-    const template = yaml.load(fs.readFileSync(PUBLISHED_CFN, 'utf8')) as {
+    const template = JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')) as {
       Resources: Record<string, { Type: string; Properties?: { Tags?: { Key: string; Value: unknown }[] } }>
     }
     const taggablePrimaries = Object.values(template.Resources).filter((r) => r.Type === 'AWS::S3::Bucket' || r.Type === 'AWS::IAM::Role')

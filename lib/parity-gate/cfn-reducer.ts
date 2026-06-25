@@ -1,7 +1,7 @@
 /**
  * Reduce a CloudFormation template to the comparable parity model. Drives two channels: the CDK
- * construct (`Template.fromStack(...).toJSON()`) and the published launch-stack template parsed
- * from YAML — both are CloudFormation, so they share this reducer.
+ * construct (`Template.fromStack(...).toJSON()`) and the published launch-stack template read as its
+ * structured JSON twin — both are CloudFormation object graphs, so they share this reducer.
  *
  * Intrinsics are resolved to logical references: pseudo-parameters and parameter Refs collapse to
  * account/region tokens, `Fn::GetAtt` and resource `Ref`s become graph edges. Anything that is

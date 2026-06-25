@@ -11,14 +11,13 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack } from '@apiable/cdk-cognito-pool'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-cognito-pool/1.0.0/template.yaml')
+const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-cognito-pool/1.0.0/template.json')
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-cognito-pool-show.json')
 const TF_REGION = 'eu-central-1'
 const TF_DEPLOY_ACCOUNT = '111111111111'
@@ -26,7 +25,7 @@ const TF_DEPLOY_ACCOUNT = '111111111111'
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk', TF_REGION)
-const cfnModel = (): ChannelModel => reduceCloudFormation(yaml.load(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn', TF_REGION)
+const cfnModel = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn', TF_REGION)
 const tfPlan = (): unknown => JSON.parse(fs.readFileSync(TF_FIXTURE, 'utf8'))
 const tfModel = (plan: unknown = tfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
 
@@ -60,7 +59,7 @@ describe('013-1-23 cognito-pool parity — real CDK + one-click + Terraform arti
   })
 
   it('the published one-click template carries the apiable:logical-id declared identity on its taggable primaries', () => {
-    const template = yaml.load(fs.readFileSync(PUBLISHED_CFN, 'utf8')) as {
+    const template = JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')) as {
       Resources: Record<string, { Type: string; Properties?: { Tags?: { Key: string; Value: unknown }[]; UserPoolTags?: Record<string, unknown> } }>
     }
     const pool = Object.values(template.Resources).find((r) => r.Type === 'AWS::Cognito::UserPool')

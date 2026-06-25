@@ -17,7 +17,6 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack } from '@apiable/cdk-gateway-role'
@@ -34,7 +33,7 @@ import {
 } from '@apiable/parity-gate'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-gateway-role/1.0.0/template.yaml')
+const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-gateway-role/1.0.0/template.json')
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-gateway-role-show.json')
 const TF_REGION = 'eu-central-1'
 
@@ -45,7 +44,7 @@ const cdkModel = (): ChannelModel =>
   reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk')
 
 const cfnModel = (): ChannelModel =>
-  reduceCloudFormation(yaml.load(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn')
+  reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn')
 
 const tfPlan = (): unknown => JSON.parse(fs.readFileSync(TF_FIXTURE, 'utf8'))
 const tfModel = (plan: unknown = tfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION)

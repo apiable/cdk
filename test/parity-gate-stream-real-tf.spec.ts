@@ -14,7 +14,6 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack, buildPublishedTokensStack } from '@apiable/cdk-usagelogs-stream'
@@ -38,13 +37,13 @@ interface Distribution {
 const DISTRIBUTIONS: readonly Distribution[] = [
   {
     name: 'usage-log',
-    publishedCfn: path.join(REPO_ROOT, 'dist/launchstack/apiable-usagelogs-stream/1.0.0/template.yaml'),
+    publishedCfn: path.join(REPO_ROOT, 'dist/launchstack/apiable-usagelogs-stream/1.0.0/template.json'),
     tfFixture: path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagelogs-stream-show.json'),
     buildCdk: (app) => buildPublishedStack(app),
   },
   {
     name: 'api-key-token',
-    publishedCfn: path.join(REPO_ROOT, 'dist/launchstack/apiable-usagetokens-stream/1.0.0/template.yaml'),
+    publishedCfn: path.join(REPO_ROOT, 'dist/launchstack/apiable-usagetokens-stream/1.0.0/template.json'),
     tfFixture: path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagetokens-stream-show.json'),
     buildCdk: (app) => buildPublishedTokensStack(app),
   },
@@ -53,7 +52,7 @@ const DISTRIBUTIONS: readonly Distribution[] = [
 const cdkModel = (distribution: Distribution): ChannelModel =>
   reduceCloudFormation(Template.fromStack(distribution.buildCdk(new cdk.App())).toJSON(), 'cdk')
 const cfnModel = (distribution: Distribution): ChannelModel =>
-  reduceCloudFormation(yaml.load(fs.readFileSync(distribution.publishedCfn, 'utf8')), 'cfn')
+  reduceCloudFormation(JSON.parse(fs.readFileSync(distribution.publishedCfn, 'utf8')), 'cfn')
 const tfPlan = (distribution: Distribution): unknown => JSON.parse(fs.readFileSync(distribution.tfFixture, 'utf8'))
 const tfModel = (distribution: Distribution, plan: unknown = tfPlan(distribution)): ChannelModel =>
   reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
@@ -157,7 +156,7 @@ describe('013-1-21 usage-stream parity — real CDK + one-click + Terraform arti
 
   it('the published one-click templates carry the apiable:logical-id declared identity on the delivery role', () => {
     for (const distribution of DISTRIBUTIONS) {
-      const template = yaml.load(fs.readFileSync(distribution.publishedCfn, 'utf8')) as {
+      const template = JSON.parse(fs.readFileSync(distribution.publishedCfn, 'utf8')) as {
         Resources: Record<string, { Type: string; Properties?: { Tags?: { Key: string; Value: unknown }[] } }>
       }
       const roles = Object.values(template.Resources).filter((r) => r.Type === 'AWS::IAM::Role')

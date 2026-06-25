@@ -27,5 +27,8 @@ npx cdk synth \
   --app "npx ts-node -r tsconfig-paths/register --prefer-ts-exts scripts/launchstack-app.ts" \
   "${CONSTRUCT_NAME}" > "${OUT_FILE}"
 
-echo "synthesized: ${OUT_FILE}"
+# Co-locate the structured JSON twin the parity specs read; JSON scalars never line-fold the way a YAML reader can reject.
+cp "cdk.out/${CONSTRUCT_NAME}.template.json" "${OUT_DIR}/template.json"
+
+echo "synthesized: ${OUT_FILE} (+ template.json)"
 echo "publish destination (DevOps-owned bucket): s3://${LAUNCHSTACK_BUCKET}/${CONSTRUCT_NAME}/${VERSION}/template.yaml"

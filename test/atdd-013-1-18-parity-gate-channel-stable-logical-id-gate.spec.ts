@@ -9,7 +9,6 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack as buildGatewayRolePublished } from '@apiable/cdk-gateway-role'
@@ -186,7 +185,7 @@ describe('013-1-18 parity check — declared-identity discriminator', () => {
   it('S6: the gateway-role pilot passes cleanly and the logs bucket reconciles every load-bearing tier under the declared-identity scheme', () => {
     const REPO_ROOT = path.resolve(__dirname, '..')
     const publishedTemplate = (component: string): unknown =>
-      yaml.load(fs.readFileSync(path.join(REPO_ROOT, `dist/launchstack/${component}/1.0.0/template.yaml`), 'utf8'))
+      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, `dist/launchstack/${component}/1.0.0/template.json`), 'utf8'))
 
     // The gateway-role pilot (the component the gate already proves) — a clean pass under declared ids.
     const gatewayRole = gate([

@@ -11,7 +11,6 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import * as yaml from 'js-yaml'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack, buildPublishedTokensStack } from '@apiable/cdk-usagelogs-stream'
@@ -20,20 +19,20 @@ import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } fro
 const REPO_ROOT = path.resolve(__dirname, '..')
 const REGION = 'eu-central-1'
 const DEPLOY = '111111111111'
-const PUBLISHED_LOGS = path.join(REPO_ROOT, 'dist/launchstack/apiable-usagelogs-stream/1.0.0/template.yaml')
-const PUBLISHED_TOKENS = path.join(REPO_ROOT, 'dist/launchstack/apiable-usagetokens-stream/1.0.0/template.yaml')
+const PUBLISHED_LOGS = path.join(REPO_ROOT, 'dist/launchstack/apiable-usagelogs-stream/1.0.0/template.json')
+const PUBLISHED_TOKENS = path.join(REPO_ROOT, 'dist/launchstack/apiable-usagetokens-stream/1.0.0/template.json')
 const TF_LOGS = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagelogs-stream-show.json')
 const TF_TOKENS = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagetokens-stream-show.json')
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const cdkLogs = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk')
-const cfnLogs = (): ChannelModel => reduceCloudFormation(yaml.load(fs.readFileSync(PUBLISHED_LOGS, 'utf8')), 'cfn')
+const cfnLogs = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_LOGS, 'utf8')), 'cfn')
 const tfLogsPlan = (): unknown => JSON.parse(fs.readFileSync(TF_LOGS, 'utf8'))
 const tfLogs = (plan: unknown = tfLogsPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', REGION, DEPLOY)
 
 const cdkTokens = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildPublishedTokensStack(new cdk.App())).toJSON(), 'cdk')
-const cfnTokens = (): ChannelModel => reduceCloudFormation(yaml.load(fs.readFileSync(PUBLISHED_TOKENS, 'utf8')), 'cfn')
+const cfnTokens = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_TOKENS, 'utf8')), 'cfn')
 const tfTokens = (): ChannelModel => reduceTerraformShowJson(JSON.parse(fs.readFileSync(TF_TOKENS, 'utf8')), 'terraform', REGION, DEPLOY)
 
 interface TfPlan {
