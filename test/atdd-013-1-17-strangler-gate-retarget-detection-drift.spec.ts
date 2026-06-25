@@ -472,14 +472,13 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
     })
   })
 
-  // S5 — the closure has LANDED: the gate is now legitimately wired to real baselines.
-  // 1-17's pre-closure guardrail required the strangler API (assertNoStranglerDrift / isCfnEquivalent /
-  // cfnDifferences) to stay test-only UNTIL the closure — 1-22 made the resolver scale-safe; 1-23 wired
-  // the real cognito/authorizer channels through it. Both are now `done`, so the API is wired beyond test
-  // specs (deploy / CI / parity harness) BY DESIGN. Updated from the "must stay unwired" guard to its
-  // fulfilled post-closure form: the gate IS wired — a regression that un-wired it fails here.
-  // [1-17 S5/AC4 guardrail superseded by 013-1-23 (done); the fail-open is verified-safe by that story.]
-  it('S5: the closure landed — the strangler API is now wired to real baselines (1-22 scale-safe + 1-23)', () => {
+  // S5 — the strangler-drift engine stays a TEST-ONLY utility (security guardrail). assertNoStranglerDrift /
+  // isCfnEquivalent / cfnDifferences must be reachable only from test specs and the lib barrel — never a
+  // deploy step, CI workflow, or the parity harness — so the gate's fail-open can never ship against a real
+  // before/after pair. The real cognito/authorizer channels are exercised THROUGH the engine from test
+  // specs, not by wiring it into a non-test baseline. The scan reads committed SOURCE (compiled .js/.d.ts
+  // are excluded) so a stray local `tsc` cannot make the invariant flake.
+  it('S5: the strangler-drift engine stays test-only — no non-test baseline wires to it', () => {
     const fs = require('fs') as typeof import('fs')
     const path = require('path') as typeof import('path')
     const repoRoot = path.resolve(__dirname, '..')
@@ -493,7 +492,9 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
           walk(full)
           continue
         }
-        if (!/\.(ts|js|sh|ya?ml)$/.test(entry.name)) continue
+        // source forms only — compiled build outputs (.js) and TS declarations (.d.ts) are not wiring;
+        // scanning them would let a stray local `tsc` (which CI never runs) flip this invariant.
+        if (!/\.(ts|sh|ya?ml)$/.test(entry.name) || /\.d\.ts$/.test(entry.name)) continue
         // the engine's own definitions and its barrel re-export are not "wiring to a baseline"
         if (full.endsWith(path.join('lib', 'umbrella', 'cfn-equivalence.ts'))) continue
         if (full.endsWith(path.join('lib', 'umbrella', 'index.ts'))) continue
@@ -502,10 +503,9 @@ describe('013-1-17 strangler drift-gate — retarget detection', () => {
       }
     }
     walk(repoRoot)
-    // the closure landed (1-22 scale-safe + 1-23 real-channel wiring): the gate is now wired beyond test
-    // specs into real baselines (deploy / CI / parity harness), by design — confirm the wiring shipped.
+    // every real caller must be a test spec — no deploy-*.sh, no .github workflow, no parity-gate harness
     const nonTestCallers = callers.filter((f) => !/\.spec\.ts$/.test(f))
-    expect(nonTestCallers.length).toBeGreaterThan(0)
+    expect(nonTestCallers).toEqual([])
   })
 
   // S6 — the existing drift verdicts are unchanged (regression)

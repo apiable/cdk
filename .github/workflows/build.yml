@@ -31,7 +31,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run construct synth tests
+      # The parity specs compare each channel against its published launch-stack template; generate
+      # them here (dist/ is gitignored) — the same synth parity-gate.yml runs before its tiers.
+      - name: Synthesize published launch-stack templates
+        run: |
+          bash synth-launchstack.sh apiable-gateway-role
+          bash synth-launchstack.sh apiable-logs-bucket
+          bash synth-launchstack.sh apiable-cognito-pool
+          bash synth-launchstack.sh apiable-lambda-authorizer
+          bash synth-launchstack.sh apiable-usagelogs-stream
+          bash synth-launchstack.sh apiable-usagetokens-stream
+
+      - name: Run construct + parity tests
         run: npm test
 
   build:
