@@ -1,0 +1,204 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "_comment": "Reference `terraform show -json` for the apiable-cognito-pool module, captured from a plan in a deploying account (so data.aws_caller_identity / data.aws_region resolve the lambda-permission source ARN). The deploying account here is a placeholder; CI regenerates this from a fresh plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts. Plan vars: name=staging, feature_plan=ESSENTIALS. The pool, pre-token function, and the function's execution role all carry the channel-identical apiable:logical-id; the hosted-UI domain is rendered apiable-${var.name} so it canonicalises to the shared tenant-domain token and reconciles with the published one-click apiable-@ref:TenantName for the same tenant. The top-level variables block carries the concrete tenant input (name); the hosted-UI domain witness reconciles only when the resolved domain equals apiable-<that input> exactly, so an injected literal (apiable-evil-${var.name}) diverges even if the cosmetic pool name is rewritten to match.",
+  "variables": {
+    "feature_plan": { "value": "ESSENTIALS" },
+    "name": { "value": "staging" }
+  },
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_cognito_user_pool.this",
+          "type": "aws_cognito_user_pool",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-staging",
+            "deletion_protection": "INACTIVE",
+            "mfa_configuration": "OFF",
+            "user_pool_tier": "ESSENTIALS",
+            "admin_create_user_config": [{ "allow_admin_create_user_only": true }],
+            "lambda_config": [
+              {
+                "pre_token_generation_config": [
+                  { "lambda_arn": "arn:aws:lambda:eu-central-1:111111111111:function:apiable-staging-pretokengen", "lambda_version": "V3_0" }
+                ]
+              }
+            ],
+            "tags": { "apiable:logical-id": "apiable-cognito-pool" },
+            "tags_all": { "apiable:logical-id": "apiable-cognito-pool" }
+          }
+        },
+        {
+          "address": "aws_cognito_resource_server.apiable",
+          "type": "aws_cognito_resource_server",
+          "name": "apiable",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "identifier": "apiable",
+            "name": "apiable",
+            "scope": [{ "scope_name": "admin", "scope_description": "Full Access to the Apiable APIs" }]
+          }
+        },
+        {
+          "address": "aws_cognito_user_pool_domain.this",
+          "type": "aws_cognito_user_pool_domain",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "domain": "apiable-staging"
+          }
+        },
+        {
+          "address": "aws_cognito_user_pool_client.apiable",
+          "type": "aws_cognito_user_pool_client",
+          "name": "apiable",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable",
+            "generate_secret": true,
+            "allowed_oauth_flows_user_pool_client": true,
+            "allowed_oauth_flows": ["client_credentials"],
+            "allowed_oauth_scopes": ["apiable/admin"]
+          }
+        },
+        {
+          "address": "aws_lambda_function.pretokengen",
+          "type": "aws_lambda_function",
+          "name": "pretokengen",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "function_name": "apiable-staging-pretokengen",
+            "runtime": "nodejs20.x",
+            "handler": "index.handler",
+            "environment": [{ "variables": { "APIABLE_API_KEY": "", "APIABLE_PLAN_RESOURCES": "" } }],
+            "tags": { "apiable:logical-id": "apiable-cognito-pool-pretoken-fn" },
+            "tags_all": { "apiable:logical-id": "apiable-cognito-pool-pretoken-fn" }
+          }
+        },
+        {
+          "address": "aws_iam_role.pretokengen",
+          "type": "aws_iam_role",
+          "name": "pretokengen",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-staging-pretokengen-role",
+            "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}",
+            "tags": { "apiable:logical-id": "apiable-cognito-pool-pretoken-fn" },
+            "tags_all": { "apiable:logical-id": "apiable-cognito-pool-pretoken-fn" }
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.pretokengen_basic",
+          "type": "aws_iam_role_policy_attachment",
+          "name": "pretokengen_basic",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "policy_arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          }
+        },
+        {
+          "address": "aws_lambda_permission.cognito_invoke",
+          "type": "aws_lambda_permission",
+          "name": "cognito_invoke",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "statement_id": "CognitoInvokePreTokenGen",
+            "action": "lambda:InvokeFunction",
+            "function_name": "apiable-staging-pretokengen",
+            "principal": "cognito-idp.amazonaws.com",
+            "source_arn": "arn:aws:cognito-idp:eu-central-1:111111111111:userpool/*"
+          }
+        }
+      ]
+    }
+  },
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_cognito_user_pool.this",
+          "type": "aws_cognito_user_pool",
+          "name": "this",
+          "expressions": {
+            "name": { "references": ["var.name"] },
+            "user_pool_tier": { "references": ["var.feature_plan"] },
+            "lambda_config": [
+              {
+                "pre_token_generation_config": [
+                  { "lambda_arn": { "references": ["aws_lambda_function.pretokengen.arn", "aws_lambda_function.pretokengen"] } }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "address": "aws_cognito_resource_server.apiable",
+          "type": "aws_cognito_resource_server",
+          "name": "apiable",
+          "expressions": {
+            "user_pool_id": { "references": ["aws_cognito_user_pool.this.id", "aws_cognito_user_pool.this"] }
+          }
+        },
+        {
+          "address": "aws_cognito_user_pool_domain.this",
+          "type": "aws_cognito_user_pool_domain",
+          "name": "this",
+          "expressions": {
+            "user_pool_id": { "references": ["aws_cognito_user_pool.this.id", "aws_cognito_user_pool.this"] },
+            "domain": { "references": ["var.name"] }
+          }
+        },
+        {
+          "address": "aws_cognito_user_pool_client.apiable",
+          "type": "aws_cognito_user_pool_client",
+          "name": "apiable",
+          "expressions": {
+            "user_pool_id": { "references": ["aws_cognito_user_pool.this.id", "aws_cognito_user_pool.this"] },
+            "allowed_oauth_scopes": { "references": ["aws_cognito_resource_server.apiable.identifier", "aws_cognito_resource_server.apiable"] }
+          }
+        },
+        {
+          "address": "aws_lambda_function.pretokengen",
+          "type": "aws_lambda_function",
+          "name": "pretokengen",
+          "expressions": {
+            "function_name": { "references": ["var.name"] },
+            "role": { "references": ["aws_iam_role.pretokengen.arn", "aws_iam_role.pretokengen"] }
+          }
+        },
+        {
+          "address": "aws_iam_role.pretokengen",
+          "type": "aws_iam_role",
+          "name": "pretokengen",
+          "expressions": {
+            "name": { "references": ["var.name"] }
+          }
+        },
+        {
+          "address": "aws_iam_role_policy_attachment.pretokengen_basic",
+          "type": "aws_iam_role_policy_attachment",
+          "name": "pretokengen_basic",
+          "expressions": {
+            "role": { "references": ["aws_iam_role.pretokengen.name", "aws_iam_role.pretokengen"] }
+          }
+        },
+        {
+          "address": "aws_lambda_permission.cognito_invoke",
+          "type": "aws_lambda_permission",
+          "name": "cognito_invoke",
+          "expressions": {
+            "function_name": { "references": ["aws_lambda_function.pretokengen.function_name", "aws_lambda_function.pretokengen"] }
+          }
+        }
+      ],
+      "outputs": {
+        "userpool_id": { "expression": { "references": ["aws_cognito_user_pool.this.id", "aws_cognito_user_pool.this"] } },
+        "issuer_uri": { "expression": { "references": ["data.aws_region.current.name", "aws_cognito_user_pool.this.id", "aws_cognito_user_pool.this"] } },
+        "client_id": { "expression": { "references": ["aws_cognito_user_pool_client.apiable.id", "aws_cognito_user_pool_client.apiable"] } }
+      }
+    }
+  }
+}

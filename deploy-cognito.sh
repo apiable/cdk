@@ -21,19 +21,16 @@ rm $CDK_BIN_FILE
 
 cat <<EOT >> $CDK_BIN_FILE
 import * as cdk from 'aws-cdk-lib'
-import { Cognito } from '../lib/cognito'
+import { buildCognitoStack } from '../lib/umbrella'
 
 const app = new cdk.App()
-// eslint-disable-next-line no-new
-new Cognito(app, "Cognito", {
-    stackName: "auth-portal-$POOLNAME",
-    description: "Cognito Pool for Apiable $POOLNAME Portal",
+buildCognitoStack(app, {
+    name: "$POOLNAME",
+    domain: "$POOLNAME.apiable.io",
+    fromEmail: "$FROM_EMAIL",
     env: {
         account: "$AWS_ACCOUNT_ID",
-        region: "$AWS_REGION",
-        name: "$POOLNAME",
-        domain: "$POOLNAME.apiable.io",
-        fromEmail: "$FROM_EMAIL"
+        region: "$AWS_REGION"
     }
 })
 EOT

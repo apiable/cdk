@@ -1,0 +1,66 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "_comment": "Reference `terraform show -json` for the apiable-logs-guardrail module — the operator-owned deploy-time guardrail (Org SCP + sanctioned bucket policy + single-source allow-list) that constrains the usage-firehose destination, captured from a CREDENTIALED plan in the apiable-logging account / Org management account. The deploying account here is a placeholder; CI regenerates this from a fresh credentialed plan. The committed fixture is the local oracle the deploy-time guardrail spec evaluates deny/allow against. The SCP Deny is principal-UNSCOPED with a closed operator carve-out (StringNotLike aws:PrincipalArn), so a hand-rolled delivery role is denied by default whatever it is named. Plan vars: sanctioned_logging_buckets=[apiable-logs-prod], sanctioned_delivery_role_arns=[arn:aws:iam::111111111111:role/apiable-usagelogs-firehose, arn:aws:iam::111111111111:role/apiable-usagetokens-firehose], operator_writer_arns=[arn:aws:iam::111111111111:role/aws-service-role/backup.amazonaws.com/AWSServiceRoleForBackup], org_target_id=ou-root-loggingou, org_id=o-exampleorgid.",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_organizations_policy.firehose_destination_guardrail",
+          "type": "aws_organizations_policy",
+          "name": "firehose_destination_guardrail",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-firehose-destination-guardrail",
+            "description": "Deny any logging-family principal s3:Put* outside the sanctioned buckets, except the operator carve-out",
+            "type": "SERVICE_CONTROL_POLICY",
+            "content": "{\"Statement\":[{\"Action\":[\"s3:Put*\"],\"Condition\":{\"StringNotLike\":{\"aws:PrincipalArn\":[\"arn:aws:iam::111111111111:role/aws-service-role/backup.amazonaws.com/AWSServiceRoleForBackup\"]}},\"Effect\":\"Deny\",\"NotResource\":[\"arn:aws:s3:::apiable-logs-prod/*\"],\"Sid\":\"DenyWriteOutsideSanctionedBuckets\"}],\"Version\":\"2012-10-17\"}"
+          }
+        },
+        {
+          "address": "aws_organizations_policy_attachment.firehose_destination_guardrail",
+          "type": "aws_organizations_policy_attachment",
+          "name": "firehose_destination_guardrail",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "target_id": "ou-root-loggingou"
+          }
+        },
+        {
+          "address": "aws_s3_bucket_policy.sanctioned[\"apiable-logs-prod\"]",
+          "type": "aws_s3_bucket_policy",
+          "name": "sanctioned",
+          "index": "apiable-logs-prod",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "bucket": "apiable-logs-prod",
+            "policy": "{\"Statement\":[{\"Action\":\"s3:PutObject\",\"Condition\":{\"StringEquals\":{\"aws:PrincipalOrgID\":\"o-exampleorgid\",\"aws:SourceAccount\":\"111111111111\"}},\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"arn:aws:iam::111111111111:role/apiable-usagelogs-firehose\",\"arn:aws:iam::111111111111:role/apiable-usagetokens-firehose\"]},\"Resource\":\"arn:aws:s3:::apiable-logs-prod/*\",\"Sid\":\"AllowSanctionedFirehoseDeliveryOnly\"}],\"Version\":\"2012-10-17\"}"
+          }
+        }
+      ]
+    }
+  },
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_organizations_policy.firehose_destination_guardrail",
+          "type": "aws_organizations_policy",
+          "name": "firehose_destination_guardrail",
+          "expressions": {
+            "content": { "references": ["local.sanctioned_object_arns", "var.operator_writer_arns"] }
+          }
+        },
+        {
+          "address": "aws_s3_bucket_policy.sanctioned",
+          "type": "aws_s3_bucket_policy",
+          "name": "sanctioned",
+          "expressions": {
+            "bucket": { "references": ["var.sanctioned_logging_buckets"] },
+            "policy": { "references": ["var.sanctioned_delivery_role_arns", "var.org_id"] }
+          }
+        }
+      ]
+    }
+  }
+}

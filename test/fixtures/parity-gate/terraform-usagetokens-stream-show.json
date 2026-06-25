@@ -1,0 +1,137 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.5",
+  "_comment": "Reference `terraform show -json` for the apiable-usagetokens-stream module, captured from a CREDENTIALED plan in the apiable-logging account. The deploying account here is a placeholder; CI regenerates this from a fresh credentialed plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts. The env-less dev box cannot verify the credentialed regen leg; its correctness is provable only in the credentialed CI job. The committed fixture is the local oracle the real-gate spec reduces cross-channel against the CDK synth + published CFN. The api-key-token distribution differs from the usage-log one only by its name, delivery-role declared id, and destination routing prefix (apiable/aws/apikey-token — the routing signal the downstream token pipeline keys off). Plan vars: name=usagetokens, logs_bucket_arn=arn:aws:s3:::apiable-logs-ci, prefix=apiable/aws/apikey-token, region=eu-central-1.",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_cloudwatch_log_group.firehose",
+          "type": "aws_cloudwatch_log_group",
+          "name": "firehose",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "/aws/firehose/logs-usagetokens",
+            "retention_in_days": 7
+          }
+        },
+        {
+          "address": "aws_cloudwatch_log_stream.firehose",
+          "type": "aws_cloudwatch_log_stream",
+          "name": "firehose",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "firehose-log-stream-usagetokens"
+          }
+        },
+        {
+          "address": "aws_iam_role.firehose",
+          "type": "aws_iam_role",
+          "name": "firehose",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "apiable-usagetokens-firehose",
+            "tags": { "apiable:logical-id": "apiable-usagetokens-firehose-role" },
+            "tags_all": { "apiable:logical-id": "apiable-usagetokens-firehose-role" },
+            "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"firehose.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.firehose",
+          "type": "aws_iam_role_policy",
+          "name": "firehose",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "FirehosePolicy",
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:AbortMultipartUpload\",\"s3:GetBucketLocation\",\"s3:GetObject\",\"s3:ListBucket\",\"s3:ListBucketMultipartUploads\",\"s3:PutObject\"],\"Resource\":[\"arn:aws:s3:::apiable-logs-ci\",\"arn:aws:s3:::apiable-logs-ci/*\"]},{\"Effect\":\"Allow\",\"Action\":\"logs:PutLogEvents\",\"Resource\":\"arn:aws:logs:eu-central-1:111111111111:log-group:/aws/firehose/logs-usagetokens\"}]}"
+          }
+        },
+        {
+          "address": "aws_kinesis_firehose_delivery_stream.this",
+          "type": "aws_kinesis_firehose_delivery_stream",
+          "name": "this",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "name": "amazon-apigateway-usagetokens",
+            "destination": "extended_s3",
+            "extended_s3_configuration": [
+              {
+                "role_arn": "arn:aws:iam::111111111111:role/apiable-usagetokens-firehose",
+                "bucket_arn": "arn:aws:s3:::apiable-logs-ci",
+                "prefix": "apiable/aws/apikey-token/logs/",
+                "error_output_prefix": "apiable/aws/apikey-token/errors/",
+                "buffering_interval": 300,
+                "buffering_size": 5,
+                "compression_format": "UNCOMPRESSED",
+                "cloudwatch_logging_options": [
+                  {
+                    "enabled": true,
+                    "log_group_name": "/aws/firehose/logs-usagetokens",
+                    "log_stream_name": "firehose-log-stream-usagetokens"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "aws_cloudwatch_log_group.firehose",
+          "type": "aws_cloudwatch_log_group",
+          "name": "firehose",
+          "expressions": {
+            "name": { "references": ["var.name"] }
+          }
+        },
+        {
+          "address": "aws_cloudwatch_log_stream.firehose",
+          "type": "aws_cloudwatch_log_stream",
+          "name": "firehose",
+          "expressions": {
+            "name": { "references": ["var.name"] },
+            "log_group_name": { "references": ["aws_cloudwatch_log_group.firehose.name", "aws_cloudwatch_log_group.firehose"] }
+          }
+        },
+        {
+          "address": "aws_iam_role.firehose",
+          "type": "aws_iam_role",
+          "name": "firehose",
+          "expressions": {
+            "name": { "references": ["var.name"] }
+          }
+        },
+        {
+          "address": "aws_iam_role_policy.firehose",
+          "type": "aws_iam_role_policy",
+          "name": "firehose",
+          "expressions": {
+            "role": { "references": ["aws_iam_role.firehose.id", "aws_iam_role.firehose"] },
+            "policy": { "references": ["var.logs_bucket_arn", "aws_cloudwatch_log_group.firehose.arn", "aws_cloudwatch_log_group.firehose"] }
+          }
+        },
+        {
+          "address": "aws_kinesis_firehose_delivery_stream.this",
+          "type": "aws_kinesis_firehose_delivery_stream",
+          "name": "this",
+          "expressions": {
+            "name": { "references": ["var.name"] },
+            "extended_s3_configuration": [
+              {
+                "role_arn": { "references": ["aws_iam_role.firehose.arn", "aws_iam_role.firehose"] },
+                "bucket_arn": { "references": ["var.logs_bucket_arn"] }
+              }
+            ]
+          }
+        }
+      ],
+      "outputs": {
+        "firehose_arn": { "expression": { "references": ["aws_kinesis_firehose_delivery_stream.this.arn", "aws_kinesis_firehose_delivery_stream.this"] } }
+      }
+    }
+  }
+}

@@ -14,19 +14,16 @@ rm $CDK_BIN_FILE
 
 cat <<EOT >> $CDK_BIN_FILE
 import * as cdk from 'aws-cdk-lib'
-import { LogsStream } from '../lib/logs-stream'
+import { buildLogsStreamStack } from '../lib/umbrella'
 
 const app = new cdk.App()
-// eslint-disable-next-line no-new
-new LogsStream(app, "LogsStream", {
-    stackName: "usagetokens-stream-apiable-$STACKNAME",
-    description: "Usage Tokens Logs stream for Apiable Portal $STACKNAME",
+buildLogsStreamStack(app, {
+    variant: "usagetokens",
+    stackSuffix: "$STACKNAME",
+    logsBucketArn: "$LOGS_BUCKET_ARN",
     env: {
         account: "$AWS_ACCOUNT_ID",
-        region: "$AWS_REGION",
-        logsBucketArn: "$LOGS_BUCKET_ARN",
-        prefix: "apiable/aws/apikey-token",
-        name: "usagetokens-$STACKNAME"
+        region: "$AWS_REGION"
     }
 })
 EOT

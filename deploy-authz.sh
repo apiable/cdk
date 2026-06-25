@@ -17,21 +17,18 @@ rm $CDK_BIN_FILE
 
 cat <<EOT >> $CDK_BIN_FILE
 import * as cdk from 'aws-cdk-lib'
-import { AuthZ } from '../lib/authz'
+import { buildAuthZStack } from '../lib/umbrella'
 
 const app = new cdk.App()
-// eslint-disable-next-line no-new
-new AuthZ(app, "AuthZ", {
-    stackName: "auth-portal-authz-$STACKNAME",
-    description: "AuthZ Lambda for Apiable Gateway Authorization $STACKNAME",
+buildAuthZStack(app, {
+    name: "$STACKNAME",
+    userpoolId: "$APIABLE_AWS_AUTHZ_USERPOOLID",
+    assumeRoleArn: "$APIABLE_AWS_AUTHZ_ROLE_ARN",
+    authMethod: "$AUTH_METHOD",
+    apiGatewayAssumeRoleArn: "$APIABLE_AWS_AUTHZ_API_GATEWAY_ASSUME_ROLE_ARN",
     env: {
         account: "$AWS_ACCOUNT_ID",
-        region: "$AWS_REGION",
-        name: "$STACKNAME",
-        userpoolId: "$APIABLE_AWS_AUTHZ_USERPOOLID",
-        assumeRoleArn: "$APIABLE_AWS_AUTHZ_ROLE_ARN",
-        authMethod: "$AUTH_METHOD",
-        apiGatewayAssumeRoleArn: "$APIABLE_AWS_AUTHZ_API_GATEWAY_ASSUME_ROLE_ARN"
+        region: "$AWS_REGION"
     }
 })
 EOT

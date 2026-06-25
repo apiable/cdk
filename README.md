@@ -13,6 +13,8 @@ export AWS_REGION=<your_region>
 ```bash
 ./deploy-gatewayrole.sh
 ```
+> **Existing `gatewayrole` stacks:** do not re-deploy an existing stack with this code. The IAM role name is unchanged and the already-provisioned role keeps working as-is; the restructured template gives the role a new logical id, so an in-place re-deploy collides on the unchanged role name (`EntityAlreadyExists`). Provision new tenants via the one-click `apiable-gateway-role` stack instead.
+
 ### Get the Role Arn
 You can find the role arn in the output of the stack.
 
@@ -55,6 +57,7 @@ export STACKNAME=<your_stack_name>
 ```bash
 ./deploy-logs-bucket.sh
 ```
+> **Existing logs buckets:** do not re-deploy an existing stack with this code. The bucket name `apiable-logs-<name>` is unchanged and the already-provisioned bucket keeps working as-is (it is retained, not replaced); the restructured template gives the bucket a new logical id, so an in-place re-deploy collides on the unchanged, globally-unique bucket name (`BucketAlreadyExists`). Provision new tenants via the one-click `apiable-logs-bucket` stack instead.
 
 ### Export the paramater of logs bucket
 ```bash
