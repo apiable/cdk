@@ -194,7 +194,7 @@ describe('013-1-9 umbrella delegate refactor — zero-observable-change contract
       const after = role(candidate.gatewayrole())
       // physical name preserved — that is why an in-place re-deploy onto the existing resource collides
       expect(after.roleName).toEqual(before.roleName)
-      expect(after.roleName).toBe(`apiable-gateway-managment-role-${REGION}`)
+      expect(after.roleName).toBe(`apiable-gateway-management-role-${REGION}`)
       // the construct extraction changes the logical id (CDK addresses it under the construct scope)
       expect(after.logicalId).toContain('GatewayRole')
     })

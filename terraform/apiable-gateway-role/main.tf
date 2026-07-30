@@ -1,6 +1,6 @@
 resource "aws_iam_role" "this" {
   # Fixed contract with already-provisioned tenants; the name is not parameterised.
-  name        = "apiable-gateway-managment-role-${var.region}"
+  name        = "apiable-gateway-management-role-${var.region}"
   description = "Role for Apiable to manage the API Gateway"
 
   # Channel-stable identity the release-time parity gate keys this role on, identical to the CDK/CFN channels.

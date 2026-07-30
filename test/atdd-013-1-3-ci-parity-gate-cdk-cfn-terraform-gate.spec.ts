@@ -289,7 +289,7 @@ describe('parity gate — static three-tier diff contract', () => {
     const role = resources.find((resource) => resource.type === 'aws_iam_role')
     const policy = resources.find((resource) => resource.type === 'aws_iam_role_policy')
     if (role !== undefined) {
-      role.values.name = `apiable-gateway-managment-role-${region}`
+      role.values.name = `apiable-gateway-management-role-${region}`
       role.values.assume_role_policy = JSON.stringify({
         Version: '2012-10-17',
         Statement: [{ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${trustAccount}:root` }, Action: 'sts:AssumeRole' }],

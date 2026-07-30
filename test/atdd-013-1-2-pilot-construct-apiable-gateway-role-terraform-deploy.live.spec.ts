@@ -25,7 +25,7 @@ describe('terraform gateway-management role — live apply (manual, CI-excluded)
       console.log(
         `[S3 manual hand-off] from ${MODULE_DIR} run ` +
           `terraform init && terraform apply -var region=${region}, then verify the role ARN ` +
-          `ends in :role/apiable-gateway-managment-role-${region} — identical to the one-click path.`,
+          `ends in :role/apiable-gateway-management-role-${region} — identical to the one-click path.`,
       )
       return
     }

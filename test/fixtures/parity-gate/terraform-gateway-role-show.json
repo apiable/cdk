@@ -10,7 +10,7 @@
           "name": "this",
           "provider_name": "registry.terraform.io/hashicorp/aws",
           "values": {
-            "name": "apiable-gateway-managment-role-eu-central-1",
+            "name": "apiable-gateway-management-role-eu-central-1",
             "description": "Role for Apiable to manage the API Gateway",
             "tags": { "apiable:logical-id": "apiable-gateway-role" },
             "tags_all": { "apiable:logical-id": "apiable-gateway-role" },

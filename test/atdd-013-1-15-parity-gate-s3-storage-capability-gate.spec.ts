@@ -313,7 +313,7 @@ describe('013-1-15 parity check — S3 logs-storage tier', () => {
             Role: {
               Type: 'AWS::IAM::Role',
               Properties: {
-                RoleName: 'apiable-gateway-managment-role',
+                RoleName: 'apiable-gateway-management-role',
                 Tags: [cfnTag(GATEWAY_ROLE_LOGICAL_ID)],
                 AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: arnRoot(PARTNER_ACCOUNT) }, Action: 'sts:AssumeRole' }] },
               },
@@ -336,7 +336,7 @@ describe('013-1-15 parity check — S3 logs-storage tier', () => {
         planned_values: {
           root_module: {
             resources: [
-              { address: 'aws_iam_role.this', type: 'aws_iam_role', values: { name: 'apiable-gateway-managment-role', ...tfTags(GATEWAY_ROLE_LOGICAL_ID), assume_role_policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: arnRoot(PARTNER_ACCOUNT) }, Action: 'sts:AssumeRole' }] }) } },
+              { address: 'aws_iam_role.this', type: 'aws_iam_role', values: { name: 'apiable-gateway-management-role', ...tfTags(GATEWAY_ROLE_LOGICAL_ID), assume_role_policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: arnRoot(PARTNER_ACCOUNT) }, Action: 'sts:AssumeRole' }] }) } },
               { address: 'aws_iam_role_policy.apigateway_management', type: 'aws_iam_role_policy', values: { name: 'apigateway-management', policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Action: 'apigateway:*', Resource: `arn:aws:apigateway:${REGION}::/*` }] }) } },
             ],
           },

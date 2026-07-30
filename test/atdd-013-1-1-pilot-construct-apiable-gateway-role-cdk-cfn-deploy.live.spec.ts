@@ -35,7 +35,7 @@ describe('gateway-management role — live deploy contract', () => {
       // eslint-disable-next-line no-console
       console.log(
         `[S4 manual hand-off] open ${url}, confirm stack creation (~90s), then verify the role ARN ` +
-          `ends in :role/apiable-gateway-managment-role-${region}`,
+          `ends in :role/apiable-gateway-management-role-${region}`,
       )
       return
     }
