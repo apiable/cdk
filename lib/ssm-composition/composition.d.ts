@@ -1,0 +1,66 @@
+import { Construct } from 'constructs';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
+/** Root namespace every composition parameter lives under. */
+export declare const COMPOSITION_NAMESPACE = "apiable";
+/**
+ * The three segments that address one composed value. The key is the stable contract between an
+ * upstream writer and a downstream reader: both build it from the same shape, so they agree on the
+ * name without sharing a CloudFormation export.
+ */
+export interface CompositionKey {
+    /** Per-deployment tenant identifier (e.g. a stack name such as `staging`). */
+    readonly tenant: string;
+    /** Kebab-case kit component name (e.g. `gateway-role`, `logs-bucket`). */
+    readonly component: string;
+    /** Declared output name the value is published under. */
+    readonly output: string;
+}
+/**
+ * Build the parameter name that addresses a composed value: `/apiable/{tenant}/{component}/{output}`.
+ * Every segment is validated so a missing or malformed input fails loudly here rather than producing
+ * a silently wrong key a reader would later miss.
+ */
+export declare const compositionParameterName: (key: CompositionKey) => string;
+/** One declared output published to the shared parameter space. */
+export interface DeclaredOutput {
+    /** Output name — the last key segment. */
+    readonly name: string;
+    /** Output value (typically an ARN or id token). */
+    readonly value: string;
+    /**
+     * True when the value is a credential/secret. A secret is never written to a plaintext parameter;
+     * publishing one throws so a client secret cannot leak into the composition seam.
+     */
+    readonly secret?: boolean;
+}
+export interface PublishOutputsProps {
+    readonly tenant: string;
+    readonly component: string;
+    readonly outputs: readonly DeclaredOutput[];
+}
+/**
+ * Write each declared output to the shared parameter space as a CloudFormation-native
+ * `AWS::SSM::Parameter`. Because each write is a stack resource, an unavailable parameter space or a
+ * denied write fails the deployment and rolls the stack back — there is no silent partial
+ * composition. Secret-valued outputs are rejected: they must not land in a plaintext parameter.
+ */
+export declare const publishOutputs: (scope: Construct, props: PublishOutputsProps) => ssm.StringParameter[];
+/** A read addresses the same three segments a write published under. */
+export type ReadUpstreamOutputProps = CompositionKey;
+/**
+ * Resolve an upstream component's published output by composing its key and reading the shared
+ * parameter. The returned token resolves at deployment to the parameter's value — a direct read by
+ * key, never an `Fn::ImportValue` cross-stack export or a `DescribeStacks` wait on the upstream's
+ * deployment status. A missing or malformed key fails fast here (via the key validation); a key that
+ * resolves to no parameter fails the deployment, so a downstream never reads a silent default.
+ *
+ * Resolution semantics: the value is resolved once, at the reader's own deploy time, and is
+ * unversioned (`valueForStringParameter` reads the parameter's latest value rather than pinning a
+ * version — pinning would freeze this reader to a single stale upstream value). So at the moment a
+ * downstream deploys it sees the current value or the deploy fails — never an empty/stale literal.
+ * The flip side is propagation: an upstream that rewrites its parameter after a downstream has
+ * deployed does not push the new value into that downstream until the downstream is redeployed. This
+ * is the loose-coupling trade-off, not a defect; coordinated redeploys carry forward upstream
+ * changes.
+ */
+export declare const readUpstreamOutput: (scope: Construct, props: ReadUpstreamOutputProps) => string;

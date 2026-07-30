@@ -68,7 +68,7 @@ describe('parity gate — logical normalisation', () => {
   it('collapses account ids and AWS regions to logical tokens, leaving other text intact', () => {
     expect(normaliseLogical('arn:aws:iam::034444869755:root')).toBe('arn:aws:iam::{account}:root')
     expect(normaliseLogical('arn:aws:apigateway:eu-central-1::/*', 'eu-central-1')).toBe('arn:aws:apigateway:{region}::/*')
-    expect(normaliseLogical('apiable-gateway-managment-role')).toBe('apiable-gateway-managment-role')
+    expect(normaliseLogical('apiable-gateway-management-role')).toBe('apiable-gateway-management-role')
   })
 })
 
@@ -124,8 +124,8 @@ const cfnRole = (principal: unknown): unknown => ({
     Role: {
       Type: 'AWS::IAM::Role',
       Properties: {
-        RoleName: 'apiable-gateway-managment-role',
-        Tags: [{ Key: 'apiable:logical-id', Value: 'gateway-managment-role' }],
+        RoleName: 'apiable-gateway-management-role',
+        Tags: [{ Key: 'apiable:logical-id', Value: 'gateway-management-role' }],
         AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: principal, Action: 'sts:AssumeRole' }] },
       },
     },
@@ -133,7 +133,7 @@ const cfnRole = (principal: unknown): unknown => ({
 })
 
 // The trust-account value is keyed per role node (by its declared id), so a second role cannot clobber the first.
-const TRUST_ACCOUNT_KEY = 'role-trust-account:iam-role:gateway-managment-role'
+const TRUST_ACCOUNT_KEY = 'role-trust-account:iam-role:gateway-management-role'
 
 describe('parity gate — trust target (who may assume the role)', () => {
   it('captures the trusted account by value as a load-bearing setting, not a logical token', () => {

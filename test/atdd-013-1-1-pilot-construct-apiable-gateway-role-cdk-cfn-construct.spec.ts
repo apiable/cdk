@@ -22,7 +22,7 @@ import {
 const APIABLE_TRUST_ACCOUNT = DEFAULT_APIABLE_TRUST_ACCOUNT
 const REGION = 'eu-central-1'
 const STACK_ID = 'apiable-gateway-role'
-const EXPECTED_ROLE_NAME = `apiable-gateway-managment-role-${REGION}`
+const EXPECTED_ROLE_NAME = `apiable-gateway-management-role-${REGION}`
 
 /** Synthesize a fresh stack and return its template. */
 const templateFor = (props: GatewayRoleStackProps = {}): Template =>

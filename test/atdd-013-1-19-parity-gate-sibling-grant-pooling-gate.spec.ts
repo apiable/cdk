@@ -313,8 +313,8 @@ describe('013-1-19 parity check — sibling grant-pooling closure', () => {
         Role: {
           Type: 'AWS::IAM::Role',
           Properties: {
-            RoleName: 'apiable-gateway-managment-role',
-            Tags: [{ Key: 'apiable:logical-id', Value: 'gateway-managment-role' }],
+            RoleName: 'apiable-gateway-management-role',
+            Tags: [{ Key: 'apiable:logical-id', Value: 'gateway-management-role' }],
             AssumeRolePolicyDocument: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${trustAccount}:root` }, Action: 'sts:AssumeRole' }] },
           },
         },
@@ -327,8 +327,8 @@ describe('013-1-19 parity check — sibling grant-pooling closure', () => {
             address: 'aws_iam_role.this',
             type: 'aws_iam_role',
             values: {
-              name: 'apiable-gateway-managment-role',
-              tags: { 'apiable:logical-id': 'gateway-managment-role' },
+              name: 'apiable-gateway-management-role',
+              tags: { 'apiable:logical-id': 'gateway-management-role' },
               assume_role_policy: JSON.stringify({ Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: `arn:aws:iam::${trustAccount}:root` }, Action: 'sts:AssumeRole' }] }),
             },
           },

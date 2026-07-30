@@ -1,0 +1,18 @@
+"use strict";
+/**
+ * Sets the authorizer's runtime env BEFORE the handler module is imported, so handler unit tests can
+ * exercise the allow path against a known per-method required-scope map. The handler parses
+ * REQUIRED_SCOPE_MAP once at module load (the Lambda cold-start parse), so the value must be present
+ * before the module is required — hence a jest `setupFiles` entry, which runs before the test modules.
+ *
+ * Only `GET /products` and `POST /orders` are mapped: a route OUTSIDE this map (e.g. `DELETE /products`)
+ * exercises deny-by-default, and `POST /reports` with an empty required value exercises the fail-closed
+ * empty case. The construct's own default is the empty map (asserted from the synth, not via this env).
+ */
+process.env.REQUIRED_SCOPE_MAP = JSON.stringify({
+    'GET /products': 'apiable/cicd',
+    'POST /orders': 'apiable/cicd apiable/read',
+    'POST /reports': '',
+});
+process.env.APIABLE_AWS_AUTHZ_USERPOOLID = 'eu-central-1_testpool';
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYXV0aG9yaXplci1lbnYuanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyJhdXRob3JpemVyLWVudi50cyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiO0FBQUE7Ozs7Ozs7OztHQVNHO0FBQ0gsT0FBTyxDQUFDLEdBQUcsQ0FBQyxrQkFBa0IsR0FBRyxJQUFJLENBQUMsU0FBUyxDQUFDO0lBQzlDLGVBQWUsRUFBRSxjQUFjO0lBQy9CLGNBQWMsRUFBRSwyQkFBMkI7SUFDM0MsZUFBZSxFQUFFLEVBQUU7Q0FDcEIsQ0FBQyxDQUFBO0FBQ0YsT0FBTyxDQUFDLEdBQUcsQ0FBQyw0QkFBNEIsR0FBRyx1QkFBdUIsQ0FBQSIsInNvdXJjZXNDb250ZW50IjpbIi8qKlxuICogU2V0cyB0aGUgYXV0aG9yaXplcidzIHJ1bnRpbWUgZW52IEJFRk9SRSB0aGUgaGFuZGxlciBtb2R1bGUgaXMgaW1wb3J0ZWQsIHNvIGhhbmRsZXIgdW5pdCB0ZXN0cyBjYW5cbiAqIGV4ZXJjaXNlIHRoZSBhbGxvdyBwYXRoIGFnYWluc3QgYSBrbm93biBwZXItbWV0aG9kIHJlcXVpcmVkLXNjb3BlIG1hcC4gVGhlIGhhbmRsZXIgcGFyc2VzXG4gKiBSRVFVSVJFRF9TQ09QRV9NQVAgb25jZSBhdCBtb2R1bGUgbG9hZCAodGhlIExhbWJkYSBjb2xkLXN0YXJ0IHBhcnNlKSwgc28gdGhlIHZhbHVlIG11c3QgYmUgcHJlc2VudFxuICogYmVmb3JlIHRoZSBtb2R1bGUgaXMgcmVxdWlyZWQg4oCUIGhlbmNlIGEgamVzdCBgc2V0dXBGaWxlc2AgZW50cnksIHdoaWNoIHJ1bnMgYmVmb3JlIHRoZSB0ZXN0IG1vZHVsZXMuXG4gKlxuICogT25seSBgR0VUIC9wcm9kdWN0c2AgYW5kIGBQT1NUIC9vcmRlcnNgIGFyZSBtYXBwZWQ6IGEgcm91dGUgT1VUU0lERSB0aGlzIG1hcCAoZS5nLiBgREVMRVRFIC9wcm9kdWN0c2ApXG4gKiBleGVyY2lzZXMgZGVueS1ieS1kZWZhdWx0LCBhbmQgYFBPU1QgL3JlcG9ydHNgIHdpdGggYW4gZW1wdHkgcmVxdWlyZWQgdmFsdWUgZXhlcmNpc2VzIHRoZSBmYWlsLWNsb3NlZFxuICogZW1wdHkgY2FzZS4gVGhlIGNvbnN0cnVjdCdzIG93biBkZWZhdWx0IGlzIHRoZSBlbXB0eSBtYXAgKGFzc2VydGVkIGZyb20gdGhlIHN5bnRoLCBub3QgdmlhIHRoaXMgZW52KS5cbiAqL1xucHJvY2Vzcy5lbnYuUkVRVUlSRURfU0NPUEVfTUFQID0gSlNPTi5zdHJpbmdpZnkoe1xuICAnR0VUIC9wcm9kdWN0cyc6ICdhcGlhYmxlL2NpY2QnLFxuICAnUE9TVCAvb3JkZXJzJzogJ2FwaWFibGUvY2ljZCBhcGlhYmxlL3JlYWQnLFxuICAnUE9TVCAvcmVwb3J0cyc6ICcnLFxufSlcbnByb2Nlc3MuZW52LkFQSUFCTEVfQVdTX0FVVEhaX1VTRVJQT09MSUQgPSAnZXUtY2VudHJhbC0xX3Rlc3Rwb29sJ1xuIl19

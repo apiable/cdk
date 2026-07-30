@@ -200,7 +200,7 @@ describe('013-1-14 parity check — grant & trust fail-open closure', () => {
 
   // contract: S7 — tightening the grant comparison does not disturb existing verdicts (regression)
   it('S7: the gateway access-role pilot verdict is unchanged after the grant/trust changes — no new false alarm, no newly-missed divergence', () => {
-    const pilotName = 'apiable-gateway-managment-role'
+    const pilotName = 'apiable-gateway-management-role'
     const pilotCfn = cfnRole([cfnTrustStatement({ AWS: `arn:aws:iam::${INTENDED_TRUST_ACCOUNT}:root` })], pilotName)
     const pilotTf = tfPlan([tfRole([tfTrustStatement({ AWS: `arn:aws:iam::${INTENDED_TRUST_ACCOUNT}:root` })], pilotName)])
     const agree = gateOf(pilotCfn, pilotCfn, pilotTf)

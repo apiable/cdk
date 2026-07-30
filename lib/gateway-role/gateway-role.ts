@@ -77,7 +77,7 @@ export class GatewayRole extends Construct {
     // Pin the logical id so the launch-stack URL's `param_ApiableTrustAccount` addresses it.
     this.trustAccountParameter.overrideLogicalId(TRUST_ACCOUNT_PARAMETER)
 
-    const name = `apiable-gateway-managment-role-${region}`
+    const name = `apiable-gateway-management-role-${region}`
 
     this.role = new iam.Role(this, 'GatewayManagementRole', {
       assumedBy: new iam.AccountPrincipal(this.trustAccountParameter.valueAsString),
