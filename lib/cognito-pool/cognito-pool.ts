@@ -255,7 +255,7 @@ export class CognitoPoolStack extends cdk.Stack {
  */
 export const buildPublishedStack = (app: cdk.App): CognitoPoolStack =>
   new CognitoPoolStack(app, CONSTRUCT_NAME, {
-    description: 'Apiable Cognito machine-to-machine pool with V3_0 token customisation — one-click provisioning',
+    description: 'Apiable Cognito machine-to-machine pool with V3_0 token customisation - one-click provisioning',
     analyticsReporting: false,
     synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
   })

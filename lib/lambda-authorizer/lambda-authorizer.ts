@@ -275,7 +275,7 @@ export class LambdaAuthorizerStack extends cdk.Stack {
 export const buildPublishedStack = (app: cdk.App): LambdaAuthorizerStack =>
   new LambdaAuthorizerStack(app, CONSTRUCT_NAME, {
     description:
-      'Apiable scope-enforcing gateway authorizer (client_credentials machine-to-machine flow) — one-click provisioning',
+      'Apiable scope-enforcing gateway authorizer (client_credentials machine-to-machine flow) - one-click provisioning',
     analyticsReporting: false,
     synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
   })

@@ -144,7 +144,7 @@ export class GatewayRoleStack extends cdk.Stack {
  */
 export const buildPublishedStack = (app: cdk.App): GatewayRoleStack =>
   new GatewayRoleStack(app, CONSTRUCT_NAME, {
-    description: 'Apiable gateway-management role — one-click provisioning',
+    description: 'Apiable gateway-management role - one-click provisioning',
     analyticsReporting: false,
     // an asset-less role must install into an un-bootstrapped account, so drop the bootstrap-version rule
     synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
