@@ -105,6 +105,26 @@ for src in "${TEMPLATES[@]}"; do
     fail "${key} — served body differs from the synthesized artifact (served ${served_sha:0:12}…, source ${source_sha:0:12}…)"
   fi
 
+  # Matching the source hash only proves the upload was faithful, not that what was uploaded is
+  # usable — a corrupt artifact hash-matches its equally corrupt source. So the served bytes are
+  # parsed as the customer's console will parse them. This is deliberately a local parse rather than
+  # cloudformation:ValidateTemplate: the publishing identity is scoped to S3 alone, and a check that
+  # degrades to "skipped" on AccessDenied would wave through exactly what it exists to catch.
+  if ! parse_error=$(node -e "
+    const yaml = require('js-yaml');
+    try {
+      const doc = yaml.load(require('fs').readFileSync(process.argv[1], 'utf8'));
+      if (!doc || typeof doc !== 'object' || !doc.Resources) {
+        throw new Error('parsed but carries no Resources — not a CloudFormation template');
+      }
+    } catch (e) {
+      console.error(String(e.message).split('\n')[0]);
+      process.exit(1);
+    }
+  " "${body_file}" 2>&1); then
+    fail "${key} — served body is not a well-formed CloudFormation template: ${parse_error}"
+  fi
+
   rm -f "${body_file}" "${header_file}"
 
   # Only a template that cleared every check above is reported clean — a key must never print
