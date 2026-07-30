@@ -352,7 +352,7 @@ export class LogsStreamStack extends cdk.Stack {
  */
 export const buildPublishedStack = (app: cdk.App): LogsStreamStack =>
   new LogsStreamStack(app, CONSTRUCT_NAME, {
-    description: 'Apiable gateway usage-log delivery stream — one-click provisioning',
+    description: 'Apiable gateway usage-log delivery stream - one-click provisioning',
     analyticsReporting: false,
     // an asset-less stream must install into an un-bootstrapped account, so drop the bootstrap-version rule
     synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
@@ -367,7 +367,7 @@ export const buildPublishedStack = (app: cdk.App): LogsStreamStack =>
  */
 export const buildPublishedTokensStack = (app: cdk.App): LogsStreamStack =>
   new LogsStreamStack(app, TOKENS_CONSTRUCT_NAME, {
-    description: 'Apiable gateway api-key-token delivery stream — one-click provisioning',
+    description: 'Apiable gateway api-key-token delivery stream - one-click provisioning',
     analyticsReporting: false,
     defaultName: DEFAULT_USAGETOKENS_NAME,
     defaultPrefix: DEFAULT_USAGETOKENS_PREFIX,

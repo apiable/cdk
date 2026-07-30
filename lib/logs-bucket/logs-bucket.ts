@@ -208,7 +208,7 @@ export class LogsBucketStack extends cdk.Stack {
  */
 export const buildPublishedStack = (app: cdk.App): LogsBucketStack =>
   new LogsBucketStack(app, CONSTRUCT_NAME, {
-    description: 'Apiable S3 bucket to write logs into — one-click provisioning',
+    description: 'Apiable S3 bucket to write logs into - one-click provisioning',
     analyticsReporting: false,
     // an asset-less bucket must install into an un-bootstrapped account, so drop the bootstrap-version rule
     synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
