@@ -34,13 +34,7 @@ jobs:
       # The parity specs compare each channel against its published launch-stack template; generate
       # them here (dist/ is gitignored) — the same synth parity-gate.yml runs before its tiers.
       - name: Synthesize published launch-stack templates
-        run: |
-          bash synth-launchstack.sh apiable-gateway-role
-          bash synth-launchstack.sh apiable-logs-bucket
-          bash synth-launchstack.sh apiable-cognito-pool
-          bash synth-launchstack.sh apiable-lambda-authorizer
-          bash synth-launchstack.sh apiable-usagelogs-stream
-          bash synth-launchstack.sh apiable-usagetokens-stream
+        run: bash synth-all-launchstack.sh
 
       - name: Run construct + parity tests
         run: npm test
@@ -76,5 +70,41 @@ jobs:
           zip -r authorization.zip .
           aws s3 cp authorization.zip s3://apiable/public/_lambdas/authorization-${{github.run_number}}.zip
           aws s3 cp authorization.zip s3://apiable/public/_lambdas/authorization-latest.zip
-          
+
+
+  # The portal composes a Launch Stack URL pointing at this store, so a promotion that builds a
+  # template without publishing it hands the customer's CloudFormation console a 404. Publishing
+  # rides the promotion itself, and the verify step fails the run rather than leave that gap open.
+  publish-launchstack-templates:
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Synthesize published launch-stack templates
+        run: bash synth-all-launchstack.sh
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publish launch-stack templates
+        run: bash publish-launchstack.sh
+
+      - name: Verify every published template is anonymously fetchable
+        run: bash verify-launchstack-published.sh
+
 

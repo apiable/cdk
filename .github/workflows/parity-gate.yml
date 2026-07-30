@@ -57,13 +57,7 @@ jobs:
       # Synthesize the published templates the cfn-lint + diff tiers consume (dist/ is gitignored,
       # so each channel's artifact is produced here from its single-sourced version before linting).
       - name: Synthesize published launch-stack templates
-        run: |
-          bash synth-launchstack.sh apiable-gateway-role
-          bash synth-launchstack.sh apiable-logs-bucket
-          bash synth-launchstack.sh apiable-cognito-pool
-          bash synth-launchstack.sh apiable-lambda-authorizer
-          bash synth-launchstack.sh apiable-usagelogs-stream
-          bash synth-launchstack.sh apiable-usagetokens-stream
+        run: bash synth-all-launchstack.sh
 
       # CFN channel well-formedness: lint every published launch-stack template before the diff.
       - name: cfn-lint the published template(s)
