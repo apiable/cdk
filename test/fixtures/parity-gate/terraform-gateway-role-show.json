@@ -12,8 +12,12 @@
           "values": {
             "name": "apiable-gateway-management-role-eu-central-1",
             "description": "Role for Apiable to manage the API Gateway",
-            "tags": { "apiable:logical-id": "apiable-gateway-role" },
-            "tags_all": { "apiable:logical-id": "apiable-gateway-role" },
+            "tags": {
+              "apiable:logical-id": "apiable-gateway-role"
+            },
+            "tags_all": {
+              "apiable:logical-id": "apiable-gateway-role"
+            },
             "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::034444869755:root\"},\"Action\":\"sts:AssumeRole\"}]}"
           }
         },
@@ -24,7 +28,7 @@
           "provider_name": "registry.terraform.io/hashicorp/aws",
           "values": {
             "name": "apigateway-management",
-            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"apigateway:*\",\"Resource\":\"arn:aws:apigateway:eu-central-1::/*\"}]}"
+            "policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"ReadRestApisOnly\",\"Effect\":\"Allow\",\"Action\":\"apigateway:GET\",\"Resource\":[\"arn:aws:apigateway:eu-central-1::/restapis\",\"arn:aws:apigateway:eu-central-1::/restapis/*\"]},{\"Sid\":\"ManageApiKeysAndUsagePlans\",\"Effect\":\"Allow\",\"Action\":[\"apigateway:GET\",\"apigateway:POST\",\"apigateway:PATCH\",\"apigateway:DELETE\"],\"Resource\":[\"arn:aws:apigateway:eu-central-1::/apikeys\",\"arn:aws:apigateway:eu-central-1::/apikeys/*\",\"arn:aws:apigateway:eu-central-1::/usageplans\",\"arn:aws:apigateway:eu-central-1::/usageplans/*\"]},{\"Sid\":\"TagUsagePlans\",\"Effect\":\"Allow\",\"Action\":\"apigateway:PUT\",\"Resource\":\"arn:aws:apigateway:eu-central-1::/tags/*\"},{\"Sid\":\"DenyHttpAndWebSocketApis\",\"Effect\":\"Deny\",\"Action\":\"apigateway:*\",\"Resource\":[\"arn:aws:apigateway:eu-central-1::/apis\",\"arn:aws:apigateway:eu-central-1::/apis/*\"]},{\"Sid\":\"DenyOutsideApiableEgress\",\"Effect\":\"Deny\",\"Action\":\"apigateway:*\",\"Resource\":\"*\",\"Condition\":{\"NotIpAddress\":{\"aws:SourceIp\":\"63.180.116.108/32\"}}}]}"
           }
         }
       ]
@@ -38,7 +42,11 @@
           "type": "aws_iam_role",
           "name": "this",
           "expressions": {
-            "name": { "references": ["var.region"] }
+            "name": {
+              "references": [
+                "var.region"
+              ]
+            }
           }
         },
         {
@@ -46,14 +54,28 @@
           "type": "aws_iam_role_policy",
           "name": "apigateway_management",
           "expressions": {
-            "role": { "references": ["aws_iam_role.this.id", "aws_iam_role.this"] },
-            "policy": { "references": ["var.region"] }
+            "role": {
+              "references": [
+                "aws_iam_role.this.id",
+                "aws_iam_role.this"
+              ]
+            },
+            "policy": {
+              "references": [
+                "var.region"
+              ]
+            }
           }
         }
       ],
       "outputs": {
         "role_arn": {
-          "expression": { "references": ["aws_iam_role.this.arn", "aws_iam_role.this"] }
+          "expression": {
+            "references": [
+              "aws_iam_role.this.arn",
+              "aws_iam_role.this"
+            ]
+          }
         }
       }
     }

@@ -25,6 +25,20 @@ export const ACCOUNT_ID_PATTERN_SOURCE = '^[0-9]{12}$'
 /** Compiled form of {@link ACCOUNT_ID_PATTERN_SOURCE} for runtime validation. */
 export const ACCOUNT_ID_PATTERN = new RegExp(ACCOUNT_ID_PATTERN_SOURCE)
 
+/**
+ * Address Apiable's calls originate from. The role denies every request from outside it, so a
+ * stale value locks Apiable out of the customer's gateway rather than over-granting — wrong here
+ * fails closed, and silently, which is why it is a deployment parameter and not a source literal
+ * baked past the point of repair.
+ */
+export const DEFAULT_APIABLE_EGRESS_CIDR = '63.180.116.108/32'
+
+/** Matches one IPv4 CIDR block; rejects a bare address, a list, or a trailing wildcard. */
+export const CIDR_PATTERN_SOURCE = '^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$'
+
+/** Compiled form of {@link CIDR_PATTERN_SOURCE} for runtime validation. */
+export const CIDR_PATTERN = new RegExp(CIDR_PATTERN_SOURCE)
+
 export interface LaunchStackUrlInput {
   /** Customer identifier the provisioning is requested for. */
   readonly tenantId: string

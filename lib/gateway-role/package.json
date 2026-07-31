@@ -1,6 +1,6 @@
 {
   "name": "@apiable/cdk-gateway-role",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Apiable CDK construct kit: gateway-management role with one-click CloudFormation provisioning.",
   "main": "index.ts",
   "types": "index.ts",

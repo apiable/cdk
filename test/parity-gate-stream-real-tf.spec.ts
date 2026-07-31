@@ -18,6 +18,7 @@ import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack, buildPublishedTokensStack } from '@apiable/cdk-usagelogs-stream'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
+import { publishedTemplatePath } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const TF_REGION = 'eu-central-1'
@@ -37,13 +38,13 @@ interface Distribution {
 const DISTRIBUTIONS: readonly Distribution[] = [
   {
     name: 'usage-log',
-    publishedCfn: path.join(REPO_ROOT, 'dist/launchstack/apiable-usagelogs-stream/1.0.0/template.json'),
+    publishedCfn: publishedTemplatePath('apiable-usagelogs-stream'),
     tfFixture: path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagelogs-stream-show.json'),
     buildCdk: (app) => buildPublishedStack(app),
   },
   {
     name: 'api-key-token',
-    publishedCfn: path.join(REPO_ROOT, 'dist/launchstack/apiable-usagetokens-stream/1.0.0/template.json'),
+    publishedCfn: publishedTemplatePath('apiable-usagetokens-stream'),
     tfFixture: path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagetokens-stream-show.json'),
     buildCdk: (app) => buildPublishedTokensStack(app),
   },

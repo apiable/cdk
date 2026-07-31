@@ -13,6 +13,8 @@ import {
   GatewayRoleStackProps,
   TRUST_ACCOUNT_PARAMETER,
   DEFAULT_APIABLE_TRUST_ACCOUNT,
+  EGRESS_CIDR_PARAMETER,
+  DEFAULT_APIABLE_EGRESS_CIDR,
   ACCOUNT_ID_PATTERN_SOURCE,
   generateLaunchStackUrl,
   launchStackTemplateKey,
@@ -35,7 +37,9 @@ describe('gateway-management role — synth contract', () => {
     t.resourceCountIs('AWS::IAM::Role', 1)
     t.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: Match.objectLike({
-        Statement: Match.arrayWith([Match.objectLike({ Effect: 'Allow', Action: 'apigateway:*' })]),
+        Statement: Match.arrayWith([
+          Match.objectLike({ Sid: 'ManageApiKeysAndUsagePlans', Effect: 'Allow' }),
+        ]),
       }),
     })
     t.hasOutput('*', Match.objectLike({ Value: Match.objectLike({ 'Fn::GetAtt': Match.arrayWith(['Arn']) }) }))
@@ -67,18 +71,23 @@ describe('gateway-management role — synth contract', () => {
     expect(url).toMatch(/param_ApiableTrustAccount=034444869755/)
   })
 
-  // S5 — omitting optional values reproduces the role existing customers already run (behaviour preserved)
-  it('S5: with only required inputs, role name/trust/permissions equal the existing role', () => {
+  // S5 — omitting optional values still yields the fixed role name and the published trust/egress defaults
+  it('S5: with only required inputs, role name, trust account and egress default are the published ones', () => {
     const t = templateFor({ env: { region: REGION } })
     t.hasResourceProperties('AWS::IAM::Role', Match.objectLike({ RoleName: EXPECTED_ROLE_NAME }))
     t.hasParameter(TRUST_ACCOUNT_PARAMETER, Match.objectLike({ Default: APIABLE_TRUST_ACCOUNT }))
+    t.hasParameter(EGRESS_CIDR_PARAMETER, Match.objectLike({ Default: DEFAULT_APIABLE_EGRESS_CIDR }))
     t.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: Match.objectLike({
         Statement: Match.arrayWith([
           Match.objectLike({
+            Sid: 'ReadRestApisOnly',
             Effect: 'Allow',
-            Action: 'apigateway:*',
-            Resource: `arn:aws:apigateway:${REGION}::/*`,
+            Action: 'apigateway:GET',
+            Resource: [
+              `arn:aws:apigateway:${REGION}::/restapis`,
+              `arn:aws:apigateway:${REGION}::/restapis/*`,
+            ],
           }),
         ]),
       }),
@@ -98,20 +107,40 @@ describe('gateway-management role — synth contract', () => {
     expect(JSON.stringify(json)).toContain('AWS::Region')
   })
 
-  // S7 — least privilege: only the customer's own apigateway, scope unchanged from the existing role
-  it('S7: grants exactly one statement of apigateway:* scoped to the apigateway ARN, nothing broader', () => {
+  // S7 — least privilege: Apiable manages credentials, never the APIs themselves. No Allow may carry
+  // a wildcard action, the REST API surface is read-only, and the v2 + off-egress denies are present.
+  it('S7: no Allow grants a wildcard action, REST APIs are read-only, and both denies are present', () => {
     const t = templateFor({ env: { region: REGION } })
-    t.hasResourceProperties('AWS::IAM::Policy', {
-      PolicyDocument: Match.objectLike({
-        Statement: [
-          Match.objectLike({
-            Effect: 'Allow',
-            Action: 'apigateway:*',
-            Resource: `arn:aws:apigateway:${REGION}::/*`,
-          }),
-        ],
-      }),
-    })
+    const policy = Object.values(t.toJSON().Resources as Record<string, any>).find(
+      (r) => r.Type === 'AWS::IAM::Policy',
+    )
+    const statements = policy.Properties.PolicyDocument.Statement as any[]
+    const actionsOf = (s: any): string[] => (Array.isArray(s.Action) ? s.Action : [s.Action])
+
+    // Nothing may be granted with a wildcard action — that is the escalation this scoping exists to stop.
+    const allows = statements.filter((s) => s.Effect === 'Allow')
+    expect(allows.length).toBeGreaterThan(0)
+    for (const s of allows) {
+      expect(actionsOf(s)).not.toContain('apigateway:*')
+    }
+
+    // The REST API surface is readable and nothing more: no create, update or delete reaches it.
+    const restApiAllows = allows.filter((s) =>
+      JSON.stringify(s.Resource).includes(`arn:aws:apigateway:${REGION}::/restapis`),
+    )
+    expect(restApiAllows.length).toBeGreaterThan(0)
+    for (const s of restApiAllows) {
+      expect(actionsOf(s)).toEqual(['apigateway:GET'])
+    }
+
+    // Both fail-closed guards survive: the v2 surface, and any caller outside Apiable's egress.
+    const denies = statements.filter((s) => s.Effect === 'Deny')
+    expect(denies.map((s) => s.Sid).sort()).toEqual([
+      'DenyHttpAndWebSocketApis',
+      'DenyOutsideApiableEgress',
+    ])
+    const egressDeny = denies.find((s) => s.Sid === 'DenyOutsideApiableEgress')
+    expect(egressDeny.Condition.NotIpAddress['aws:SourceIp']).toEqual({ Ref: EGRESS_CIDR_PARAMETER })
   })
 
   // S8 — link generation without a required value fails loudly and emits no link

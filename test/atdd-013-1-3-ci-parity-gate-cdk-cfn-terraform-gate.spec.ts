@@ -31,9 +31,10 @@ import {
   reduceCloudFormation,
   reduceTerraformShowJson,
 } from '@apiable/parity-gate'
+import { publishedTemplatePath } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-gateway-role/1.0.0/template.json')
+const PUBLISHED_CFN = publishedTemplatePath('apiable-gateway-role')
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-gateway-role-show.json')
 const TF_REGION = 'eu-central-1'
 
