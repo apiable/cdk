@@ -23,6 +23,7 @@ import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack as buildCognitoStack } from '@apiable/cdk-cognito-pool'
 import { buildPublishedStack as buildAuthorizerStack } from '@apiable/cdk-lambda-authorizer'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson, HOSTED_DOMAIN_TENANT_TOKEN } from '@apiable/parity-gate'
+import { publishedTemplatePath } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const TF_REGION = 'eu-central-1'
@@ -30,8 +31,8 @@ const TF_REGION = 'eu-central-1'
 // deploying account tokenises exactly as the published channel's AWS::AccountId pseudo-parameter.
 const TF_DEPLOY_ACCOUNT = '111111111111'
 
-const PUBLISHED_COGNITO = path.join(REPO_ROOT, 'dist/launchstack/apiable-cognito-pool/1.0.0/template.json')
-const PUBLISHED_AUTHORIZER = path.join(REPO_ROOT, 'dist/launchstack/apiable-lambda-authorizer/1.0.0/template.json')
+const PUBLISHED_COGNITO = publishedTemplatePath('apiable-cognito-pool')
+const PUBLISHED_AUTHORIZER = publishedTemplatePath('apiable-lambda-authorizer')
 const TF_COGNITO = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-cognito-pool-show.json')
 const TF_AUTHORIZER = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-lambda-authorizer-show.json')
 

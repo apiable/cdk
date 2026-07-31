@@ -15,9 +15,10 @@ import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack } from '@apiable/cdk-lambda-authorizer'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
+import { publishedTemplatePath } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-lambda-authorizer/1.0.0/template.json')
+const PUBLISHED_CFN = publishedTemplatePath('apiable-lambda-authorizer')
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-lambda-authorizer-show.json')
 const TF_REGION = 'eu-central-1'
 const TF_DEPLOY_ACCOUNT = '111111111111'

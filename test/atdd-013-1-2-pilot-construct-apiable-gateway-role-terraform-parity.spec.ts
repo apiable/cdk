@@ -45,13 +45,15 @@ const cfnRoleName = (): string => {
   return (Object.values(roles)[0] as { Properties: { RoleName: string } }).Properties.RoleName
 }
 
-const cfnApiGatewayStatement = (): { Action: string; Resource: string } => {
+const cfnApiGatewayStatements = (): { Sid: string; Effect: string; Action: string | string[] }[] => {
   const policies = cfnTemplate().findResources('AWS::IAM::Policy')
-  for (const p of Object.values(policies) as { Properties: { PolicyDocument: { Statement: { Action: string; Resource: string }[] } } }[]) {
-    const hit = p.Properties.PolicyDocument.Statement.find((s) => s.Action === 'apigateway:*')
-    if (hit) return hit
+  for (const p of Object.values(policies) as {
+    Properties: { PolicyDocument: { Statement: { Sid: string; Effect: string; Action: string | string[] }[] } }
+  }[]) {
+    const statements = p.Properties.PolicyDocument.Statement
+    if (statements?.length) return statements
   }
-  throw new Error('no apigateway:* statement in the CFN synth')
+  throw new Error('no policy statements in the CFN synth')
 }
 
 const cfnDefaultAccount = (): string =>
@@ -102,16 +104,25 @@ describe('terraform gateway-management role — plan-parity contract', () => {
     )
     expect(main).toMatch(/Action\s*=\s*"sts:AssumeRole"/)
 
-    // same API-gateway-management permission, scoped identically to the one-click channel
-    const cfnStmt = cfnApiGatewayStatement()
-    expect(main).toMatch(/Action\s*=\s*"apigateway:\*"/)
-    const resource = main.match(/Resource\s*=\s*"(arn:aws:apigateway:[^"]+)"/)?.[1]
-    expect(resource).toBeDefined()
-    expect(withRegion(resource as string)).toBe(cfnStmt.Resource)
+    // same statement set as the one-click channel, keyed by Sid — the two channels must grant and
+    // deny the same things, or a customer's exposure depends on which one they happened to deploy
+    const cfnSids = cfnApiGatewayStatements().map((s) => s.Sid).sort()
+    const tfSids = [...main.matchAll(/Sid\s*=\s*"([^"]+)"/g)].map((x) => x[1]).sort()
+    expect(tfSids).toEqual(cfnSids)
 
-    // nothing broader: the only actions in the module are the trust + the apigateway permission
-    const actions = [...main.matchAll(/Action\s*=\s*"([^"]+)"/g)].map((x) => x[1])
-    expect(new Set(actions)).toEqual(new Set(['sts:AssumeRole', 'apigateway:*']))
+    // nothing broader: no Allow in either channel carries a wildcard action
+    for (const s of cfnApiGatewayStatements()) {
+      if (s.Effect !== 'Allow') continue
+      expect(Array.isArray(s.Action) ? s.Action : [s.Action]).not.toContain('apigateway:*')
+    }
+    const tfAllowBlocks = [...main.matchAll(/Sid\s*=\s*"[^"]+"\s*\n\s*Effect\s*=\s*"Allow"\s*\n\s*Action\s*=\s*([^\n]+)/g)]
+    expect(tfAllowBlocks.length).toBeGreaterThan(0)
+    for (const [, action] of tfAllowBlocks) {
+      expect(action).not.toContain('apigateway:*')
+    }
+
+    // the REST API surface stays read-only in the Terraform channel too
+    expect(main).toMatch(/Sid\s*=\s*"ReadRestApisOnly"\s*\n\s*Effect\s*=\s*"Allow"\s*\n\s*Action\s*=\s*"apigateway:GET"/)
   })
 
   // contract: S5 — a too-wide SUPPLIED trust value is refused by the module's own declared bound

@@ -14,6 +14,7 @@ import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack as buildGatewayRolePublished } from '@apiable/cdk-gateway-role'
 import { buildPublishedStack as buildLogsBucketPublished } from '@apiable/cdk-logs-bucket'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
+import { publishedTemplatePath } from './support/published-template'
 
 const TAG = 'apiable:logical-id'
 const REGION = 'eu-central-1'
@@ -185,7 +186,7 @@ describe('013-1-18 parity check — declared-identity discriminator', () => {
   it('S6: the gateway-role pilot passes cleanly and the logs bucket reconciles every load-bearing tier under the declared-identity scheme', () => {
     const REPO_ROOT = path.resolve(__dirname, '..')
     const publishedTemplate = (component: string): unknown =>
-      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, `dist/launchstack/${component}/1.0.0/template.json`), 'utf8'))
+      JSON.parse(fs.readFileSync(publishedTemplatePath(component), 'utf8'))
 
     // The gateway-role pilot (the component the gate already proves) — a clean pass under declared ids.
     const gatewayRole = gate([

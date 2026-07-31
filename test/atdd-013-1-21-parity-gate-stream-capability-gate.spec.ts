@@ -15,12 +15,13 @@ import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack, buildPublishedTokensStack } from '@apiable/cdk-usagelogs-stream'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
+import { publishedTemplatePath } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const REGION = 'eu-central-1'
 const DEPLOY = '111111111111'
-const PUBLISHED_LOGS = path.join(REPO_ROOT, 'dist/launchstack/apiable-usagelogs-stream/1.0.0/template.json')
-const PUBLISHED_TOKENS = path.join(REPO_ROOT, 'dist/launchstack/apiable-usagetokens-stream/1.0.0/template.json')
+const PUBLISHED_LOGS = publishedTemplatePath('apiable-usagelogs-stream')
+const PUBLISHED_TOKENS = publishedTemplatePath('apiable-usagetokens-stream')
 const TF_LOGS = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagelogs-stream-show.json')
 const TF_TOKENS = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagetokens-stream-show.json')
 

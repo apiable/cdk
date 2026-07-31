@@ -14,9 +14,10 @@ import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { buildPublishedStack } from '@apiable/cdk-logs-bucket'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
+import { publishedTemplatePath } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = path.join(REPO_ROOT, 'dist/launchstack/apiable-logs-bucket/1.0.0/template.json')
+const PUBLISHED_CFN = publishedTemplatePath('apiable-logs-bucket')
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-logs-bucket-show.json')
 const TF_REGION = 'eu-central-1'
 // The committed fixture's deploying account (CI regenerates it credentialed); supplied so the incidental
