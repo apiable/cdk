@@ -30,7 +30,10 @@ cd "$(dirname "$0")"
 
 LAUNCHSTACK_BUCKET="${LAUNCHSTACK_BUCKET:-apiable-launchstack-templates}"
 TEMPLATE_STORE_HOST="${TEMPLATE_STORE_HOST:-${LAUNCHSTACK_BUCKET}.s3.amazonaws.com}"
-SRC_DIR="dist/launchstack"
+# Overridable only so a local test double (no TLS) can stand in for the real store; the real store is
+# always https, so this must never be set in CI or by an operator against the genuine bucket.
+TEMPLATE_STORE_SCHEME="${TEMPLATE_STORE_SCHEME:-https}"
+SRC_DIR="${SRC_DIR:-dist/launchstack}"
 
 if [[ ! -d "${SRC_DIR}" ]]; then
   echo "no ${SRC_DIR} — run synth-launchstack.sh for each construct first" >&2
@@ -94,7 +97,7 @@ is_wellformed_zip() {
 
 for src in "${ARTIFACTS[@]}"; do
   key="${src#"${SRC_DIR}"/}"
-  url="https://${TEMPLATE_STORE_HOST}/${key}"
+  url="${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${key}"
   before=${failures}
   case "${key}" in
     *.zip) kind="zip"; kind_label="code zip"; content_type_pattern="zip" ;;

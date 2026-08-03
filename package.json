@@ -9,6 +9,7 @@
     "watch": "tsc -w",
     "test": "jest",
     "test:live": "jest --config jest.live.config.js",
+    "test:publish-pipeline": "bash test-verify-launchstack-published.sh",
     "synth:launchstack": "bash synth-launchstack.sh",
     "synth:launchstack:logs-bucket": "bash synth-launchstack.sh apiable-logs-bucket",
     "synth:launchstack:cognito-pool": "bash synth-launchstack.sh apiable-cognito-pool",
