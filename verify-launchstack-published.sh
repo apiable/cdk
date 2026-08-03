@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Verify every synthesized launch-stack template — and code artifact, e.g. the lambda-authorizer's
-# zip (013-1-28) — is anonymously fetchable at the address the portal (or the template itself)
-# composes for it, and that the served bytes are the bytes that were synthesized.
+# zip — is anonymously fetchable at the address the portal (or the template itself) composes for
+# it, and that the served bytes are the bytes that were synthesized.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # OnboardingLaunchStackUrlGenerator.kt::templateHttpsUrl — `<construct>/<version>/template.yaml`

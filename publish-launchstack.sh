@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Publish the synthesized launch-stack templates — and any construct's code artifact, e.g. the
-# lambda-authorizer's zip (013-1-28: too large for CloudFormation's inline ZipFile) — to the store the
-# portal addresses. Run synth-launchstack.sh for every construct first; this script only uploads what
-# is on disk.
+# lambda-authorizer's zip (too large for CloudFormation's inline ZipFile) — to the store the portal
+# addresses. Run synth-launchstack.sh for every construct first; this script only uploads what is on
+# disk.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # OnboardingLaunchStackUrlGenerator.kt::templateHttpsUrl — `<construct>/<version>/template.yaml`
