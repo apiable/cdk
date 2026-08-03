@@ -157,11 +157,15 @@ describe('013-1-7 apiable-cognito-pool — synth + parity contract', () => {
     )
     expect(TIER_GUARD_ERROR).toBe('V3_0 PreTokenGen requires Cognito Essentials or Plus')
 
-    // the construct never emits a V1_0 trigger as a fallback — the only version it attaches is V3_0
-    const synth = JSON.stringify(concreteTemplate().toJSON())
-    expect(synth).toContain('V3_0')
-    expect(synth).not.toContain('V1_0')
-    expect(synth).not.toContain('V2_0')
+    // the construct never emits a V1_0 trigger as a fallback — the only version it attaches is V3_0.
+    // Scoped to the LambdaConfig property specifically (not the whole synth blob): the pre-token handler
+    // is inlined as of 013-1-28, so its source comments — which explain V3_0 by contrasting it with
+    // V1_0/V2_0 — are now embedded in the same JSON and would otherwise defeat a substring search that
+    // has nothing to do with what CloudFormation actually attaches.
+    const lambdaConfig = JSON.stringify(poolProps(concreteTemplate()).LambdaConfig)
+    expect(lambdaConfig).toContain('V3_0')
+    expect(lambdaConfig).not.toContain('V1_0')
+    expect(lambdaConfig).not.toContain('V2_0')
 
     // the Terraform channel fails the same way: feature_plan is validated to exactly ESSENTIALS/PLUS,
     // so LITE is not an accepted value (a LITE apply fails the variable validation)
