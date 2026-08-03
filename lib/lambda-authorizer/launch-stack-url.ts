@@ -41,6 +41,15 @@ export interface LaunchStackUrlInput {
 export const launchStackTemplateKey = (version: string): string =>
   `${CONSTRUCT_NAME}/${version}/template.yaml`
 
+/**
+ * S3 object key of the authorizer's published code artifact, immutable per version and alongside the
+ * template at the same version segment. The handler is too large for CloudFormation's inline `ZipFile`
+ * (8,635 B > the 4,096-byte cap), so it deploys from this public, versioned path instead of Apiable's
+ * private CDK asset-staging bucket, which a customer account cannot read.
+ */
+export const launchStackCodeKey = (version: string): string =>
+  `${CONSTRUCT_NAME}/${version}/authorizer.zip`
+
 /** Canonical s3:// address of a published template version. */
 export const launchStackTemplateS3Uri = (
   version: string,

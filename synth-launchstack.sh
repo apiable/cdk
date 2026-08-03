@@ -51,3 +51,41 @@ cp "cdk.out/${CONSTRUCT_NAME}.template.json" "${OUT_DIR}/template.json"
 
 echo "synthesized: ${OUT_FILE} (+ template.json)"
 echo "publish destination (DevOps-owned bucket): s3://${LAUNCHSTACK_BUCKET}/${CONSTRUCT_NAME}/${VERSION}/template.yaml"
+
+# apiable-lambda-authorizer's handler (8,635 B) is too large for CloudFormation's inline ZipFile (the
+# 4,096-byte cap), so its published template references a code artifact in this same store instead of
+# Apiable's private CDK asset-staging bucket a customer account cannot read (see launchStackCodeKey).
+# Zips the same directory the construct's Lambda code references (handler + vendored node_modules) —
+# the deployed code is identical; only where it lives moves.
+if [[ "${CONSTRUCT_NAME}" == "apiable-lambda-authorizer" ]]; then
+  CODE_SRC_DIR="lib/assets/lambdas/authorization-cc"
+  CODE_ZIP="${OUT_DIR}/authorizer.zip"
+
+  # A plain `zip` embeds each entry's mtime and Unix permission bits, so re-zipping unchanged source on
+  # a later run (or after a fresh git checkout, which does not preserve original mtimes) would produce
+  # different bytes even though the content is identical — and the publish/verify write-once discipline
+  # hashes this artifact, so spurious byte drift would either wrongly re-publish or wrongly fail-closed.
+  # Python's zipfile gives explicit control over both (fixed date_time, fixed external_attr) without
+  # reimplementing the zip format by hand; every GitHub-hosted Ubuntu runner ships python3 alongside zip.
+  command -v python3 >/dev/null 2>&1 || { echo "python3 is required to build a deterministic ${CODE_ZIP}" >&2; exit 1; }
+  python3 -c "
+import os, sys, zipfile
+src_dir, out_zip = sys.argv[1], sys.argv[2]
+entries = []
+for root, dirs, names in os.walk(src_dir):
+    dirs.sort()
+    for name in sorted(names):
+        full = os.path.join(root, name)
+        entries.append((full, os.path.relpath(full, src_dir).replace(os.sep, '/')))
+entries.sort(key=lambda t: t[1])
+with zipfile.ZipFile(out_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+    for full, rel in entries:
+        info = zipfile.ZipInfo(rel, date_time=(2020, 1, 1, 0, 0, 0))
+        info.external_attr = 0o644 << 16
+        with open(full, 'rb') as f:
+            zf.writestr(info, f.read())
+" "${CODE_SRC_DIR}" "${CODE_ZIP}"
+
+  echo "zipped: ${CODE_ZIP} (deterministic, from ${CODE_SRC_DIR})"
+  echo "publish destination (DevOps-owned bucket): s3://${LAUNCHSTACK_BUCKET}/${CONSTRUCT_NAME}/${VERSION}/authorizer.zip"
+fi

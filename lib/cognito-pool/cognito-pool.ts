@@ -3,6 +3,7 @@ import { CfnOutput, CfnParameter } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as cognito from 'aws-cdk-lib/aws-cognito'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
+import * as fs from 'fs'
 import * as path from 'path'
 import { publishOutputs } from '@apiable/cdk-ssm-composition'
 import {
@@ -28,6 +29,26 @@ export const MAX_SCOPES_PER_CLIENT = 50
 
 /** The verbatim error a non-V3-capable feature plan fails with — never a silent fallback to V1/V2. */
 export const TIER_GUARD_ERROR = 'V3_0 PreTokenGen requires Cognito Essentials or Plus'
+
+/** The pre-token-gen handler's checked-in source — the single source of truth Terraform also zips as-is. */
+const PRE_TOKEN_HANDLER_PATH = path.join(__dirname, '../assets/lambdas/cognito-pool-pretokengen/index.mjs')
+
+/**
+ * AWS Lambda's inline `ZipFile` code path only supports a plain `index.js` CommonJS module for a
+ * Node.js runtime (there is no inline ESM support — an inline zip carries no `package.json` to declare
+ * `"type": "module"`), so the checked-in ESM handler is adapted for this one export line at synth time.
+ * The checked-in file itself is untouched: Terraform zips it as a real `.mjs` file, where the extension
+ * makes it genuine ESM. No other ESM syntax appears in the handler (no `import`, no top-level `await`),
+ * so the single swap is exhaustive; a future shape change trips the guard below rather than silently
+ * inlining code that throws `SyntaxError: Unexpected token 'export'` at cold start.
+ */
+const asInlineCommonJs = (esmSource: string): string => {
+  const esmExport = 'export const handler'
+  if (!esmSource.includes(esmExport)) {
+    throw new Error('cognito-pool-pretokengen source does not match the expected ESM export shape — update the inline adapter')
+  }
+  return esmSource.replace(esmExport, 'exports.handler')
+}
 
 /**
  * Author-declared, channel-identical identities the release-time parity gate keys the pool and the
@@ -140,7 +161,10 @@ export class CognitoPool extends Construct {
       functionName: `apiable-${name}-pretokengen`,
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../assets/lambdas/cognito-pool-pretokengen')),
+      // Inline (2,120 B source, well under the 4,096-byte ZipFile limit): a customer's account has no
+      // read access to Apiable's CDK asset-staging bucket, so an inline, self-contained function is the
+      // only shape that deploys to completion cross-account. Code.fromInline enforces the size cap itself.
+      code: lambda.Code.fromInline(asInlineCommonJs(fs.readFileSync(PRE_TOKEN_HANDLER_PATH, 'utf8'))),
       environment: {
         // Both claim sources have no machine-to-machine producer yet (no user => no user-attribute), so
         // both ship empty and are set explicitly to make the empty intentional. apiable_plan_resources

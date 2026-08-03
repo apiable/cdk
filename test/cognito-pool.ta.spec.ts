@@ -112,4 +112,63 @@ describe('cognito-pool — additional automation coverage', () => {
     expect(version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(launchStackTemplateKey(version)).toBe(`apiable-cognito-pool/${version}/template.yaml`)
   })
+
+  // 013-1-28: the pre-token-gen handler is inlined so a third-party account, which cannot read
+  // Apiable's CDK asset-staging bucket, still reaches CREATE_COMPLETE.
+  describe('013-1-28 — pre-token-gen handler is inline, not fetched from a private asset bucket', () => {
+    const fnProps = (t: Template): Record<string, unknown> =>
+      Object.values(t.findResources('AWS::Lambda::Function'))[0].Properties as Record<string, unknown>
+
+    it('carries an inline ZipFile — no S3Bucket/S3Key, and no reference to a CDK asset-staging bucket — on every channel', () => {
+      for (const t of [concrete(), Template.fromStack(buildPublishedStack(new cdk.App()))]) {
+        const code = fnProps(t).Code as { ZipFile?: string; S3Bucket?: unknown; S3Key?: unknown }
+        expect(typeof code.ZipFile).toBe('string')
+        expect(code.S3Bucket).toBeUndefined()
+        expect(code.S3Key).toBeUndefined()
+        // the exact defect class this story fixes: a customer account cannot read cdk-<qualifier>-assets-*
+        expect(JSON.stringify(t.toJSON())).not.toMatch(/cdk-[a-z0-9]+-assets/)
+      }
+    })
+
+    it('the inlined code is well under the 4,096-byte ZipFile cap and is adapted CommonJS, not the checked-in ESM verbatim', () => {
+      const zipFile = (fnProps(concrete()).Code as { ZipFile: string }).ZipFile
+      expect(Buffer.byteLength(zipFile, 'utf8')).toBeLessThan(4096)
+      expect(zipFile).toContain('exports.handler')
+      expect(zipFile).not.toContain('export const handler')
+    })
+
+    it('the inlined CommonJS actually executes and produces the same claims shape as the checked-in ESM source (behaviour is unchanged, only where the code lives)', async () => {
+      const zipFile = (fnProps(concrete()).Code as { ZipFile: string }).ZipFile
+      const scratchFile = path.join(REPO_ROOT, '.tmp-pretokengen-inline-test.js')
+      fs.writeFileSync(scratchFile, zipFile)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        delete require.cache[require.resolve(scratchFile)]
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const inlineModule = require(scratchFile) as { handler: (event: unknown) => Promise<Record<string, unknown>> }
+        expect(typeof inlineModule.handler).toBe('function')
+        const result = await inlineModule.handler({ callerContext: { clientId: 'test' }, triggerSource: 'TokenGeneration_HostedAuth' })
+        expect(result).toEqual({
+          callerContext: { clientId: 'test' },
+          triggerSource: 'TokenGeneration_HostedAuth',
+          response: {
+            claimsAndScopeOverrideDetails: {
+              accessTokenGeneration: {
+                claimsToAddOrOverride: { apiable_api_key: '', apiable_plan_resources: '' },
+              },
+            },
+          },
+        })
+      } finally {
+        fs.unlinkSync(scratchFile)
+      }
+    })
+
+    it('LambdaConfig still attaches only V3_0 after inlining — the pool-level trigger config is untouched by the code-source change', () => {
+      const lambdaConfig = JSON.stringify(poolProps(concrete()).LambdaConfig)
+      expect(lambdaConfig).toContain('V3_0')
+      expect(lambdaConfig).not.toContain('V1_0')
+      expect(lambdaConfig).not.toContain('V2_0')
+    })
+  })
 })
