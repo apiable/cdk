@@ -5,6 +5,7 @@
  * reserved-domain edge. Synth-level only — provable without a live AWS account.
  */
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
@@ -139,7 +140,7 @@ describe('cognito-pool — additional automation coverage', () => {
 
     it('the inlined CommonJS actually executes and produces the same claims shape as the checked-in ESM source (behaviour is unchanged, only where the code lives)', async () => {
       const zipFile = (fnProps(concrete()).Code as { ZipFile: string }).ZipFile
-      const scratchFile = path.join(REPO_ROOT, '.tmp-pretokengen-inline-test.js')
+      const scratchFile = path.join(os.tmpdir(), `pretokengen-inline-test-${Date.now()}.js`)
       fs.writeFileSync(scratchFile, zipFile)
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
