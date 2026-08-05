@@ -92,15 +92,6 @@ export interface LambdaAuthorizerProps {
    * defaults to 0; a non-zero value is an explicit opt-in.
    */
   readonly resultsCacheTtlSeconds?: number
-  /**
-   * S3 object version of the published code artifact this stack's Function.Code resolves to. Unset by
-   * default (resolves whatever is `current` at the key — the shape every caller that doesn't publish
-   * still gets, e.g. local synth and the parity-gate tests). The published one-click
-   * stack sets this to the version id captured at publish time (see `publish-launchstack-authorizer.sh`)
-   * so a later `PutObject` at the same key — through any doorway, guarded or not — can never repoint an
-   * already-published template to different bytes: `current` moves, this pin doesn't.
-   */
-  readonly codeObjectVersion?: string
 }
 
 /**
@@ -173,17 +164,16 @@ export class LambdaAuthorizer extends Construct {
       // versioned launchstack bucket the template itself is published to and referenced by S3 key —
       // deploying it is the only shape that reaches CREATE_COMPLETE cross-account.
       //
-      // codeObjectVersion pins the published stack to the exact object version vetted at publish time.
-      // Without it, this resolves whatever is `current` at the key — and on a versioned bucket, current
-      // moves on any PutObject, including one that never goes through the guarded publish pipeline at
-      // all (a raw call using the publishing credentials). The overwrite guard and the bucket's Object
-      // Lock protect the *history* (a locked version can't be deleted or bypassed) but neither stops a
-      // new version from becoming current, so the pin is what actually keeps an already-published
-      // template's deploy pinned to the bytes it was vetted against.
+      // No S3ObjectVersion pin: the customer's own fetch of the *template* that contains this reference
+      // is itself an unversioned, unpinnable GET (a plain Launch Stack URL, composed by
+      // OnboardingLaunchStackUrlGenerator.kt — frozen, portal-owned, out of this construct's reach), so
+      // pinning only the code would protect the wrong layer while the template stays repointable. Both
+      // this key and the template's key are instead made write-once at the store itself — see the
+      // bucket policy's conditional-write enforcement (infra) — so `current` can never diverge from the
+      // one and only version either key was ever legitimately written with.
       code: lambda.Code.fromBucket(
         s3.Bucket.fromBucketName(this, 'LaunchStackBucket', DEFAULT_LAUNCHSTACK_BUCKET),
         launchStackCodeKey(CONSTRUCT_VERSION),
-        props.codeObjectVersion,
       ),
       role: this.role,
       environment: {
@@ -252,8 +242,6 @@ export interface LambdaAuthorizerStackProps extends cdk.StackProps {
   readonly requiredScopeMap?: RequiredScopeMap
   /** Forwarded to {@link LambdaAuthorizerProps.resultsCacheTtlSeconds}. */
   readonly resultsCacheTtlSeconds?: number
-  /** Forwarded to {@link LambdaAuthorizerProps.codeObjectVersion}. */
-  readonly codeObjectVersion?: string
 }
 
 /** Thin stack wrapper so the construct synthesizes standalone into the published template. */
@@ -304,19 +292,9 @@ export class LambdaAuthorizerStack extends cdk.Stack {
       restApiId,
       requiredScopeMap: props.requiredScopeMap,
       resultsCacheTtlSeconds: props.resultsCacheTtlSeconds,
-      codeObjectVersion: props.codeObjectVersion,
     })
   }
 }
-
-/**
- * Env var read at synth time carrying the code zip's published S3 object version, set only by
- * `publish-launchstack-authorizer.sh` once it has actually confirmed that version exists on the store.
- * Every other caller (local synth, `synth-all-launchstack.sh`, the parity-gate and unit tests) leaves it
- * unset, so `buildPublishedStack` keeps synthesizing the unpinned shape everywhere except the one path
- * that is about to publish a pinned template.
- */
-export const CODE_OBJECT_VERSION_ENV_VAR = 'LAUNCHSTACK_CODE_OBJECT_VERSION'
 
 /**
  * Build the lambda-authorizer stack as published in the launch-stack template: no `env`, so the account
@@ -330,5 +308,4 @@ export const buildPublishedStack = (app: cdk.App): LambdaAuthorizerStack =>
       'Apiable scope-enforcing gateway authorizer (client_credentials machine-to-machine flow) - one-click provisioning',
     analyticsReporting: false,
     synthesizer: new cdk.DefaultStackSynthesizer({ generateBootstrapVersionRule: false }),
-    codeObjectVersion: process.env[CODE_OBJECT_VERSION_ENV_VAR] || undefined,
   })

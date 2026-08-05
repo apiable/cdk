@@ -1,6 +1,6 @@
 {
   "name": "@apiable/cdk-lambda-authorizer",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Apiable CDK construct kit: scope-enforcing gateway Lambda authorizer for the client_credentials machine-to-machine flow, with one-click CloudFormation provisioning.",
   "main": "index.ts",
   "types": "index.ts",

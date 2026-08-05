@@ -22,7 +22,6 @@ import {
   USER_POOL_ID_PARAMETER,
   REST_API_ID_PARAMETER,
   AUTHORIZER_FUNCTION_LOGICAL_ID,
-  CODE_OBJECT_VERSION_ENV_VAR,
 } from '@apiable/cdk-lambda-authorizer'
 import {
   handler,
@@ -248,59 +247,6 @@ describe('lambda-authorizer — additional automation coverage', () => {
       expect(launchStackCodeKey('2.3.4')).toBe('apiable-lambda-authorizer/2.3.4/authorizer.zip')
       const version = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib/lambda-authorizer/package.json'), 'utf8')).version
       expect(launchStackCodeKey(version)).toBe(`apiable-lambda-authorizer/${version}/authorizer.zip`)
-    })
-  })
-
-  // 013-1-29 security-xexam iteration 1: an unpinned Code.fromBucket resolves whatever is `current` at
-  // the key, and current moves on any PutObject — including one that bypasses the guarded publish path
-  // entirely. Pinning to the actual published S3ObjectVersion is what keeps an already-published
-  // template's deploy tied to the bytes it was vetted against, regardless of what happens at that key
-  // afterward.
-  describe('013-1-29 — code deploy pins to the published S3ObjectVersion, not whatever is current', () => {
-    const fnCode = (t: Template): { S3Bucket?: unknown; S3Key?: unknown; S3ObjectVersion?: unknown } =>
-      (Object.values(t.findResources('AWS::Lambda::Function'))[0].Properties as { Code: Record<string, unknown> })
-        .Code as { S3Bucket?: unknown; S3Key?: unknown; S3ObjectVersion?: unknown }
-
-    it('is unpinned by default (no S3ObjectVersion) — the shape every non-publishing caller still gets', () => {
-      expect(fnCode(concrete()).S3ObjectVersion).toBeUndefined()
-      expect(fnCode(Template.fromStack(buildPublishedStack(new cdk.App()))).S3ObjectVersion).toBeUndefined()
-    })
-
-    it('pins to the supplied codeObjectVersion when passed directly to the construct', () => {
-      const t = concrete({ codeObjectVersion: 'AbC123fakeVersionId' })
-      expect(fnCode(t).S3ObjectVersion).toBe('AbC123fakeVersionId')
-    })
-
-    it('buildPublishedStack (the actual published-template synth path) reads the pin from LAUNCHSTACK_CODE_OBJECT_VERSION, unset by every caller except the dedicated publish script', () => {
-      expect(CODE_OBJECT_VERSION_ENV_VAR).toBe('LAUNCHSTACK_CODE_OBJECT_VERSION')
-      const previous = process.env[CODE_OBJECT_VERSION_ENV_VAR]
-      try {
-        process.env[CODE_OBJECT_VERSION_ENV_VAR] = 'realVersionIdFromS3'
-        const t = Template.fromStack(buildPublishedStack(new cdk.App()))
-        expect(fnCode(t).S3ObjectVersion).toBe('realVersionIdFromS3')
-      } finally {
-        if (previous === undefined) delete process.env[CODE_OBJECT_VERSION_ENV_VAR]
-        else process.env[CODE_OBJECT_VERSION_ENV_VAR] = previous
-      }
-    })
-
-    it('treats an empty-string env var the same as unset, never as a pin to nothing', () => {
-      const previous = process.env[CODE_OBJECT_VERSION_ENV_VAR]
-      try {
-        process.env[CODE_OBJECT_VERSION_ENV_VAR] = ''
-        const t = Template.fromStack(buildPublishedStack(new cdk.App()))
-        expect(fnCode(t).S3ObjectVersion).toBeUndefined()
-      } finally {
-        if (previous === undefined) delete process.env[CODE_OBJECT_VERSION_ENV_VAR]
-        else process.env[CODE_OBJECT_VERSION_ENV_VAR] = previous
-      }
-    })
-
-    it('a pin never disturbs S3Bucket/S3Key — only adds the version, on both channels identically', () => {
-      const version = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib/lambda-authorizer/package.json'), 'utf8')).version
-      const t = concrete({ codeObjectVersion: 'pinXYZ' })
-      expect(fnCode(t).S3Bucket).toBe(DEFAULT_LAUNCHSTACK_BUCKET)
-      expect(fnCode(t).S3Key).toBe(launchStackCodeKey(version))
     })
   })
 })

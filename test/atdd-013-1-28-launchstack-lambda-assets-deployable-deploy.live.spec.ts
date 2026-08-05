@@ -57,10 +57,7 @@ describe('013-1-28 launchstack lambda assets — live deploy contract', () => {
       tenantName: process.env.TENANT_NAME ?? 'sandbox-tenant',
       userPoolId,
       region,
-      // 1.0.1, not the cognito-pool default above: 013-1-29 ships the authorizer's version-pinned
-      // publish under a new version, since the already-published 1.0.0 template is write-once and
-      // cannot be retrofitted with a pin.
-      version: process.env.LAUNCHSTACK_VERSION ?? '1.0.1',
+      version: process.env.LAUNCHSTACK_VERSION ?? '1.0.0',
     })
 
     if (!runLiveDeploy) {

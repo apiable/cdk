@@ -12,7 +12,6 @@ export {
   DEFAULT_RESULTS_CACHE_TTL_SECONDS,
   AUTHORIZER_FUNCTION_LOGICAL_ID,
   AUTHORIZER_ROLE_LOGICAL_ID,
-  CODE_OBJECT_VERSION_ENV_VAR,
 } from './lambda-authorizer'
 export type {
   LambdaAuthorizerProps,

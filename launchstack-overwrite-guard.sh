@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Content-identity overwrite guard for the launch-stack publish pipeline: refuses to let a changed
-# local artifact replace an already-published versioned key, run BEFORE publish-launchstack.sh's
-# `aws s3 sync` ever uploads anything — the producer-side half of write-once; verify-launchstack-
-# published.sh proves the same content-identity property post-upload.
+# Content-identity overwrite guard for the launch-stack publish pipeline: decides, per artifact, whether
+# publish-launchstack.sh may upload it at all. Run BEFORE any upload — the producer-side half of
+# write-once; the bucket policy's conditional-write enforcement (infra) is the store-side half that
+# holds even against a caller that skips this script entirely and calls the S3 API directly.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # OnboardingLaunchStackUrlGenerator.kt::templateHttpsUrl — `<construct>/<version>/template.yaml`
@@ -21,10 +21,13 @@
 # to a local hash at all. Downloading and hashing avoids that failure mode and matches the fidelity
 # check verify-launchstack-published.sh already performs on the other side of the same upload.
 #
-# Exit 0: every local artifact is either not yet published (a new version) or byte-identical to what's
-# already published (no-op). Exit 1: at least one already-published key differs from its local artifact
-# — the publish this guards must not proceed for ANY key until the conflicting change ships under a new
-# version instead.
+# Output contract: all narration goes to stderr. On exit 0, stdout carries exactly the artifacts that
+# are new (not yet published) — one relative path per line, the upload list for the caller. An
+# already-published, byte-identical artifact is deliberately NOT on that list: re-uploading it would be
+# pointless, and once the store enforces conditional writes, attempting it would fail outright (an
+# `If-None-Match: *` PutObject only succeeds when the key does not exist yet). Exit 1: at least one
+# already-published key differs from its local artifact — the publish this guards must not proceed for
+# ANY key until the conflicting change ships under a new version instead.
 set -uo pipefail
 
 cd "$(dirname "$0")"
@@ -78,9 +81,10 @@ sha256_of() {
   echo "${digest}"
 }
 
-echo "overwrite guard: checking ${#ARTIFACTS[@]} local artifact(s) against ${TEMPLATE_STORE_HOST}"
+echo "overwrite guard: checking ${#ARTIFACTS[@]} local artifact(s) against ${TEMPLATE_STORE_HOST}" >&2
 
 refused=0
+new_artifacts=()
 for src in "${ARTIFACTS[@]}"; do
   key="${src#"${SRC_DIR}"/}"
   url="${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${key}"
@@ -92,7 +96,8 @@ for src in "${ARTIFACTS[@]}"; do
 
   case "${code}" in
     404)
-      echo "  • ${key} — not yet published (new version, will publish)"
+      echo "  • ${key} — not yet published (new version, will publish)" >&2
+      new_artifacts+=("${key}")
       rm -f "${published_body}"
       continue
       ;;
@@ -115,7 +120,7 @@ for src in "${ARTIFACTS[@]}"; do
   rm -f "${published_body}"
 
   if [[ "${published_sha}" == "${local_sha}" ]]; then
-    echo "  • ${key} — already published, byte-identical (no-op)"
+    echo "  • ${key} — already published, byte-identical (no-op)" >&2
   else
     echo "  ✗ ${key} — already published with DIFFERENT content (published ${published_sha:0:12}…, local ${local_sha:0:12}…) — a published version is write-once; ship this change under a new version instead" >&2
     refused=$((refused + 1))
@@ -127,4 +132,7 @@ if [[ "${refused}" -gt 0 ]]; then
   exit 1
 fi
 
-echo "overwrite guard clear: no already-published key would be replaced"
+echo "overwrite guard clear: no already-published key would be replaced (${#new_artifacts[@]} new)" >&2
+for key in "${new_artifacts[@]}"; do
+  echo "${key}"
+done
