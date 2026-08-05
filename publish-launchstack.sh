@@ -21,6 +21,13 @@
 # and re-synthesized on every run, so every artifact's mtime is newer than the published object and the
 # default mtime comparison would re-upload all of them every time regardless of content.
 #
+# apiable-lambda-authorizer publishes first, separately: its Function.Code is fetched from this store by
+# key with no version pin unless publish-launchstack-authorizer.sh sets one — an unpinned reference
+# resolves whatever is `current`, and current moves on any PutObject at that key regardless of whether
+# it went through the guard below. That dedicated script re-synthesizes the template pinned to the code
+# zip's actual published object version before this script's general sweep ever sees it; by the time the
+# guard below runs, that construct's artifacts already match what it just published and are a no-op.
+#
 # No --acl: the store serves anonymous reads from its bucket policy, and object ACLs are disabled.
 # No --delete: a retired version's object costs cents a year and may be mid-deploy in a customer's
 # console; orphans are swept deliberately, never as a side effect of a promotion.
@@ -35,6 +42,8 @@ if [[ ! -d "${SRC_DIR}" ]]; then
   echo "no ${SRC_DIR} — run synth-launchstack.sh for each construct first" >&2
   exit 1
 fi
+
+bash publish-launchstack-authorizer.sh
 
 if ! bash launchstack-overwrite-guard.sh; then
   echo "publish aborted — overwrite guard refused (see above); no published artifact was touched" >&2

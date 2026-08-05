@@ -41,24 +41,41 @@ if [[ ! -d "${SRC_DIR}" ]]; then
   exit 1
 fi
 
-# while-read, not mapfile: this script also runs on a macOS operator machine (bash 3.2).
+# while-read, not mapfile: this script also runs on a macOS operator machine (bash 3.2). The glob
+# (*template.yaml, not an exact 'template.yaml') matches publish-launchstack.sh's own
+# --include '*template.yaml' sync pattern, so nothing the sync would upload can fall outside what this
+# guard inspects first.
 ARTIFACTS=()
 while IFS= read -r line; do
   ARTIFACTS+=("${line}")
-done < <(find "${SRC_DIR}" -type f \( -name 'template.yaml' -o -name '*.zip' \) | sort)
+done < <(find "${SRC_DIR}" -type f \( -name '*template.yaml' -o -name '*.zip' \) | sort)
 
 if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
   echo "no artifacts under ${SRC_DIR} — nothing to guard" >&2
   exit 0
 fi
 
-# sha256sum on the Linux runner, shasum on a macOS operator machine.
+# sha256sum on the Linux runner, shasum on a macOS operator machine. `return 1` (never `exit`): every
+# call site below captures this via command substitution, which runs in a subshell — an `exit` here
+# would only kill that subshell and the caller would silently see an empty string, not a failure. Fails
+# closed on both "no hashing tool" and "the tool ran but printed nothing": either would otherwise
+# resolve to an empty digest, and an empty digest matching another empty digest would wrongly pass a
+# genuinely changed artifact as identical.
 sha256_of() {
+  local digest=""
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
+    digest=$(sha256sum "$1" | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    digest=$(shasum -a 256 "$1" | awk '{print $1}')
   else
-    shasum -a 256 "$1" | awk '{print $1}'
+    echo "launchstack-overwrite-guard.sh: neither sha256sum nor shasum is available — cannot verify content identity" >&2
+    return 1
   fi
+  if [[ -z "${digest}" ]]; then
+    echo "launchstack-overwrite-guard.sh: sha256 of $1 came back empty — refusing to treat that as a match" >&2
+    return 1
+  fi
+  echo "${digest}"
 }
 
 echo "overwrite guard: checking ${#ARTIFACTS[@]} local artifact(s) against ${TEMPLATE_STORE_HOST}"
@@ -89,8 +106,12 @@ for src in "${ARTIFACTS[@]}"; do
       ;;
   esac
 
-  published_sha=$(sha256_of "${published_body}")
-  local_sha=$(sha256_of "${src}")
+  if ! published_sha=$(sha256_of "${published_body}") || ! local_sha=$(sha256_of "${src}"); then
+    rm -f "${published_body}"
+    echo "  ✗ ${key} — could not compute a hash to compare (see above); refusing" >&2
+    refused=$((refused + 1))
+    continue
+  fi
   rm -f "${published_body}"
 
   if [[ "${published_sha}" == "${local_sha}" ]]; then

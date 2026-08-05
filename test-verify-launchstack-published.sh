@@ -163,6 +163,41 @@ check "guard refuses different-size changed content" 1 \
 cp "${SCRATCH}/template.yaml.bak" "${ARTIFACT_DIR}/template.yaml"
 rm -f "${SCRATCH}/template.yaml.bak"
 
+echo "=== 013-1-29 S5 (security-xexam fix): launchstack-read-object-version.sh reads x-amz-version-id, fails closed on non-200 ==="
+cat > "${SCRATCH}/serve-versioned.py" <<PYEOF
+import http.server, os
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        if self.path.endswith('authorizer.zip'):
+            self.send_header('x-amz-version-id', 'FakeVersionId_abc123.XYZ')
+        self.send_header('Content-Type', 'application/zip')
+        super().end_headers()
+
+os.chdir('${SERVE_DIR}')
+http.server.HTTPServer(('127.0.0.1', $((PORT + 2))), Handler).serve_forever()
+PYEOF
+python3 "${SCRATCH}/serve-versioned.py" >/dev/null 2>&1 &
+VERSIONED_PID=$!
+for _ in $(seq 1 20); do
+  curl -sf -o /dev/null "http://127.0.0.1:$((PORT + 2))/authorizer.zip" && break
+  sleep 0.2
+done
+
+extracted="$(env TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" \
+  bash launchstack-read-object-version.sh authorizer.zip)"
+if [[ "${extracted}" == "FakeVersionId_abc123.XYZ" ]]; then
+  echo "  PASS: reads x-amz-version-id from a 200 response"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: expected FakeVersionId_abc123.XYZ, got [${extracted}]"
+  fail_count=$((fail_count + 1))
+fi
+
+check "fails closed (no stdout, non-zero exit) on a 404 — never trusts a header a non-200 response might carry" 1 \
+  env TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-read-object-version.sh does-not-exist.zip
+kill "${VERSIONED_PID}" 2>/dev/null
+
 if [[ "${fail_count}" -gt 0 ]]; then
   echo "${fail_count} check(s) failed"
   exit 1
