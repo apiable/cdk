@@ -78,9 +78,15 @@ export STACKNAME=<your_stack_name>
 - Go to the Logs/Tracing and click Edit
 Paste following pattern in the Log format field:
 ```json
-{"api_id": "$context.apiId","api_key": "$context.identity.apiKey","key_id": "$context.identity.apiKeyId","ip": "$context.identity.sourceIp","method": "$context.httpMethod","uri": "$context.path","response_size":"$context.responseLength","response_status": "$context.status","resource_id": "$context.resourceId","request_id": "$context.requestId","request_latency": "$context.responseLatency","request_time":"$context.requestTimeEpoch","stage": "$context.stage", "usage_prompt_tokens": "$context.responseOverride.header.usageprompttokens", "usage_completion_tokens": "$context.responseOverride.header.usagecompletiontokens", "usage_total_tokens": "$context.responseOverride.header.usagetotaltokens"}
+{"api_id": "$context.apiId","api_key": "$context.identity.apiKey","key_id": "$context.identity.apiKeyId","ip": "$context.identity.sourceIp","method": "$context.httpMethod","uri": "$context.path","response_size": "$context.responseLength","response_status": "$context.status","resource_id": "$context.resourceId","request_id": "$context.requestId","request_latency": "$context.responseLatency","request_time": "$context.requestTimeEpoch","stage": "$context.stage","plan_id": "$context.authorizer.apiable_plan_id","subscription_id": "$context.authorizer.apiable_subscription_id"}
 ```
 - Save the changes
+
+> **`subscription_id` is mandatory.** Ingestion discards any row whose `subscription_id` key is absent or blank before it reads `key_id`, so a format without it meters nothing and reports no error at either end. Keep the key even when the stage runs an authorizer that does not set the Apiable claims: API Gateway writes `-` for an unresolved `$context.authorizer.*` value, and ingestion treats `-` as "resolve the subscription from `key_id`". An absent key breaks attribution; an empty value does not.
+
+## Token metering installation (only for LLM / AI APIs billed on tokens)
+
+Skip this section unless you bill on token consumption. It adds a **second** Firehose stream alongside the one above, writing to `apiable/aws/apikey-token` rather than `apiable/aws`, and it carries its own log format.
 
 ### Export the paramater of logs bucket
 ```bash
@@ -89,9 +95,14 @@ export AWS_REGION=<your_region>
 export LOGS_BUCKET_ARN=<logs_bucket_arn_from_previous_step>
 export STACKNAME=<your_stack_name>
 ```
-### Deploy the Usagelogs firehose stream
+### Deploy the Usagetokens firehose stream
 ```bash
-./deploy-usagelogs-stream.sh
+./deploy-usagetokenslogs-stream.sh
+```
+### Log format for the token stream
+Rows on this stream are identified by `key_id` and do not carry `subscription_id`. Use this format only for stages pointed at the token stream:
+```json
+{"api_id": "$context.apiId","api_key": "$context.identity.apiKey","key_id": "$context.identity.apiKeyId","ip": "$context.identity.sourceIp","method": "$context.httpMethod","uri": "$context.path","response_size": "$context.responseLength","response_status": "$context.status","resource_id": "$context.resourceId","request_id": "$context.requestId","request_latency": "$context.responseLatency","request_time": "$context.requestTimeEpoch","stage": "$context.stage","usage_prompt_tokens": "$context.responseOverride.header.usageprompttokens","usage_completion_tokens": "$context.responseOverride.header.usagecompletiontokens","usage_total_tokens": "$context.responseOverride.header.usagetotaltokens"}
 ```
 
 
