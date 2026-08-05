@@ -14,12 +14,12 @@
 # to the parity specs, which read it locally; nothing fetches it over HTTP, so it stays out of the
 # public store.
 #
-# --size-only, not the default mtime comparison: dist/ is gitignored and re-synthesized on every
-# run, so every artifact's mtime is newer than the published object and a default sync would
-# re-upload all of them every time. A version's bytes never change once published — a fix ships as
-# a new version — so size is a sufficient discriminator here, and verify-launchstack-published.sh
-# compares the served bytes against the source hash afterwards to catch anything it lets through
-# (both artifact kinds' zip/synth steps are byte-deterministic, so an unrelated re-run never drifts).
+# Write-once is enforced by launchstack-overwrite-guard.sh, run below before any upload — it refuses
+# the whole publish if any already-published key's content differs from its local artifact, by content
+# identity (sha256), never by size. --size-only on the sync calls further down is unrelated to that
+# guarantee: it exists only so a byte-identical re-run stays a true no-op, since dist/ is gitignored
+# and re-synthesized on every run, so every artifact's mtime is newer than the published object and the
+# default mtime comparison would re-upload all of them every time regardless of content.
 #
 # No --acl: the store serves anonymous reads from its bucket policy, and object ACLs are disabled.
 # No --delete: a retired version's object costs cents a year and may be mid-deploy in a customer's
@@ -28,11 +28,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-LAUNCHSTACK_BUCKET="${LAUNCHSTACK_BUCKET:-apiable-launchstack-templates}"
+export LAUNCHSTACK_BUCKET="${LAUNCHSTACK_BUCKET:-apiable-launchstack-templates}"
 SRC_DIR="dist/launchstack"
 
 if [[ ! -d "${SRC_DIR}" ]]; then
   echo "no ${SRC_DIR} — run synth-launchstack.sh for each construct first" >&2
+  exit 1
+fi
+
+if ! bash launchstack-overwrite-guard.sh; then
+  echo "publish aborted — overwrite guard refused (see above); no published artifact was touched" >&2
   exit 1
 fi
 
