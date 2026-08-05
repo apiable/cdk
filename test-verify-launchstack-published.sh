@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 #
-# Test-automation coverage (013-1-28 [TA]) for verify-launchstack-published.sh's extended zip-artifact
-# path, end-to-end against a local HTTP server standing in for S3 — no AWS account needed, mirroring
-# 013-1-25's own tamper-test methodology for its template-only predecessor
+# Test-automation coverage (013-1-28 [TA], extended by 013-1-29) for verify-launchstack-published.sh's
+# zip-artifact path AND launchstack-overwrite-guard.sh's producer-side write-once guard, end-to-end
+# against a local HTTP server standing in for S3 — no AWS account needed, mirroring 013-1-25's own
+# tamper-test methodology for its template-only predecessor
 # (_bmad-output/test-artifacts/atdd-013-1-25-verify-launchstack-published.sh).
 #
-# Exercises the REAL verify-launchstack-published.sh (never a reimplementation of its logic), so this
-# test verifies the script's actual behaviour, not a copy that could silently drift from it. A bare
-# `python3 -m http.server` does not set Content-Type reliably for `.yaml` or any Cache-Control header at
-# all, so the stand-in server below sets both explicitly — the same headers publish-launchstack.sh sets
-# on the real store — otherwise this would fail its own happy path for reasons S3 would never produce.
+# Exercises the REAL scripts (never a reimplementation of their logic), so this test verifies actual
+# behaviour, not a copy that could silently drift from it. A bare `python3 -m http.server` does not set
+# Content-Type reliably for `.yaml` or any Cache-Control header at all, so the stand-in server below sets
+# both explicitly — the same headers publish-launchstack.sh sets on the real store — otherwise this
+# would fail its own happy path for reasons S3 would never produce.
+#
+# `aws s3 sync` (the actual upload half of publish-launchstack.sh) needs a real S3-compatible API this
+# harness does not provide, so the 013-1-29 checks below exercise launchstack-overwrite-guard.sh
+# directly — the fail-closed half, and the one a corrupted/tampered publish would actually be caught by.
 #
 # Usage: bash test-verify-launchstack-published.sh
 set -uo pipefail
@@ -128,6 +133,35 @@ done
 check "wrong Content-Type fails closed" 1 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 1))" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
 kill "${WRONG_TYPE_PID}" 2>/dev/null
+
+echo "=== 013-1-29 S1: overwrite guard passes clean — nothing changed, plus a brand-new version ==="
+check "guard passes when published content is unchanged" 0 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+NEW_VERSION_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/9.9.10"
+mkdir -p "${NEW_VERSION_DIR}"
+cp "${ARTIFACT_DIR}/template.yaml" "${NEW_VERSION_DIR}/template.yaml"
+check "guard passes a brand-new, not-yet-published version" 0 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+rm -rf "${NEW_VERSION_DIR}"
+
+echo "=== 013-1-29 S2: overwrite guard refuses changed content at a published key — same byte size ==="
+cp "${ARTIFACT_DIR}/template.yaml" "${SCRATCH}/template.yaml.bak"
+python3 -c "
+content = open('${ARTIFACT_DIR}/template.yaml').read()
+tampered = content.replace(\"'2010-09-09'\", \"'2010-09-08'\")
+assert tampered != content and len(tampered) == len(content), 'tamper must change content but preserve length'
+open('${ARTIFACT_DIR}/template.yaml', 'w').write(tampered)
+"
+check "guard refuses same-size changed content (content identity, never size)" 1 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+cp "${SCRATCH}/template.yaml.bak" "${ARTIFACT_DIR}/template.yaml"
+
+echo "=== 013-1-29 S2: overwrite guard refuses changed content at a published key — different byte size ==="
+printf '# tamper\n' >> "${ARTIFACT_DIR}/template.yaml"
+check "guard refuses different-size changed content" 1 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+cp "${SCRATCH}/template.yaml.bak" "${ARTIFACT_DIR}/template.yaml"
+rm -f "${SCRATCH}/template.yaml.bak"
 
 if [[ "${fail_count}" -gt 0 ]]; then
   echo "${fail_count} check(s) failed"

@@ -163,6 +163,14 @@ export class LambdaAuthorizer extends Construct {
       // access to Apiable's CDK asset-staging bucket, so the code is fetched from the same public,
       // versioned launchstack bucket the template itself is published to and referenced by S3 key —
       // deploying it is the only shape that reaches CREATE_COMPLETE cross-account.
+      //
+      // No S3ObjectVersion pin: the customer's own fetch of the *template* that contains this reference
+      // is itself an unversioned, unpinnable GET (a plain Launch Stack URL, composed by
+      // OnboardingLaunchStackUrlGenerator.kt — frozen, portal-owned, out of this construct's reach), so
+      // pinning only the code would protect the wrong layer while the template stays repointable. Both
+      // this key and the template's key are instead made write-once at the store itself — see the
+      // bucket policy's conditional-write enforcement (infra) — so `current` can never diverge from the
+      // one and only version either key was ever legitimately written with.
       code: lambda.Code.fromBucket(
         s3.Bucket.fromBucketName(this, 'LaunchStackBucket', DEFAULT_LAUNCHSTACK_BUCKET),
         launchStackCodeKey(CONSTRUCT_VERSION),
