@@ -4,8 +4,8 @@ import * as yaml from 'js-yaml'
 
 /**
  * S3 (013-1-29): the publish pipeline's producer-side proofs — including the overwrite guard's
- * changed-content refusal — must run in the PR-triggered job, not only post-merge, so a regression in
- * the guard cannot merge unnoticed. Asserted here rather than inside test-verify-launchstack-
+ * changed-content refusal — must run in the PR-triggered job, not only post-merge, so a change that
+ * weakens the guard cannot merge unnoticed. Asserted here rather than inside test-verify-launchstack-
  * published.sh itself, because a check that only runs when its own CI wiring already exists can never
  * catch that wiring being removed. This spec runs as part of the same `npm test` step that already
  * executes unconditionally in the PR job, independent of the wiring it asserts on.
