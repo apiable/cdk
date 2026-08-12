@@ -1,29 +1,37 @@
 #!/usr/bin/env bash
 #
-# Publish the synthesized launch-stack templates to the template store the portal addresses.
-# Run synth-launchstack.sh for every construct first; this script only uploads what is on disk.
+# Publish the synthesized launch-stack templates — and any construct's code artifact, e.g. the
+# lambda-authorizer's zip (too large for CloudFormation's inline ZipFile) — to the store the portal
+# addresses. Run synth-launchstack.sh for every construct first; this script only uploads what is on
+# disk.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # OnboardingLaunchStackUrlGenerator.kt::templateHttpsUrl — `<construct>/<version>/template.yaml`
-# under the bucket. dist/launchstack/ mirrors that key-for-key, so the upload is a plain sync.
+# under the bucket; a code artifact publishes alongside it at the same version segment
+# (launchStackCodeKey). dist/launchstack/ mirrors both key-for-key.
 #
-# Only template.yaml is published. The template.json twin beside it is an input to the parity
-# specs, which read it locally; nothing fetches it over HTTP, so it stays out of a public store.
+# Only template.yaml and *.zip are published. The template.json twin beside a template is an input
+# to the parity specs, which read it locally; nothing fetches it over HTTP, so it stays out of the
+# public store.
 #
-# --size-only, not the default mtime comparison: dist/ is gitignored and re-synthesized on every
-# run, so every artifact's mtime is newer than the published object and a default sync would
-# re-upload all of them every time. A version's bytes never change once published — a fix ships as
-# a new version — so size is a sufficient discriminator here, and verify-launchstack-published.sh
-# compares the served bytes against the source hash afterwards to catch anything it lets through.
+# Write-once has two independent layers, and this script is only the first: launchstack-overwrite-
+# guard.sh decides, per artifact, whether it is new (upload) or already published byte-identical
+# (skip) — it refuses the whole publish if any already-published key differs from its local artifact,
+# by content identity (sha256), never by size. Every upload this script performs for a NEW key also
+# carries `--if-none-match '*'`, so the store itself refuses the write if the key was created by
+# anything else between the guard's check and this PutObject — and the bucket policy's conditional-
+# write enforcement (infra) independently requires that header on every PutObject to this bucket,
+# closing the guard-bypass gap a raw API call using the publishing credentials would otherwise have:
+# no caller, guarded or not, can ever create a second version at an already-populated key.
 #
 # No --acl: the store serves anonymous reads from its bucket policy, and object ACLs are disabled.
-# No --delete: a retired version's object costs cents a year and may be mid-deploy in a customer's
+# No delete: a retired version's object costs cents a year and may be mid-deploy in a customer's
 # console; orphans are swept deliberately, never as a side effect of a promotion.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-LAUNCHSTACK_BUCKET="${LAUNCHSTACK_BUCKET:-apiable-launchstack-templates}"
+export LAUNCHSTACK_BUCKET="${LAUNCHSTACK_BUCKET:-apiable-launchstack-templates}"
 SRC_DIR="dist/launchstack"
 
 if [[ ! -d "${SRC_DIR}" ]]; then
@@ -31,24 +39,39 @@ if [[ ! -d "${SRC_DIR}" ]]; then
   exit 1
 fi
 
-sync_templates() {
-  aws s3 sync "${SRC_DIR}/" "s3://${LAUNCHSTACK_BUCKET}/" \
-    --exclude '*' --include '*template.yaml' \
-    --content-type application/x-yaml \
-    --cache-control 'public, max-age=31536000, immutable' \
-    --size-only \
-    --no-progress \
-    "$@"
+# The `||` (not a bare assignment) is deliberate: a plain `var=$(cmd)` under `set -e` does not reliably
+# abort on `cmd`'s failure across bash versions, but a command that is the left side of `||` is an
+# explicit, unambiguous exemption — so the failure is always caught here, not silently ignored.
+guard_output=$(bash launchstack-overwrite-guard.sh) || {
+  echo "publish aborted — overwrite guard refused (see above); no published artifact was touched" >&2
+  exit 1
 }
 
-sync_templates
+NEW_ARTIFACTS=()
+while IFS= read -r key; do
+  [[ -n "${key}" ]] && NEW_ARTIFACTS+=("${key}")
+done <<< "${guard_output}"
 
-# The pass must be a no-op when nothing changed: a second comparison that still wants to transfer
-# something means the sync is not converging, and every promotion would churn the store.
-pending=$(sync_templates --dryrun | grep -c '^(dryrun)' || true)
-if [[ "${pending}" -ne 0 ]]; then
-  echo "sync did not converge — ${pending} transfer(s) still pending after publishing" >&2
-  exit 1
+if [[ ${#NEW_ARTIFACTS[@]} -eq 0 ]]; then
+  echo "published ${SRC_DIR}/**/{template.yaml,*.zip} to s3://${LAUNCHSTACK_BUCKET}/ (idempotent: 0 new artifacts)"
+  exit 0
 fi
 
-echo "published ${SRC_DIR}/*/*/template.yaml to s3://${LAUNCHSTACK_BUCKET}/ (idempotent: 0 pending transfers)"
+for key in "${NEW_ARTIFACTS[@]}"; do
+  src="${SRC_DIR}/${key}"
+  case "${key}" in
+    *.zip) content_type="application/zip" ;;
+    *) content_type="application/x-yaml" ;;
+  esac
+  aws s3api put-object \
+    --bucket "${LAUNCHSTACK_BUCKET}" \
+    --key "${key}" \
+    --body "${src}" \
+    --content-type "${content_type}" \
+    --cache-control 'public, max-age=31536000, immutable' \
+    --if-none-match '*' \
+    >/dev/null
+  echo "published ${key}"
+done
+
+echo "published ${#NEW_ARTIFACTS[@]} new artifact(s) to s3://${LAUNCHSTACK_BUCKET}/"

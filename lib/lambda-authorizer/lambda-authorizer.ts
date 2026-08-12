@@ -4,9 +4,24 @@ import { Construct } from 'constructs'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import * as apigateway from 'aws-cdk-lib/aws-apigateway'
+import * as s3 from 'aws-cdk-lib/aws-s3'
+import * as fs from 'fs'
 import * as path from 'path'
 import { readUpstreamOutput } from '@apiable/cdk-ssm-composition'
-import { CONSTRUCT_NAME, TENANT_NAME_PATTERN, TENANT_NAME_PATTERN_SOURCE } from './launch-stack-url'
+import {
+  CONSTRUCT_NAME,
+  DEFAULT_LAUNCHSTACK_BUCKET,
+  TENANT_NAME_PATTERN,
+  TENANT_NAME_PATTERN_SOURCE,
+  launchStackCodeKey,
+} from './launch-stack-url'
+
+/**
+ * This construct's published version — the same `package.json` `synth-launchstack.sh` and the
+ * `launch-stack-url` helpers read, so the code reference this construct embeds and the key the publish
+ * pipeline uploads to never drift apart.
+ */
+const CONSTRUCT_VERSION: string = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version
 
 /** Logical id of the tenant-name parameter the published template scopes the authorizer by. */
 export const TENANT_NAME_PARAMETER = 'TenantName'
@@ -144,7 +159,22 @@ export class LambdaAuthorizer extends Construct {
       functionName: `apiable-${name}-authz`,
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../assets/lambdas/authorization-cc')),
+      // Too large to inline (8,635 B > the 4,096-byte ZipFile cap): a customer's account has no read
+      // access to Apiable's CDK asset-staging bucket, so the code is fetched from the same public,
+      // versioned launchstack bucket the template itself is published to and referenced by S3 key —
+      // deploying it is the only shape that reaches CREATE_COMPLETE cross-account.
+      //
+      // No S3ObjectVersion pin: the customer's own fetch of the *template* that contains this reference
+      // is itself an unversioned, unpinnable GET (a plain Launch Stack URL, composed by
+      // OnboardingLaunchStackUrlGenerator.kt — frozen, portal-owned, out of this construct's reach), so
+      // pinning only the code would protect the wrong layer while the template stays repointable. Both
+      // this key and the template's key are instead made write-once at the store itself — see the
+      // bucket policy's conditional-write enforcement (infra) — so `current` can never diverge from the
+      // one and only version either key was ever legitimately written with.
+      code: lambda.Code.fromBucket(
+        s3.Bucket.fromBucketName(this, 'LaunchStackBucket', DEFAULT_LAUNCHSTACK_BUCKET),
+        launchStackCodeKey(CONSTRUCT_VERSION),
+      ),
       role: this.role,
       environment: {
         APIABLE_AWS_AUTHZ_USERPOOLID: userPoolId,

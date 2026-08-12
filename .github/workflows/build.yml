@@ -39,6 +39,11 @@ jobs:
       - name: Run construct + parity tests
         run: npm test
 
+      # Producer-side write-once proofs (the overwrite guard's refusal, incl. the same-size case) —
+      # exercised pre-merge so a change that weakens the guard cannot merge unnoticed.
+      - name: Run publish-pipeline tests
+        run: npm run test:publish-pipeline
+
   build:
     needs: test
     runs-on: ubuntu-latest

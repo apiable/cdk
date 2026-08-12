@@ -16,6 +16,8 @@ import {
   generateLaunchStackUrl,
   launchStackTemplateKey,
   launchStackTemplateS3Uri,
+  launchStackCodeKey,
+  DEFAULT_LAUNCHSTACK_BUCKET,
   TENANT_NAME_PARAMETER,
   USER_POOL_ID_PARAMETER,
   REST_API_ID_PARAMETER,
@@ -215,5 +217,36 @@ describe('lambda-authorizer — additional automation coverage', () => {
     const version = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib/lambda-authorizer/package.json'), 'utf8')).version
     expect(version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(launchStackTemplateKey(version)).toBe(`apiable-lambda-authorizer/${version}/template.yaml`)
+  })
+
+  // 013-1-28: the handler (8,635 B) is too large to inline, so it deploys from the public launchstack
+  // bucket instead of Apiable's private CDK asset-staging bucket, which a customer account cannot read.
+  describe('013-1-28 — authorizer code is fetched from the public launchstack bucket, not a private asset bucket', () => {
+    const fnProps = (t: Template): Record<string, unknown> =>
+      Object.values(t.findResources('AWS::Lambda::Function'))[0].Properties as Record<string, unknown>
+
+    it('carries S3Bucket/S3Key pointing at the public launchstack bucket and the versioned code key — no ZipFile, no CDK asset-staging bucket reference — on every channel', () => {
+      const version = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib/lambda-authorizer/package.json'), 'utf8')).version
+      for (const t of [concrete(), Template.fromStack(buildPublishedStack(new cdk.App()))]) {
+        const code = fnProps(t).Code as { S3Bucket?: unknown; S3Key?: unknown; ZipFile?: unknown }
+        expect(code.S3Bucket).toBe(DEFAULT_LAUNCHSTACK_BUCKET)
+        expect(code.S3Key).toBe(launchStackCodeKey(version))
+        expect(code.ZipFile).toBeUndefined()
+        // the exact defect class this story fixes: a customer account cannot read cdk-<qualifier>-assets-*
+        expect(JSON.stringify(t.toJSON())).not.toMatch(/cdk-[a-z0-9]+-assets/)
+      }
+    })
+
+    it('the CDK (standalone) and published (one-click) channels reference the identical bucket/key — no publication-mode fork in the construct (RULES.md channel discipline)', () => {
+      const cdkCode = fnProps(concrete()).Code
+      const publishedCode = fnProps(Template.fromStack(buildPublishedStack(new cdk.App()))).Code
+      expect(cdkCode).toEqual(publishedCode)
+    })
+
+    it('launchStackCodeKey addresses the code artifact alongside the template, at the same immutable version segment', () => {
+      expect(launchStackCodeKey('2.3.4')).toBe('apiable-lambda-authorizer/2.3.4/authorizer.zip')
+      const version = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib/lambda-authorizer/package.json'), 'utf8')).version
+      expect(launchStackCodeKey(version)).toBe(`apiable-lambda-authorizer/${version}/authorizer.zip`)
+    })
   })
 })
