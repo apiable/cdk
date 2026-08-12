@@ -60,14 +60,20 @@ fail() {
   failures=$((failures + 1))
 }
 
-# sha256sum on the Linux runner, shasum on a macOS operator machine.
-sha256_of() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
+# sha256sum on the Linux runner, shasum on a macOS operator machine. Resolve one ONCE, at top level,
+# and hard-fail the whole run if neither exists — a check whose entire purpose is a digest comparison
+# must never degrade to comparing two empty strings (which are equal), waving through the corruption
+# it exists to catch. sha256_of runs inside $(...), a subshell, so it cannot exit the script from
+# there; this guard and the call-site digest-shape check below are what enforce fail-closed.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_bin() { sha256sum "$1"; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256_bin() { shasum -a 256 "$1"; }
+else
+  echo "neither sha256sum nor shasum is available — cannot verify artifact fidelity" >&2
+  exit 1
+fi
+sha256_of() { sha256_bin "$1" | awk '{print $1}'; }
 
 # A local artifact's well-formedness, and the served body's, are checked by the same predicate per
 # kind — YAML template vs. code zip — so the two passes below (local, then served) can never drift
@@ -140,7 +146,11 @@ for src in "${ARTIFACTS[@]}"; do
 
   served_sha=$(sha256_of "${body_file}")
   source_sha=$(sha256_of "${src}")
-  if [[ "${served_sha}" != "${source_sha}" ]]; then
+  # Fail closed on a malformed digest: an empty or partial hash on both sides would compare equal and
+  # read as a faithful upload. Require a real 64-hex sha256 on each before the comparison means anything.
+  if [[ ! "${served_sha}" =~ ^[0-9a-f]{64}$ || ! "${source_sha}" =~ ^[0-9a-f]{64}$ ]]; then
+    fail "${key} — could not compute a sha256 to compare (served '${served_sha}', source '${source_sha}')"
+  elif [[ "${served_sha}" != "${source_sha}" ]]; then
     fail "${key} — served body differs from the synthesized artifact (served ${served_sha:0:12}…, source ${source_sha:0:12}…)"
   fi
 
