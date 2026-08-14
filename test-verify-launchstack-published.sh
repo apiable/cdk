@@ -93,6 +93,48 @@ check() {
   fi
 }
 
+# An exit code alone cannot tell a refusal-for-the-right-reason from an unreachable stand-in, which also
+# exits 1. Every negative check asserts the message too, so a dead server fails instead of passing.
+check_message() {
+  local desc="$1" expect_exit="$2" expect_msg="$3"
+  shift 3
+  local out
+  out=$("$@" 2>&1)
+  local actual=$?
+  if [[ "${actual}" -eq "${expect_exit}" ]] && [[ "${out}" == *"${expect_msg}"* ]]; then
+    echo "  PASS: ${desc}"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: ${desc} (expected exit ${expect_exit} and message '${expect_msg}', got exit ${actual})"
+    echo "${out}" | tail -20
+    fail_count=$((fail_count + 1))
+  fi
+}
+
+check_contains() {
+  local desc="$1" haystack="$2" needle="$3"
+  if [[ "${haystack}" == *"${needle}"* ]]; then
+    echo "  PASS: ${desc}"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: ${desc} (missing '${needle}')"
+    echo "${haystack}" | tail -20
+    fail_count=$((fail_count + 1))
+  fi
+}
+
+# Readiness that fails loudly. A silently-exhausted wait leaves a check asserting against nothing.
+cat > "${SCRATCH}/wait-status.sh" <<'WAITEOF'
+#!/usr/bin/env bash
+url="$1"; want="$2"
+for _ in $(seq 1 40); do
+  [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${url}")" == "${want}" ]] && exit 0
+  sleep 0.2
+done
+exit 1
+WAITEOF
+chmod +x "${SCRATCH}/wait-status.sh"
+
 echo "=== S1/S2/S6: valid template + zip served with the real store's headers -> exit 0 ==="
 check "happy path passes" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
@@ -176,21 +218,58 @@ for _ in $(seq 1 20); do
   sleep 0.2
 done
 
-# The regression: this is the exact shape that reddened cdk master on every push after the m1 merge.
+"${SCRATCH}/wait-status.sh" "http://127.0.0.1:$((PORT + 2))/${CONSTRUCT}/${VERSION}/template.yaml" 200 \
+  || { echo "  FAIL: masking stand-in never came up — the checks below would pass on a dead server"; fail_count=$((fail_count + 1)); }
+
+# A key absent from a masking store must reach stdout, which is the list publish-launchstack.sh uploads —
+# an exit code alone would still pass if the key were classified correctly and then silently dropped.
 MASKED_NEW_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/9.9.11"
 mkdir -p "${MASKED_NEW_DIR}"
 cp "${ARTIFACT_DIR}/template.yaml" "${MASKED_NEW_DIR}/template.yaml"
 check "guard reads a masked 403 as not-yet-published and passes" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+masked_stdout=$(env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh 2>/dev/null)
+check_contains "the masked key reaches stdout as an artifact to upload" \
+  "${masked_stdout}" "${CONSTRUCT}/9.9.11/template.yaml"
 rm -rf "${MASKED_NEW_DIR}"
 
 # Reading 403 as absence must not soften the write-once refusal for a key that genuinely IS published.
 cp "${ARTIFACT_DIR}/template.yaml" "${SCRATCH}/template.yaml.maskbak"
 printf '# masked-store tamper\n' >> "${ARTIFACT_DIR}/template.yaml"
-check "guard still refuses changed content at a published key on a masking store" 1 \
+check_message "guard still refuses changed content at a published key on a masking store" 1 \
+  "already published with DIFFERENT content" \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
 cp "${SCRATCH}/template.yaml.maskbak" "${ARTIFACT_DIR}/template.yaml"
 rm -f "${SCRATCH}/template.yaml.maskbak"
+
+# An all-masked store is indistinguishable from a broken anonymous read grant, so it must refuse rather
+# than report a clear it never earned. Served from a directory with nothing in it: every key answers 403.
+mkdir -p "${SCRATCH}/empty-served"
+cat > "${SCRATCH}/serve-allmasked.py" <<PYEOF
+import http.server, os
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def send_error(self, code, message=None, explain=None):
+        if code == 404:
+            code, message, explain = 403, 'Forbidden', 'Access Denied'
+        super().send_error(code, message, explain)
+
+    def log_message(self, *args):
+        pass
+
+os.chdir('${SCRATCH}/empty-served')
+http.server.HTTPServer(('127.0.0.1', ${PORT} + 4), Handler).serve_forever()
+PYEOF
+python3 "${SCRATCH}/serve-allmasked.py" >/dev/null 2>&1 &
+ALLMASKED_PID=$!
+"${SCRATCH}/wait-status.sh" "http://127.0.0.1:$((PORT + 4))/anything" 403 \
+  || { echo "  FAIL: all-masked stand-in never came up"; fail_count=$((fail_count + 1)); }
+check_message "guard refuses when every key is masked and none is readable" 1 \
+  "anonymous read grant cannot be confirmed intact" \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 4))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+check "the empty-store escape hatch is explicit, not implicit" 0 \
+  env LAUNCHSTACK_ALLOW_EMPTY_STORE=1 SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 4))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+kill "${ALLMASKED_PID}" 2>/dev/null
 kill "${MASKING_PID}" 2>/dev/null
 
 echo "=== a status that is neither present nor absent still fails closed ==="
@@ -210,11 +289,10 @@ http.server.HTTPServer(('127.0.0.1', ${PORT} + 3), Handler).serve_forever()
 PYEOF
 python3 "${SCRATCH}/serve-503.py" >/dev/null 2>&1 &
 THROTTLE_PID=$!
-for _ in $(seq 1 20); do
-  [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$((PORT + 3))/probe")" == "503" ]] && break
-  sleep 0.2
-done
-check "guard refuses on an unknown status (503) rather than treating it as absent" 1 \
+"${SCRATCH}/wait-status.sh" "http://127.0.0.1:$((PORT + 3))/probe" 503 \
+  || { echo "  FAIL: 503 stand-in never came up — the check below would pass on a dead server"; fail_count=$((fail_count + 1)); }
+check_message "guard refuses on an unknown status (503) rather than treating it as absent" 1 \
+  "unexpected status 503" \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 3))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
 kill "${THROTTLE_PID}" 2>/dev/null
 

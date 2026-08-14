@@ -85,6 +85,8 @@ echo "overwrite guard: checking ${#ARTIFACTS[@]} local artifact(s) against ${TEM
 
 refused=0
 new_artifacts=()
+saw_present=0
+saw_masked=0
 for src in "${ARTIFACTS[@]}"; do
   key="${src#"${SRC_DIR}"/}"
   url="${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${key}"
@@ -94,24 +96,20 @@ for src in "${ARTIFACTS[@]}"; do
   published_body="$(mktemp)"
   code=$(curl -sSL -o "${published_body}" -w '%{http_code}' --max-time 20 "${url}")
 
-  # 403 reads as absence, not as a refusal. Every object in this store is anonymously GetObject-able
-  # (that is the store's purpose — a customer's CloudFormation console fetches from it unauthenticated),
-  # so a key that exists answers 200. S3 masks a missing key as 403 rather than 404 for a caller that
-  # cannot list the bucket, and this caller deliberately cannot. 200 and 403 therefore partition the
-  # keyspace: present and absent. Any other status is genuinely unknown and still refuses — throttling
-  # (503) and server faults (500) must never be read as "safe to publish".
-  #
-  # Misreading absence here cannot overwrite anything: every upload carries `--if-none-match '*'` and
-  # the bucket policy independently denies a PutObject without it, so the store refuses a second write
-  # at a populated key no matter what this probe concluded.
+  # Every object here is anonymously readable, so a key that exists answers 200 and S3 masks a missing
+  # one as 403 for a caller that cannot list the bucket. 200 and 403 therefore mean present and absent.
+  # Any other status is unknown and refuses, so throttling or a server fault is never read as publishable.
+  # The all-masked check after the loop covers the case where that reading is not safe.
   case "${code}" in
     404|403)
+      [[ "${code}" == "403" ]] && saw_masked=$((saw_masked + 1))
       echo "  • ${key} — not yet published (new version, will publish)" >&2
       new_artifacts+=("${key}")
       rm -f "${published_body}"
       continue
       ;;
     200)
+      saw_present=$((saw_present + 1))
       ;;
     *)
       echo "  ✗ ${key} — unexpected status ${code} probing the published store; refusing (cannot verify content identity)" >&2
@@ -139,6 +137,19 @@ done
 
 if [[ "${refused}" -gt 0 ]]; then
   echo "overwrite guard REFUSED: ${refused} key(s) would silently replace already-published content — publish aborted before any upload" >&2
+  exit 1
+fi
+
+# Reading 403 as absence is only sound while the store's anonymous read grant is intact. Every way to
+# break it — a public-access-block flip, a default-encryption switch to a CMK the anonymous principal
+# cannot use, a bucket-policy apply still propagating — masks the WHOLE store, so every key answers 403
+# and the content-drift comparison silently never runs. A run that saw a 403 and never once saw a 200 is
+# indistinguishable from that, so it refuses rather than reporting a clear it did not earn. A normal run
+# synthesizes every construct and most sit at already-published versions, so it always has a 200.
+# Bootstrapping a genuinely empty store is the one legitimate all-absent case: set
+# LAUNCHSTACK_ALLOW_EMPTY_STORE=1 for it, deliberately.
+if [[ "${saw_masked}" -gt 0 && "${saw_present}" -eq 0 && "${LAUNCHSTACK_ALLOW_EMPTY_STORE:-0}" != "1" ]]; then
+  echo "overwrite guard REFUSED: every probed key was masked (403) and none was readable (200), so the store's anonymous read grant cannot be confirmed intact — refusing rather than treating the whole store as empty. Set LAUNCHSTACK_ALLOW_EMPTY_STORE=1 only when publishing into a genuinely empty store." >&2
   exit 1
 fi
 
