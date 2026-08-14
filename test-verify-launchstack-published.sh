@@ -144,6 +144,80 @@ check "guard passes a brand-new, not-yet-published version" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
 rm -rf "${NEW_VERSION_DIR}"
 
+echo "=== overwrite guard against an existence-MASKING store (403 for a missing key, as S3 answers) ==="
+# The real store grants anonymous GetObject on every key but never ListBucket, so S3 refuses to
+# disclose that a key is absent: a GET for a not-yet-published version answers 403, not 404. A plain
+# http.server answers 404 and so models the store we wish we had, never the one the publish pipeline
+# actually talks to. This stand-in masks 404 as 403 so the guard's real production input is exercised.
+cat > "${SCRATCH}/serve-masking.py" <<PYEOF
+import http.server, os
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        if self.path.endswith('.yaml'):
+            self.send_header('Content-Type', 'application/x-yaml')
+        elif self.path.endswith('.zip'):
+            self.send_header('Content-Type', 'application/zip')
+        self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
+        super().end_headers()
+
+    def send_error(self, code, message=None, explain=None):
+        if code == 404:
+            code, message, explain = 403, 'Forbidden', 'Access Denied'
+        super().send_error(code, message, explain)
+
+os.chdir('${SCRATCH}/served')
+http.server.HTTPServer(('127.0.0.1', ${PORT} + 2), Handler).serve_forever()
+PYEOF
+python3 "${SCRATCH}/serve-masking.py" >/dev/null 2>&1 &
+MASKING_PID=$!
+for _ in $(seq 1 20); do
+  curl -sf -o /dev/null "http://127.0.0.1:$((PORT + 2))/${CONSTRUCT}/${VERSION}/template.yaml" && break
+  sleep 0.2
+done
+
+# The regression: this is the exact shape that reddened cdk master on every push after the m1 merge.
+MASKED_NEW_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/9.9.11"
+mkdir -p "${MASKED_NEW_DIR}"
+cp "${ARTIFACT_DIR}/template.yaml" "${MASKED_NEW_DIR}/template.yaml"
+check "guard reads a masked 403 as not-yet-published and passes" 0 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+rm -rf "${MASKED_NEW_DIR}"
+
+# Reading 403 as absence must not soften the write-once refusal for a key that genuinely IS published.
+cp "${ARTIFACT_DIR}/template.yaml" "${SCRATCH}/template.yaml.maskbak"
+printf '# masked-store tamper\n' >> "${ARTIFACT_DIR}/template.yaml"
+check "guard still refuses changed content at a published key on a masking store" 1 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+cp "${SCRATCH}/template.yaml.maskbak" "${ARTIFACT_DIR}/template.yaml"
+rm -f "${SCRATCH}/template.yaml.maskbak"
+kill "${MASKING_PID}" 2>/dev/null
+
+echo "=== a status that is neither present nor absent still fails closed ==="
+# Throttling (503) and server faults must never be read as "safe to publish" — only 200 and 403/404
+# carry existence information; everything else is unknown.
+cat > "${SCRATCH}/serve-503.py" <<PYEOF
+import http.server
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_error(503, 'Slow Down')
+
+    def log_message(self, *args):
+        pass
+
+http.server.HTTPServer(('127.0.0.1', ${PORT} + 3), Handler).serve_forever()
+PYEOF
+python3 "${SCRATCH}/serve-503.py" >/dev/null 2>&1 &
+THROTTLE_PID=$!
+for _ in $(seq 1 20); do
+  [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$((PORT + 3))/probe")" == "503" ]] && break
+  sleep 0.2
+done
+check "guard refuses on an unknown status (503) rather than treating it as absent" 1 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 3))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+kill "${THROTTLE_PID}" 2>/dev/null
+
 echo "=== 013-1-29 S2: overwrite guard refuses changed content at a published key — same byte size ==="
 cp "${ARTIFACT_DIR}/template.yaml" "${SCRATCH}/template.yaml.bak"
 python3 -c "

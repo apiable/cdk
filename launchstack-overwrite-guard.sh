@@ -94,8 +94,18 @@ for src in "${ARTIFACTS[@]}"; do
   published_body="$(mktemp)"
   code=$(curl -sSL -o "${published_body}" -w '%{http_code}' --max-time 20 "${url}")
 
+  # 403 reads as absence, not as a refusal. Every object in this store is anonymously GetObject-able
+  # (that is the store's purpose — a customer's CloudFormation console fetches from it unauthenticated),
+  # so a key that exists answers 200. S3 masks a missing key as 403 rather than 404 for a caller that
+  # cannot list the bucket, and this caller deliberately cannot. 200 and 403 therefore partition the
+  # keyspace: present and absent. Any other status is genuinely unknown and still refuses — throttling
+  # (503) and server faults (500) must never be read as "safe to publish".
+  #
+  # Misreading absence here cannot overwrite anything: every upload carries `--if-none-match '*'` and
+  # the bucket policy independently denies a PutObject without it, so the store refuses a second write
+  # at a populated key no matter what this probe concluded.
   case "${code}" in
-    404)
+    404|403)
       echo "  • ${key} — not yet published (new version, will publish)" >&2
       new_artifacts+=("${key}")
       rm -f "${published_body}"
@@ -133,6 +143,8 @@ if [[ "${refused}" -gt 0 ]]; then
 fi
 
 echo "overwrite guard clear: no already-published key would be replaced (${#new_artifacts[@]} new)" >&2
-for key in "${new_artifacts[@]}"; do
+# `${arr[@]+"${arr[@]}"}` — bash 3.2 (the macOS system shell) treats an empty array as unset under
+# `set -u`, so a bare expansion aborts the all-no-op run: the one path an operator re-publish takes.
+for key in ${new_artifacts[@]+"${new_artifacts[@]}"}; do
   echo "${key}"
 done
