@@ -85,6 +85,8 @@ echo "overwrite guard: checking ${#ARTIFACTS[@]} local artifact(s) against ${TEM
 
 refused=0
 new_artifacts=()
+saw_present=0
+saw_masked=0
 for src in "${ARTIFACTS[@]}"; do
   key="${src#"${SRC_DIR}"/}"
   url="${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${key}"
@@ -94,14 +96,20 @@ for src in "${ARTIFACTS[@]}"; do
   published_body="$(mktemp)"
   code=$(curl -sSL -o "${published_body}" -w '%{http_code}' --max-time 20 "${url}")
 
+  # Every object here is anonymously readable, so a key that exists answers 200 and S3 masks a missing
+  # one as 403 for a caller that cannot list the bucket. 200 and 403 therefore mean present and absent.
+  # Any other status is unknown and refuses, so throttling or a server fault is never read as publishable.
+  # The all-masked check after the loop covers the case where that reading is not safe.
   case "${code}" in
-    404)
+    404|403)
+      [[ "${code}" == "403" ]] && saw_masked=$((saw_masked + 1))
       echo "  • ${key} — not yet published (new version, will publish)" >&2
       new_artifacts+=("${key}")
       rm -f "${published_body}"
       continue
       ;;
     200)
+      saw_present=$((saw_present + 1))
       ;;
     *)
       echo "  ✗ ${key} — unexpected status ${code} probing the published store; refusing (cannot verify content identity)" >&2
@@ -132,7 +140,22 @@ if [[ "${refused}" -gt 0 ]]; then
   exit 1
 fi
 
+# Reading 403 as absence is only sound while the store's anonymous read grant is intact. Every way to
+# break it — a public-access-block flip, a default-encryption switch to a CMK the anonymous principal
+# cannot use, a bucket-policy apply still propagating — masks the WHOLE store, so every key answers 403
+# and the content-drift comparison silently never runs. A run that saw a 403 and never once saw a 200 is
+# indistinguishable from that, so it refuses rather than reporting a clear it did not earn. A normal run
+# synthesizes every construct and most sit at already-published versions, so it always has a 200.
+# Bootstrapping a genuinely empty store is the one legitimate all-absent case: set
+# LAUNCHSTACK_ALLOW_EMPTY_STORE=1 for it, deliberately.
+if [[ "${saw_masked}" -gt 0 && "${saw_present}" -eq 0 && "${LAUNCHSTACK_ALLOW_EMPTY_STORE:-0}" != "1" ]]; then
+  echo "overwrite guard REFUSED: every probed key was masked (403) and none was readable (200), so the store's anonymous read grant cannot be confirmed intact — refusing rather than treating the whole store as empty. Set LAUNCHSTACK_ALLOW_EMPTY_STORE=1 only when publishing into a genuinely empty store." >&2
+  exit 1
+fi
+
 echo "overwrite guard clear: no already-published key would be replaced (${#new_artifacts[@]} new)" >&2
-for key in "${new_artifacts[@]}"; do
+# `${arr[@]+"${arr[@]}"}` — bash 3.2 (the macOS system shell) treats an empty array as unset under
+# `set -u`, so a bare expansion aborts the all-no-op run: the one path an operator re-publish takes.
+for key in ${new_artifacts[@]+"${new_artifacts[@]}"}; do
   echo "${key}"
 done

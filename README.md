@@ -76,23 +76,21 @@ export STACKNAME=<your_stack_name>
 - Go to the Stages
 - Select the Stage
 - Go to the Logs/Tracing and click Edit
-Paste following pattern in the Log format field:
-```json
-{"api_id": "$context.apiId","api_key": "$context.identity.apiKey","key_id": "$context.identity.apiKeyId","ip": "$context.identity.sourceIp","method": "$context.httpMethod","uri": "$context.path","response_size":"$context.responseLength","response_status": "$context.status","resource_id": "$context.resourceId","request_id": "$context.requestId","request_latency": "$context.responseLatency","request_time":"$context.requestTimeEpoch","stage": "$context.stage", "usage_prompt_tokens": "$context.responseOverride.header.usageprompttokens", "usage_completion_tokens": "$context.responseOverride.header.usagecompletiontokens", "usage_total_tokens": "$context.responseOverride.header.usagetotaltokens"}
-```
-- Save the changes
+- Enable **Custom access logging** and paste the Firehose stream ARN as the **Access log destination ARN**
 
-### Export the paramater of logs bucket
-```bash
-export AWS_ACCOUNT_ID=<your_account_id>
-export AWS_REGION=<your_region>
-export LOGS_BUCKET_ARN=<logs_bucket_arn_from_previous_step>
-export STACKNAME=<your_stack_name>
+Paste the following pattern in the **Log format** field, as a **single line** — Firehose delivers one record per entry and Apiable parses one JSON object per line, so a multi-line format breaks ingestion:
+
+```json
+{"api_id": "$context.apiId","api_key": "$context.identity.apiKey","key_id": "$context.identity.apiKeyId","ip": "$context.identity.sourceIp","method": "$context.httpMethod","uri": "$context.path","response_size": "$context.responseLength","response_status": "$context.status","resource_id": "$context.resourceId","request_id": "$context.requestId","request_latency": "$context.responseLatency","request_time": "$context.requestTimeEpoch","stage": "$context.stage","plan_id": "$context.authorizer.apiable_plan_id","subscription_id": "$context.authorizer.apiable_subscription_id"}
 ```
-### Deploy the Usagelogs firehose stream
-```bash
-./deploy-usagelogs-stream.sh
-```
+
+> **Never remove `subscription_id`.** Apiable discards any log row that has no `subscription_id` key at all, before it reads anything else in the row. Delete the key and every call goes unmetered — with no error in the AWS account and no usage in the portal. Keep it even when your authorizer does not populate it: API Gateway writes a dash for an unresolved `$context.authorizer` value, and Apiable treats that as "resolve the subscription from `key_id`". What breaks attribution is an absent key, not an empty value. The same applies to `plan_id`.
+
+**Metering tokens for LLM and AI APIs.** If you bill on tokens rather than calls, there is a token variant of this format that adds `usage_prompt_tokens`, `usage_completion_tokens`, and `usage_total_tokens` from response headers. It still carries `plan_id` and `subscription_id`. Ask support@apiable.io which format fits your pricing before you set it up.
+
+**Canonical source:** https://www.apiable.io/docs/integrations/api-gateways/aws-usage-logs — the customer-facing page is the format Apiable actually ingests. If this README and that page ever disagree, the page wins.
+
+- Save the changes
 
 
 
