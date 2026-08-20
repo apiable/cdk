@@ -25,6 +25,26 @@ export const BUCKET_ARN_PATTERN_SOURCE = '^arn:aws:s3:::[a-z0-9.-]+$'
 /** Compiled form of {@link BUCKET_ARN_PATTERN_SOURCE} for runtime validation. */
 export const BUCKET_ARN_PATTERN = new RegExp(BUCKET_ARN_PATTERN_SOURCE)
 
+/** Logical id of the deploy-time parameter that selects which ingestion path feeds the stream. */
+export const LOG_SOURCE_PARAMETER = 'LogSource'
+
+/** API Gateway writes plain-text access logs straight to the delivery stream. The original path. */
+export const LOG_SOURCE_APIGATEWAY_DIRECT = 'apigateway_direct'
+
+/**
+ * A CloudWatch Logs subscription filter feeds the stream instead. Firehose gunzips the CloudWatch
+ * envelope and unwraps it to the bare log messages natively, so the destination receives the same
+ * plain rows the direct path writes and the downstream parser is unchanged.
+ */
+export const LOG_SOURCE_CLOUDWATCH_LOGS = 'cloudwatch_logs'
+
+/**
+ * The ingestion paths a published template offers. The two are mutually exclusive: Firehose accepts
+ * a direct put only while source decompression is off, and rejects one from any non-CloudWatch caller
+ * once it is on, so a stream serves one path or the other and never both.
+ */
+export const LOG_SOURCE_VALUES: readonly string[] = [LOG_SOURCE_APIGATEWAY_DIRECT, LOG_SOURCE_CLOUDWATCH_LOGS]
+
 export interface LaunchStackUrlInput {
   /** Customer identifier the provisioning is requested for. */
   readonly tenantId: string
@@ -34,6 +54,11 @@ export interface LaunchStackUrlInput {
   readonly region: string
   /** Published template version, e.g. "1.0.0". */
   readonly version: string
+  /**
+   * Which ingestion path the deployed stream is built for; pre-fills the template's `LogSource`
+   * parameter. Omitting it leaves the template default (the direct API Gateway path) in place.
+   */
+  readonly logSource?: string
   /** Host bucket override; defaults to the DevOps-owned placeholder. */
   readonly bucket?: string
 }
@@ -63,7 +88,7 @@ export const makeLaunchStackHelpers = (constructName: string): LaunchStackHelper
     `https://${bucket}.s3.amazonaws.com/${launchStackTemplateKey(version)}`
 
   const generateLaunchStackUrl = (input: LaunchStackUrlInput): string => {
-    const { tenantId, logsBucketArn, region, version, bucket = DEFAULT_LAUNCHSTACK_BUCKET } = input
+    const { tenantId, logsBucketArn, region, version, logSource, bucket = DEFAULT_LAUNCHSTACK_BUCKET } = input
 
     if (!tenantId) throw new Error('tenantId is required to generate a launch stack URL')
     if (!logsBucketArn) throw new Error('logsBucketArn is required to generate a launch stack URL')
@@ -72,11 +97,17 @@ export const makeLaunchStackHelpers = (constructName: string): LaunchStackHelper
     if (!BUCKET_ARN_PATTERN.test(logsBucketArn)) {
       throw new Error('logsBucketArn must be a valid S3 bucket ARN (arn:aws:s3:::<bucket>)')
     }
+    if (logSource !== undefined && !LOG_SOURCE_VALUES.includes(logSource)) {
+      throw new Error(`logSource must be one of ${LOG_SOURCE_VALUES.join(', ')}`)
+    }
 
     const params = new URLSearchParams({
       templateURL: templateHttpsUrl(version, bucket),
       stackName: constructName,
       param_LogsBucketArn: logsBucketArn,
+      // Omitted rather than defaulted, so a link for the original path is byte-identical to the one
+      // generated before the CloudWatch path existed.
+      ...(logSource === undefined ? {} : { [`param_${LOG_SOURCE_PARAMETER}`]: logSource }),
     })
     return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/create/review?${params.toString()}`
   }

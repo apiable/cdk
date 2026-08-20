@@ -7,6 +7,8 @@ import {
   launchStackTemplateKey,
   launchStackTemplateS3Uri,
   DEFAULT_LAUNCHSTACK_BUCKET,
+  LOG_SOURCE_APIGATEWAY_DIRECT,
+  LOG_SOURCE_CLOUDWATCH_LOGS,
 } from '@apiable/cdk-usagelogs-stream'
 
 const VALID = {
@@ -78,5 +80,31 @@ describe('launch-stack template addressing (usagelogs-stream)', () => {
     expect(launchStackTemplateS3Uri('1.0.0', 'devops-bucket')).toBe(
       's3://devops-bucket/apiable-usagelogs-stream/1.0.0/template.yaml',
     )
+  })
+})
+
+/**
+ * The link the provisioning wizard hands a customer pre-fills the ingestion path, so choosing the
+ * CloudWatch route is a property of the link rather than a step the customer has to get right in the
+ * console. Leaving it unset must produce exactly the link this generator produced before the second
+ * path existed.
+ */
+describe('generateLaunchStackUrl (usagelogs-stream) — ingestion path pre-fill', () => {
+  it('pre-fills the CloudWatch path when the wizard asks for it', () => {
+    const url = generateLaunchStackUrl({ ...VALID, logSource: LOG_SOURCE_CLOUDWATCH_LOGS })
+    expect(url).toContain(`param_LogSource=${LOG_SOURCE_CLOUDWATCH_LOGS}`)
+  })
+
+  it('pre-fills the direct path when the wizard asks for it explicitly', () => {
+    const url = generateLaunchStackUrl({ ...VALID, logSource: LOG_SOURCE_APIGATEWAY_DIRECT })
+    expect(url).toContain(`param_LogSource=${LOG_SOURCE_APIGATEWAY_DIRECT}`)
+  })
+
+  it('omits the parameter entirely when no path is named, leaving the template default to decide', () => {
+    expect(generateLaunchStackUrl(VALID)).not.toContain('param_LogSource')
+  })
+
+  it('rejects a path the template would refuse, rather than shipping a link that fails at deploy', () => {
+    expect(() => generateLaunchStackUrl({ ...VALID, logSource: 'cloudwatch' })).toThrow(/logSource must be one of/)
   })
 })
