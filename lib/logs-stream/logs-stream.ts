@@ -6,7 +6,15 @@ import * as kinesisfirehose from 'aws-cdk-lib/aws-kinesisfirehose'
 import * as logs from 'aws-cdk-lib/aws-logs'
 import { publishOutputs } from '@apiable/cdk-ssm-composition'
 import { LOGS_BUCKET_ARN_PARAMETER } from '@apiable/parity-gate'
-import { BUCKET_ARN_PATTERN_SOURCE, CONSTRUCT_NAME, TOKENS_CONSTRUCT_NAME } from './launch-stack-url'
+import {
+  BUCKET_ARN_PATTERN_SOURCE,
+  CONSTRUCT_NAME,
+  LOG_SOURCE_APIGATEWAY_DIRECT,
+  LOG_SOURCE_CLOUDWATCH_LOGS,
+  LOG_SOURCE_PARAMETER,
+  LOG_SOURCE_VALUES,
+  TOKENS_CONSTRUCT_NAME,
+} from './launch-stack-url'
 
 /**
  * Logical id of the storage-location parameter the published template scopes the stream's destination by.
@@ -14,6 +22,12 @@ import { BUCKET_ARN_PATTERN_SOURCE, CONSTRUCT_NAME, TOKENS_CONSTRUCT_NAME } from
  * on it), so the construct sources it from there and re-exports it for the launch-stack/test consumers.
  */
 export { LOGS_BUCKET_ARN_PARAMETER }
+
+/**
+ * The ingestion-path vocabulary, sourced from the launch-stack module (which owns the spellings the
+ * published parameter and its pre-filled link both key on) and re-exported for the stack/test consumers.
+ */
+export { LOG_SOURCE_APIGATEWAY_DIRECT, LOG_SOURCE_CLOUDWATCH_LOGS, LOG_SOURCE_PARAMETER, LOG_SOURCE_VALUES }
 
 /** Logical id of the stream-name parameter the published template scopes the stream's physical names by. */
 export const STREAM_NAME_PARAMETER = 'StreamName'
@@ -43,6 +57,47 @@ export const FIREHOSE_ROLE_LOGICAL_ID_TOKENS = 'apiable-usagetokens-firehose-rol
 
 /** Stream-name prefix the API gateway requires to attach to and write access logs to the stream. */
 const GATEWAY_STREAM_NAME_PREFIX = 'amazon-apigateway-'
+
+/**
+ * The two native Firehose processors that turn a CloudWatch Logs subscription-filter record into the
+ * same plain rows the direct path writes: gunzip the CloudWatch envelope, then unwrap it to the bare
+ * log messages. No Lambda is involved.
+ *
+ * `DataMessageExtraction` also discards `CONTROL_MESSAGE` records, so the health-check message
+ * CloudWatch emits when a subscription filter is created never reaches the destination as a bogus row.
+ *
+ * The pair is indivisible and create-time only. Firehose rejects `CloudWatchLogProcessing` without
+ * `Decompression`, and rejects adding `Decompression` to a stream that does not already carry it, so a
+ * stack that flips {@link LOG_SOURCE_PARAMETER} in place fails its update and rolls back. Changing path
+ * means a new stream, never an updated one.
+ */
+const CLOUDWATCH_LOG_PROCESSING: kinesisfirehose.CfnDeliveryStream.ProcessingConfigurationProperty = {
+  enabled: true,
+  processors: [
+    { type: 'Decompression', parameters: [{ parameterName: 'CompressionFormat', parameterValue: 'GZIP' }] },
+    {
+      type: 'CloudWatchLogProcessing',
+      parameters: [{ parameterName: 'DataMessageExtraction', parameterValue: 'true' }],
+    },
+  ],
+}
+
+/**
+ * {@link CLOUDWATCH_LOG_PROCESSING} in CloudFormation casing. A parameterised log source selects the
+ * block through an `Fn::If`, whose branches the L1 property mapper never walks, so that branch has to
+ * carry the emitted spelling itself. Derived rather than duplicated so the two cannot drift apart.
+ */
+export const toCloudFormationProcessing = (
+  config: kinesisfirehose.CfnDeliveryStream.ProcessingConfigurationProperty,
+): Record<string, unknown> => ({
+  Enabled: config.enabled,
+  Processors: (config.processors as kinesisfirehose.CfnDeliveryStream.ProcessorProperty[]).map((processor) => ({
+    Type: processor.type,
+    Parameters: (processor.parameters as kinesisfirehose.CfnDeliveryStream.ProcessorParameterProperty[]).map(
+      (parameter) => ({ ParameterName: parameter.parameterName, ParameterValue: parameter.parameterValue }),
+    ),
+  })),
+})
 
 /** S3 key prefix the usage-log stream writes its records under when none is supplied. */
 export const DEFAULT_USAGELOGS_PREFIX = 'apiable/aws'
@@ -95,6 +150,16 @@ export interface LogsStreamConstructProps {
    * carries no variant signal.
    */
   readonly firehoseRoleLogicalId?: string
+  /**
+   * Which ingestion path the stream is built for: {@link LOG_SOURCE_APIGATEWAY_DIRECT} (the default,
+   * API Gateway writing plain-text access logs straight to the stream) or
+   * {@link LOG_SOURCE_CLOUDWATCH_LOGS} (a CloudWatch Logs subscription filter feeding it instead).
+   *
+   * Accepts a deploy-time token: the published stack passes its parameter through, and the stream then
+   * selects its processors with an `Fn::If` rather than at synth time. Defaulting to the direct path
+   * keeps an existing deploy that supplies nothing exactly as it is today.
+   */
+  readonly logSource?: string
 }
 
 /**
@@ -167,13 +232,40 @@ export class LogsStreamConstruct extends Construct {
     const firehoseRoleLogicalId = props.firehoseRoleLogicalId ?? firehoseRoleLogicalIdForName(name)
     cdk.Tags.of(this.deliveryRole).add('apiable:logical-id', firehoseRoleLogicalId)
 
+    // A concrete log source resolves at synth time and leaves a template with no condition in it at
+    // all; only a parameterised one needs the `Fn::If`. Either way the direct path emits no processing
+    // block, so its rendered destination is what the stream carried before this path existed.
+    const logSource = props.logSource ?? LOG_SOURCE_APIGATEWAY_DIRECT
+    let processingConfiguration:
+      | kinesisfirehose.CfnDeliveryStream.ProcessingConfigurationProperty
+      | cdk.IResolvable
+      | undefined
+    if (cdk.Token.isUnresolved(logSource)) {
+      const conditionId = cdk.Token.isUnresolved(name) ? 'IsCloudWatchLogSource' : `is-cloudwatch-log-source-${name}`
+      const isCloudWatchLogSource = new cdk.CfnCondition(this, conditionId, {
+        expression: cdk.Fn.conditionEquals(logSource, LOG_SOURCE_CLOUDWATCH_LOGS),
+      })
+      isCloudWatchLogSource.overrideLogicalId(conditionId.replace(/[^A-Za-z0-9]/g, ''))
+      processingConfiguration = cdk.Fn.conditionIf(
+        isCloudWatchLogSource.logicalId,
+        toCloudFormationProcessing(CLOUDWATCH_LOG_PROCESSING),
+        cdk.Aws.NO_VALUE,
+      )
+    } else if (logSource === LOG_SOURCE_CLOUDWATCH_LOGS) {
+      processingConfiguration = CLOUDWATCH_LOG_PROCESSING
+    }
+
     const streamConstructId = cdk.Token.isUnresolved(name)
       ? GATEWAY_STREAM_NAME_PREFIX.replace(/-$/, '')
       : `${GATEWAY_STREAM_NAME_PREFIX}${name}`
     this.deliveryStream = new kinesisfirehose.CfnDeliveryStream(this, streamConstructId, {
       deliveryStreamName: `${GATEWAY_STREAM_NAME_PREFIX}${name}`, // the name MUST start with amazon-apigateway-
       deliveryStreamType: 'DirectPut',
-      s3DestinationConfiguration: {
+      // The extended shape, not the legacy `S3DestinationConfiguration`, which carries no
+      // `ProcessingConfiguration` property at all and so cannot express the CloudWatch path. It is also
+      // the shape the Terraform channel already declares (`extended_s3_configuration`), so the two
+      // channels now model the destination identically; the parity gate reduces either spelling.
+      extendedS3DestinationConfiguration: {
         bucketArn: logsBucketArn,
         roleArn: this.deliveryRole.roleArn,
         prefix: `${prefix}/logs/`,
@@ -188,6 +280,7 @@ export class LogsStreamConstruct extends Construct {
           logStreamName: stream.logStreamName,
         },
         compressionFormat: 'UNCOMPRESSED', // UNCOMPRESSED | GZIP | ZIP | Snappy | HADOOP_SNAPPY
+        ...(processingConfiguration === undefined ? {} : { processingConfiguration }),
       },
     })
 
@@ -269,6 +362,12 @@ export interface LogsStreamStackProps extends cdk.StackProps {
   readonly defaultPrefix?: string
   /** Forwarded to {@link LogsStreamConstructProps.firehoseRoleLogicalId} for this distribution's parity identity. */
   readonly firehoseRoleLogicalId?: string
+  /**
+   * Which ingestion path the stream is built for. Omitting it (the published one-click path) surfaces
+   * it as a deploy-time CFN parameter defaulting to the direct API Gateway path, so a customer who
+   * one-clicks and changes nothing gets exactly the stream this template built before.
+   */
+  readonly logSource?: string
 }
 
 /** Resource-name token the published one-click stream is scoped by when no name is supplied. */
@@ -331,6 +430,24 @@ export class LogsStreamStack extends cdk.Stack {
       prefix = prefixParameter.valueAsString
     }
 
+    // The ingestion path is a deploy-time choice too, so one published template serves both routes.
+    // It is constrained to the two spellings rather than left free text: a typo would otherwise deploy
+    // a silently direct-path stream that a subscription filter can never feed.
+    let logSource = props.logSource
+    if (logSource === undefined) {
+      const logSourceParameter = new CfnParameter(this, LOG_SOURCE_PARAMETER, {
+        type: 'String',
+        default: LOG_SOURCE_APIGATEWAY_DIRECT,
+        allowedValues: [...LOG_SOURCE_VALUES],
+        description:
+          'How access logs reach this stream: apigateway_direct (API Gateway writes to it) or ' +
+          'cloudwatch_logs (a CloudWatch Logs subscription filter feeds it). Fixed at create time — ' +
+          'changing it on an existing stack fails the update.',
+      })
+      logSourceParameter.overrideLogicalId(LOG_SOURCE_PARAMETER)
+      logSource = logSourceParameter.valueAsString
+    }
+
     this.logsStream = new LogsStreamConstruct(this, 'LogsStream', {
       logsBucketArn,
       name,
@@ -339,6 +456,7 @@ export class LogsStreamStack extends cdk.Stack {
       publishComposition: props.publishComposition,
       compositionComponent: props.compositionComponent,
       firehoseRoleLogicalId: props.firehoseRoleLogicalId,
+      logSource,
     })
   }
 }

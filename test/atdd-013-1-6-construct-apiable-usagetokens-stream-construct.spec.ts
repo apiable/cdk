@@ -99,7 +99,7 @@ describe('013-1-6 apiable-usagetokens-stream — synth contract (shared shape, t
       Match.objectLike({
         DeliveryStreamName: EXPECTED_STREAM_NAME, // delta: token stream name
         DeliveryStreamType: 'DirectPut',
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           BucketARN: LOGS_BUCKET_ARN,
           Prefix: `${USAGETOKENS_PREFIX}/logs/`, // delta: deeper token prefix
           ErrorOutputPrefix: `${USAGETOKENS_PREFIX}/errors/`,
@@ -176,7 +176,7 @@ describe('013-1-6 apiable-usagetokens-stream — synth contract (shared shape, t
       Match.objectLike({
         DeliveryStreamName: EXPECTED_STREAM_NAME,
         DeliveryStreamType: 'DirectPut',
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           BucketARN: LOGS_BUCKET_ARN,
           Prefix: `${USAGETOKENS_PREFIX}/logs/`,
           ErrorOutputPrefix: `${USAGETOKENS_PREFIX}/errors/`,
@@ -195,11 +195,11 @@ describe('013-1-6 apiable-usagetokens-stream — synth contract (shared shape, t
     pub.hasParameter(PREFIX_PARAMETER, Match.objectLike({ Default: USAGETOKENS_PREFIX }))
     const pubStream = firstResource(pub, 'AWS::KinesisFirehose::DeliveryStream').Properties as {
       DeliveryStreamName: unknown
-      S3DestinationConfiguration: { Prefix: unknown; ErrorOutputPrefix: unknown }
+      ExtendedS3DestinationConfiguration: { Prefix: unknown; ErrorOutputPrefix: unknown }
     }
     expect(JSON.stringify(pubStream.DeliveryStreamName)).toContain('amazon-apigateway-')
-    expect(JSON.stringify(pubStream.S3DestinationConfiguration.Prefix)).toContain('/logs/')
-    expect(JSON.stringify(pubStream.S3DestinationConfiguration.Prefix)).toContain(PREFIX_PARAMETER)
+    expect(JSON.stringify(pubStream.ExtendedS3DestinationConfiguration.Prefix)).toContain('/logs/')
+    expect(JSON.stringify(pubStream.ExtendedS3DestinationConfiguration.Prefix)).toContain(PREFIX_PARAMETER)
 
     // ── Terraform channel — the hand-rolled token module source ───────────────────────────────────
     const main = tfModule(TF_MODULE_DIR, 'main.tf')
@@ -270,7 +270,7 @@ describe('013-1-6 apiable-usagetokens-stream — synth contract (shared shape, t
       'AWS::KinesisFirehose::DeliveryStream',
       Match.objectLike({
         DeliveryStreamName: EXPECTED_STREAM_NAME,
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           Prefix: 'apiable/aws/apikey-token/logs/',
           ErrorOutputPrefix: 'apiable/aws/apikey-token/errors/',
         }),

@@ -12,6 +12,10 @@ import {
   FIREHOSE_ROLE_LOGICAL_ID,
   DEFAULT_USAGELOGS_NAME,
   DEFAULT_USAGELOGS_PREFIX,
+  LOG_SOURCE_PARAMETER,
+  LOG_SOURCE_APIGATEWAY_DIRECT,
+  LOG_SOURCE_CLOUDWATCH_LOGS,
+  LOG_SOURCE_VALUES,
 } from '@apiable/cdk-usagelogs-stream'
 
 const REGION = 'eu-central-1'
@@ -83,7 +87,7 @@ describe('LogsStream construct — shared shape selects routing by name + prefix
       'AWS::KinesisFirehose::DeliveryStream',
       Match.objectLike({
         DeliveryStreamName: 'amazon-apigateway-usagetokens-test',
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           Prefix: 'apiable/aws/apikey-token/logs/',
           ErrorOutputPrefix: 'apiable/aws/apikey-token/errors/',
           BufferingHints: { IntervalInSeconds: 300, SizeInMBs: 5 },
@@ -117,7 +121,7 @@ describe('LogsStreamStack — published one-click defaults', () => {
       'AWS::KinesisFirehose::DeliveryStream',
       Match.objectLike({
         DeliveryStreamName: `amazon-apigateway-${DEFAULT_USAGELOGS_NAME}`,
-        S3DestinationConfiguration: Match.objectLike({ Prefix: `${DEFAULT_USAGELOGS_PREFIX}/logs/` }),
+        ExtendedS3DestinationConfiguration: Match.objectLike({ Prefix: `${DEFAULT_USAGELOGS_PREFIX}/logs/` }),
       }),
     )
   })
@@ -135,5 +139,96 @@ describe('LogsStreamStack — published one-click defaults', () => {
       new LogsStreamStack(new cdk.App(), 'pub', { env: { account: ACCOUNT, region: REGION } }), // no name → param path
     )
     expect(Object.keys(t.findOutputs('*'))).toContain('FirehoseArn')
+  })
+})
+
+/**
+ * The ingestion-path choice the published template offers. The direct path is what API Gateway has
+ * always written to; the CloudWatch path is fed by a subscription filter, whose records arrive gzipped
+ * and wrapped in a CloudWatch envelope and so need Firehose's two native processors to come out as the
+ * same plain rows. Both live in one template, selected at deploy time.
+ */
+describe('LogsStream construct — the ingestion path the stream is built for', () => {
+  const published = (props: Record<string, unknown> = {}): Template =>
+    Template.fromStack(
+      new LogsStreamStack(new cdk.App(), 'pub', { env: { account: ACCOUNT, region: REGION }, ...props }),
+    )
+
+  const concreteStream = (logSource?: string): Record<string, Record<string, unknown>> => {
+    const t = published({
+      logsBucketArn: BUCKET_ARN,
+      name: DEFAULT_USAGELOGS_NAME,
+      prefix: DEFAULT_USAGELOGS_PREFIX,
+      ...(logSource === undefined ? {} : { logSource }),
+    })
+    const stream = Object.values(t.findResources('AWS::KinesisFirehose::DeliveryStream'))[0] as {
+      Properties: Record<string, Record<string, unknown>>
+    }
+    return stream.Properties
+  }
+
+  it('offers both paths as a constrained deploy-time parameter, defaulting to the direct one', () => {
+    // constrained, because a typo would otherwise deploy a silently direct-path stream that a
+    // subscription filter can never feed; defaulted, so an unchanged one-click keeps today's stream
+    published().hasParameter(
+      LOG_SOURCE_PARAMETER,
+      Match.objectLike({ Default: LOG_SOURCE_APIGATEWAY_DIRECT, AllowedValues: [...LOG_SOURCE_VALUES] }),
+    )
+  })
+
+  it('one published template serves both paths, choosing the processors at deploy time', () => {
+    const destination = published().toJSON().Resources as Record<string, { Type: string; Properties: Record<string, Record<string, unknown>> }>
+    const stream = Object.values(destination).find((r) => r.Type === 'AWS::KinesisFirehose::DeliveryStream')
+    const branches = (stream?.Properties.ExtendedS3DestinationConfiguration.ProcessingConfiguration as {
+      'Fn::If': unknown[]
+    })['Fn::If']
+    expect(branches[0]).toBe('IsCloudWatchLogSource')
+    expect(JSON.stringify(branches[1])).toContain('Decompression')
+    // the direct path drops the block entirely rather than sending an empty one
+    expect(branches[2]).toEqual({ Ref: 'AWS::NoValue' })
+  })
+
+  it('a direct-path stream carries no processing block, and needs no condition to say so', () => {
+    expect(concreteStream(LOG_SOURCE_APIGATEWAY_DIRECT).ExtendedS3DestinationConfiguration.ProcessingConfiguration)
+      .toBeUndefined()
+    const t = published({ logsBucketArn: BUCKET_ARN, name: DEFAULT_USAGELOGS_NAME, logSource: LOG_SOURCE_APIGATEWAY_DIRECT })
+    expect(t.toJSON().Conditions).toBeUndefined()
+  })
+
+  it('the standalone stack, which offers no choice, still builds the direct-path stream it always did', () => {
+    // LogsStream (the deploy-*.sh / umbrella path) passes no log source at all, so the construct default
+    // is what keeps an existing custom deploy byte-identical rather than gaining an empty Fn::If
+    const stream = Object.values(
+      Template.fromStack(concrete()).findResources('AWS::KinesisFirehose::DeliveryStream'),
+    )[0] as { Properties: Record<string, Record<string, unknown>> }
+    expect(stream.Properties.ExtendedS3DestinationConfiguration.ProcessingConfiguration).toBeUndefined()
+    expect(Template.fromStack(concrete()).toJSON().Conditions).toBeUndefined()
+  })
+
+  it('a CloudWatch-sourced stream gunzips first and unwraps second, with no Lambda anywhere', () => {
+    // order matters: CloudWatchLogProcessing reads the envelope Decompression produces, and Firehose
+    // refuses the pair in either other arrangement
+    expect(concreteStream(LOG_SOURCE_CLOUDWATCH_LOGS).ExtendedS3DestinationConfiguration.ProcessingConfiguration)
+      .toEqual({
+        Enabled: true,
+        Processors: [
+          { Type: 'Decompression', Parameters: [{ ParameterName: 'CompressionFormat', ParameterValue: 'GZIP' }] },
+          {
+            Type: 'CloudWatchLogProcessing',
+            Parameters: [{ ParameterName: 'DataMessageExtraction', ParameterValue: 'true' }],
+          },
+        ],
+      })
+    const t = published({ logsBucketArn: BUCKET_ARN, name: DEFAULT_USAGELOGS_NAME, logSource: LOG_SOURCE_CLOUDWATCH_LOGS })
+    t.resourceCountIs('AWS::Lambda::Function', 0)
+  })
+
+  it('the path does not rename the stream or retune its destination, so the ARN and routing survive a switch', () => {
+    const direct = concreteStream(LOG_SOURCE_APIGATEWAY_DIRECT)
+    const cloudwatch = concreteStream(LOG_SOURCE_CLOUDWATCH_LOGS)
+    expect(cloudwatch.DeliveryStreamName).toEqual(direct.DeliveryStreamName)
+    expect(cloudwatch.DeliveryStreamType).toEqual(direct.DeliveryStreamType)
+    const { ProcessingConfiguration: _dropped, ...cloudwatchDestination } = cloudwatch.ExtendedS3DestinationConfiguration
+    expect(cloudwatchDestination).toEqual(direct.ExtendedS3DestinationConfiguration)
   })
 })

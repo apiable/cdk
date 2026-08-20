@@ -23,3 +23,24 @@ variable "prefix" {
   type        = string
   default     = "apiable/aws"
 }
+
+variable "log_source" {
+  description = <<-DESC
+    Which ingestion path feeds this stream.
+
+      apigateway_direct : API Gateway writes plain-text access logs straight to Firehose (today's path).
+      cloudwatch_logs   : a CloudWatch Logs subscription filter feeds the stream; Firehose natively
+                          gunzips the CWL envelope and extracts the log messages, so S3 receives the
+                          same plain rows the parser already reads.
+
+    The two modes are mutually exclusive and cannot be switched in place — see the lifecycle block
+    on aws_kinesis_firehose_delivery_stream.this.
+  DESC
+  type        = string
+  default     = "apigateway_direct"
+
+  validation {
+    condition     = contains(["apigateway_direct", "cloudwatch_logs"], var.log_source)
+    error_message = "log_source must be either apigateway_direct or cloudwatch_logs."
+  }
+}
