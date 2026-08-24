@@ -40,7 +40,7 @@ describe('apiable-usagetokens-stream — caller overrides', () => {
     t.hasResourceProperties(
       'AWS::KinesisFirehose::DeliveryStream',
       Match.objectLike({
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           Prefix: 'tenant/custom/path/logs/',
           ErrorOutputPrefix: 'tenant/custom/path/errors/',
         }),

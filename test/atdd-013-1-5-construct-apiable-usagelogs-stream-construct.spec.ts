@@ -90,7 +90,7 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
       Match.objectLike({
         DeliveryStreamName: Match.stringLikeRegexp('^amazon-apigateway-'), // gateway-recognised name prefix
         DeliveryStreamType: 'DirectPut',
-        S3DestinationConfiguration: Match.objectLike({ BucketARN: LOGS_BUCKET_ARN }), // the customer storage location
+        ExtendedS3DestinationConfiguration: Match.objectLike({ BucketARN: LOGS_BUCKET_ARN }), // the customer storage location
       }),
     )
     // the delivery identity: exactly one role, trusted as the firehose service
@@ -122,7 +122,7 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
 
     // the destination BucketARN is a { Ref: <param> }, never a baked literal
     const dest = firstResource(pub, 'AWS::KinesisFirehose::DeliveryStream').Properties
-      ?.S3DestinationConfiguration as { BucketARN: unknown }
+      ?.ExtendedS3DestinationConfiguration as { BucketARN: unknown }
     expect(JSON.stringify(dest.BucketARN)).toContain(LOGS_BUCKET_ARN_PARAMETER)
     expect(JSON.stringify(dest.BucketARN)).toContain('Ref')
 
@@ -169,7 +169,7 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
       Match.objectLike({
         DeliveryStreamName: EXPECTED_STREAM_NAME,
         DeliveryStreamType: 'DirectPut',
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           BucketARN: LOGS_BUCKET_ARN,
           Prefix: `${DEFAULT_USAGELOGS_PREFIX}/logs/`,
           ErrorOutputPrefix: `${DEFAULT_USAGELOGS_PREFIX}/errors/`,
@@ -188,7 +188,7 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
       'AWS::KinesisFirehose::DeliveryStream',
       Match.objectLike({
         DeliveryStreamType: 'DirectPut',
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           BufferingHints: { IntervalInSeconds: 300, SizeInMBs: 5 },
           CompressionFormat: 'UNCOMPRESSED',
         }),
@@ -199,12 +199,12 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
     // DestinationPrefix parameter under /logs/ + /errors/
     const pubStream = firstResource(pub, 'AWS::KinesisFirehose::DeliveryStream').Properties as {
       DeliveryStreamName: unknown
-      S3DestinationConfiguration: { Prefix: unknown; ErrorOutputPrefix: unknown }
+      ExtendedS3DestinationConfiguration: { Prefix: unknown; ErrorOutputPrefix: unknown }
     }
     expect(JSON.stringify(pubStream.DeliveryStreamName)).toContain('amazon-apigateway-')
-    expect(JSON.stringify(pubStream.S3DestinationConfiguration.Prefix)).toContain('/logs/')
-    expect(JSON.stringify(pubStream.S3DestinationConfiguration.Prefix)).toContain(PREFIX_PARAMETER)
-    expect(JSON.stringify(pubStream.S3DestinationConfiguration.ErrorOutputPrefix)).toContain('/errors/')
+    expect(JSON.stringify(pubStream.ExtendedS3DestinationConfiguration.Prefix)).toContain('/logs/')
+    expect(JSON.stringify(pubStream.ExtendedS3DestinationConfiguration.Prefix)).toContain(PREFIX_PARAMETER)
+    expect(JSON.stringify(pubStream.ExtendedS3DestinationConfiguration.ErrorOutputPrefix)).toContain('/errors/')
 
     // ── Terraform channel — the hand-rolled module source ────────────────────────────────────────
     const main = tfModule('main.tf')
@@ -246,7 +246,7 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
       Match.objectLike({
         DeliveryStreamName: EXPECTED_STREAM_NAME,
         DeliveryStreamType: 'DirectPut',
-        S3DestinationConfiguration: Match.objectLike({
+        ExtendedS3DestinationConfiguration: Match.objectLike({
           Prefix: 'apiable/aws/logs/',
           ErrorOutputPrefix: 'apiable/aws/errors/',
           BufferingHints: { IntervalInSeconds: 300, SizeInMBs: 5 },
