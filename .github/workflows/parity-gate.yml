@@ -308,9 +308,14 @@ jobs:
               echo "expected operator_writer_arns=${bad} to be rejected, but the plan succeeded"
               exit 1
             fi
-            grep -q 'concrete 12-digit account' plan-err.log || {
+            # terraform wraps its diagnostics to a fixed width and prefixes every line of them, so
+            # this phrase straddles a line break and a literal grep for it can never match. Normalise
+            # the prefix and the wrapping first, so the assertion stays the whole phrase instead of
+            # being weakened to a single token the way the two sibling no-widen steps had to be.
+            if ! sed 's/^[^[:alnum:]]*//' plan-err.log | tr '\n' ' ' | tr -s ' ' \
+              | grep -q 'concrete 12-digit account'; then
               echo "operator_writer_arns=${bad} was rejected but not by the account-id validation"; cat plan-err.log; exit 1;
-            }
+            fi
           done
 
       # Ground-truth the guardrail Terraform leg under genuine credentials: the bucket policy grants by the
