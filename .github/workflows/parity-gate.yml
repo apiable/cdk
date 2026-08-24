@@ -34,6 +34,13 @@ env:
 jobs:
   parity:
     runs-on: ubuntu-latest
+    # `secrets` is not a context an `if:` may read — the allowed set is env, github, inputs, job,
+    # matrix, needs, runner, steps, strategy, vars — so the credentialed steps below gate on this
+    # lifted env var instead. Reading the secret straight from `if:` is what made every run of this
+    # workflow fail at setup since at least 2026-08-12: the run was created, then rejected before any
+    # job existed, so it produced no jobs, no logs, and never appeared in a PR's checks.
+    env:
+      HAS_LOGGING_CREDENTIALS: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4
@@ -144,7 +151,7 @@ jobs:
       # not a byte diff. The deploying account is passed so the incidental tenant root tokenises on both
       # sides — see scripts/parity-tf-regen-check.ts.
       - name: terraform regen ground-truths the committed fixture (logs-bucket, credentialed)
-        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ env.HAS_LOGGING_CREDENTIALS != '' }}
         working-directory: terraform/apiable-logs-bucket
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
@@ -168,7 +175,7 @@ jobs:
           terraform validate
 
       - name: terraform regen ground-truths the committed fixture (cognito-pool, credentialed)
-        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ env.HAS_LOGGING_CREDENTIALS != '' }}
         working-directory: terraform/apiable-cognito-pool
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
@@ -192,7 +199,7 @@ jobs:
           terraform validate
 
       - name: terraform regen ground-truths the committed fixture (lambda-authorizer, credentialed)
-        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ env.HAS_LOGGING_CREDENTIALS != '' }}
         working-directory: terraform/apiable-lambda-authorizer
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
@@ -228,7 +235,7 @@ jobs:
       # the default per-PR gate (no such secret) skips it. A credential-less plan needs the provider's
       # configure-time validation skipped, injected as a CI-only override so the committed module stays clean.
       - name: terraform regen ground-truths the committed fixture (usagelogs-stream)
-        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ env.HAS_LOGGING_CREDENTIALS != '' }}
         working-directory: terraform/apiable-usagelogs-stream
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
@@ -249,7 +256,7 @@ jobs:
           npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usagelogs-stream-show.json ${{ env.AWS_REGION }}
 
       - name: terraform regen ground-truths the committed fixture (usagetokens-stream)
-        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ env.HAS_LOGGING_CREDENTIALS != '' }}
         working-directory: terraform/apiable-usagetokens-stream
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
@@ -311,7 +318,7 @@ jobs:
       # account resolves — so it runs on the same isolated path as the logs-bucket leg, fenced on the
       # logging-account credential (the default per-PR gate, with no such secret, skips it).
       - name: terraform regen ground-truths the committed fixture (logs-guardrail, credentialed)
-        if: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ env.HAS_LOGGING_CREDENTIALS != '' }}
         working-directory: terraform/apiable-logs-guardrail
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
