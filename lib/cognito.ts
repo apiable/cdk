@@ -8,6 +8,22 @@ import * as path from 'path'
 import {CfnOutput} from "aws-cdk-lib";
 
 /**
+ * The managed Node runtime the lambdas in this repo target. `nodejs20.x` was deprecated on
+ * 2026-04-30, with creation disabled from 2027-02-01 and updates from 2027-03-03, so a customer
+ * one-clicking a template that still named it would eventually get a stack that will not create.
+ *
+ * Built by hand rather than taken from `lambda.Runtime`, because aws-cdk-lib 2.137.0 predates the
+ * constant (its newest is NODEJS_20_X) and that version is pinned as a peerDependency of every
+ * construct package, so moving off it is its own change. Constructing a Runtime directly is CDK's
+ * supported escape hatch for exactly this. The Terraform channel names the same string literally.
+ */
+const NODEJS_RUNTIME = new lambda.Runtime('nodejs22.x', lambda.RuntimeFamily.NODEJS, {
+  // mirrors how aws-cdk-lib declares its own managed node runtimes; without it CDK refuses
+  // `Code.fromInline` with "Inline source not allowed for nodejs22.x"
+  supportsInlineCode: true,
+})
+
+/**
  * Author-declared, channel-identical identities the release-time parity gate keys the cognito pools and
  * the pre-token function on (the `apiable:logical-id` tag), so each compares equal across the CDK,
  * published-CFN, and Terraform channels regardless of its generated name, account, region, or tenant
@@ -203,7 +219,7 @@ export class Cognito extends cdk.Stack {
 
     const l = new lambda.Function(this, 'Function', {
       functionName: `${userPoolName}-auth`,
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: NODEJS_RUNTIME,
       handler: 'index.handler',
       code: lambda.Code.fromAsset(path.join(__dirname, './assets/lambdas/pre-token-generation-authz')),
     })

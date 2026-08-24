@@ -1,6 +1,6 @@
 {
   "name": "@apiable/cdk-cognito-pool",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Apiable CDK construct kit: machine-to-machine Cognito pool with V3_0 PreTokenGen token customisation and one-click CloudFormation provisioning.",
   "main": "index.ts",
   "types": "index.ts",

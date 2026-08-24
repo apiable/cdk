@@ -1,0 +1,16 @@
+# cfn-lint configuration for the published launch-stack templates, applied by the parity gate's
+# `cfn-lint dist/launchstack/*/*/template.yaml` step.
+#
+# W3005 "dependency already enforced by a GetAtt" fires on aws-cdk-lib's own output rather than on
+# anything declared in this repo: every lambda.Function CDK synthesises carries a DependsOn on its
+# ServiceRole alongside a Properties/Role GetAtt to that same resource. The only explicit
+# addDependency in our source is a different pair (the user pool on its invoke permission).
+#
+# It is suppressed rather than removed. Deleting the emitted DependsOn through an escape hatch would
+# also drop the ServiceRoleDefaultPolicy dependency CDK adds to the same list once a function gains
+# an inline policy, and that one is NOT redundant, so the override would silently become a real
+# ordering bug later.
+#
+# Deliberately one rule, not a severity. Errors and every other warning still fail the gate.
+ignore_checks:
+  - W3005

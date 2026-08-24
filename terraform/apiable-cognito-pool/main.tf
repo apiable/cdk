@@ -58,7 +58,7 @@ resource "aws_cognito_user_pool_client" "apiable" {
 
 resource "aws_lambda_function" "pretokengen" {
   function_name = "apiable-${var.name}-pretokengen"
-  runtime       = "nodejs20.x"
+  runtime       = "nodejs22.x"
   handler       = "index.handler"
   role          = aws_iam_role.pretokengen.arn
 

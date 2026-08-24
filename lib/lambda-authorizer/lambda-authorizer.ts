@@ -17,6 +17,22 @@ import {
 } from './launch-stack-url'
 
 /**
+ * The managed Node runtime the lambdas in this repo target. `nodejs20.x` was deprecated on
+ * 2026-04-30, with creation disabled from 2027-02-01 and updates from 2027-03-03, so a customer
+ * one-clicking a template that still named it would eventually get a stack that will not create.
+ *
+ * Built by hand rather than taken from `lambda.Runtime`, because aws-cdk-lib 2.137.0 predates the
+ * constant (its newest is NODEJS_20_X) and that version is pinned as a peerDependency of every
+ * construct package, so moving off it is its own change. Constructing a Runtime directly is CDK's
+ * supported escape hatch for exactly this. The Terraform channel names the same string literally.
+ */
+const NODEJS_RUNTIME = new lambda.Runtime('nodejs22.x', lambda.RuntimeFamily.NODEJS, {
+  // mirrors how aws-cdk-lib declares its own managed node runtimes; without it CDK refuses
+  // `Code.fromInline` with "Inline source not allowed for nodejs22.x"
+  supportsInlineCode: true,
+})
+
+/**
  * This construct's published version — the same `package.json` `synth-launchstack.sh` and the
  * `launch-stack-url` helpers read, so the code reference this construct embeds and the key the publish
  * pipeline uploads to never drift apart.
@@ -157,7 +173,7 @@ export class LambdaAuthorizer extends Construct {
 
     this.authorizerFunction = new lambda.Function(this, 'Function', {
       functionName: `apiable-${name}-authz`,
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: NODEJS_RUNTIME,
       handler: 'index.handler',
       // Too large to inline (8,635 B > the 4,096-byte ZipFile cap): a customer's account has no read
       // access to Apiable's CDK asset-staging bucket, so the code is fetched from the same public,
