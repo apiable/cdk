@@ -47,3 +47,19 @@ out/
 /cdk.out/
 *spec.json
 /temp*
+
+# Compiled TypeScript. tsconfig.json sets no outDir, so `npm run build` emits .js and .d.ts in
+# place, next to every source file. Nothing consumes that output: jest matches **/*.spec.ts, the
+# tsconfig paths resolve each @apiable/cdk-* package to its index.ts, the shell scripts read only
+# package.json, and CI builds from source. Tracking it only guaranteed a dirty tree after every
+# build and let the committed copy drift from the source it claims to be.
+/lib/**/*.js
+/lib/**/*.d.ts
+/test/**/*.js
+/test/**/*.d.ts
+/scripts/**/*.js
+/scripts/**/*.d.ts
+
+# lib/assets is the exception: it holds deployable lambda code and its vendored dependency trees,
+# where the .js IS the artifact rather than a build product of a sibling .ts.
+!/lib/assets/**
