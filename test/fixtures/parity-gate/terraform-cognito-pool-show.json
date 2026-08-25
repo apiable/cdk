@@ -71,7 +71,7 @@
           "provider_name": "registry.terraform.io/hashicorp/aws",
           "values": {
             "function_name": "apiable-staging-pretokengen",
-            "runtime": "nodejs20.x",
+            "runtime": "nodejs22.x",
             "handler": "index.handler",
             "environment": [{ "variables": { "APIABLE_API_KEY": "", "APIABLE_PLAN_RESOURCES": "" } }],
             "tags": { "apiable:logical-id": "apiable-cognito-pool-pretoken-fn" },

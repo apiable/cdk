@@ -14,6 +14,22 @@ import {
   TENANT_NAME_PATTERN_SOURCE,
 } from './launch-stack-url'
 
+/**
+ * The managed Node runtime the lambdas in this repo target. `nodejs20.x` was deprecated on
+ * 2026-04-30, with creation disabled from 2027-02-01 and updates from 2027-03-03, so a customer
+ * one-clicking a template that still named it would eventually get a stack that will not create.
+ *
+ * Built by hand rather than taken from `lambda.Runtime`, because aws-cdk-lib 2.137.0 predates the
+ * constant (its newest is NODEJS_20_X) and that version is pinned as a peerDependency of every
+ * construct package, so moving off it is its own change. Constructing a Runtime directly is CDK's
+ * supported escape hatch for exactly this. The Terraform channel names the same string literally.
+ */
+const NODEJS_RUNTIME = new lambda.Runtime('nodejs22.x', lambda.RuntimeFamily.NODEJS, {
+  // mirrors how aws-cdk-lib declares its own managed node runtimes; without it CDK refuses
+  // `Code.fromInline` with "Inline source not allowed for nodejs22.x"
+  supportsInlineCode: true,
+})
+
 /** Logical id of the tenant-name parameter the published template scopes the pool by. */
 export const TENANT_NAME_PARAMETER = 'TenantName'
 
@@ -159,7 +175,7 @@ export class CognitoPool extends Construct {
 
     this.preTokenFunction = new lambda.Function(this, 'PreTokenGen', {
       functionName: `apiable-${name}-pretokengen`,
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: NODEJS_RUNTIME,
       handler: 'index.handler',
       // Inline (2,120 B source, well under the 4,096-byte ZipFile limit): a customer's account has no
       // read access to Apiable's CDK asset-staging bucket, so an inline, self-contained function is the

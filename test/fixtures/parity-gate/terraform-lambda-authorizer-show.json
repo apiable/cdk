@@ -34,7 +34,7 @@
           "provider_name": "registry.terraform.io/hashicorp/aws",
           "values": {
             "function_name": "apiable-staging-authz",
-            "runtime": "nodejs20.x",
+            "runtime": "nodejs22.x",
             "handler": "index.handler",
             "timeout": 30,
             "environment": [{ "variables": { "APIABLE_AWS_AUTHZ_USERPOOLID": "eu-central-1_abc123", "REQUIRED_SCOPE_MAP": "{}" } }],
