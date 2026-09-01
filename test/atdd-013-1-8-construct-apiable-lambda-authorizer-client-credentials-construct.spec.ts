@@ -365,7 +365,7 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
   })
 
   // the Terraform channel actually PACKAGES the aws-jwt-verify runtime dependency the handler imports —
-  // a managed nodejs20.x runtime carries only @aws-sdk/*, so a single-file zip cold-starts with
+  // a managed nodejs22.x runtime carries only @aws-sdk/*, so a single-file zip cold-starts with
   // Runtime.ImportModuleError. The source-text byte-identical check above is blind to packaging, so this
   // is the load-bearing "deployable" guard.
   it('the Terraform channel vendors aws-jwt-verify and packages the whole lambda dir', () => {

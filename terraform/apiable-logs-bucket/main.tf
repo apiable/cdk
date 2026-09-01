@@ -23,8 +23,8 @@ resource "aws_s3_bucket_policy" "this" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "Permissions"
-        Effect    = "Allow"
+        Sid    = "Permissions"
+        Effect = "Allow"
         Principal = {
           AWS = [
             "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root",

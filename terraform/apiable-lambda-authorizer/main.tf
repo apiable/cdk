@@ -43,7 +43,7 @@ resource "aws_iam_role_policy" "logs" {
 
 resource "aws_lambda_function" "authz" {
   function_name = "apiable-${var.name}-authz"
-  runtime       = "nodejs20.x"
+  runtime       = "nodejs22.x"
   handler       = "index.handler"
   role          = aws_iam_role.authz.arn
   timeout       = 30
@@ -66,7 +66,7 @@ resource "aws_lambda_function" "authz" {
 }
 
 # Package the whole lambda/ tree (handler + vendored node_modules) so the bundled aws-jwt-verify
-# dependency ships in the deployment artifact — the nodejs20.x managed runtime carries only @aws-sdk/*.
+# dependency ships in the deployment artifact — the nodejs22.x managed runtime carries only @aws-sdk/*.
 data "archive_file" "authz" {
   type        = "zip"
   source_dir  = "${path.module}/lambda"
