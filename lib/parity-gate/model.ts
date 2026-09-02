@@ -17,8 +17,13 @@
  * {@link ChannelModel.secrets} carrying presence/wiring, never a value.
  */
 
-/** A distribution channel a published infrastructure component ships through. */
-export type Channel = 'cdk' | 'cfn' | 'terraform'
+/**
+ * A distribution channel a published infrastructure component ships through. `console` is the
+ * hand-build channel — the prose instructions a customer follows to create a role by hand instead of
+ * deploying one of the other three — present only for a construct that publishes one (today:
+ * `apiable-gateway-role`; see ./console-reducer.ts).
+ */
+export type Channel = 'cdk' | 'cfn' | 'terraform' | 'console'
 
 /**
  * A resource reduced to a channel-independent identity: a canonical kind plus a discriminator

@@ -26,6 +26,7 @@ export type {
 export { HOSTED_DOMAIN_TENANT_TOKEN, LOGS_BUCKET_ARN_PARAMETER } from './canonical'
 export { reduceCloudFormation } from './cfn-reducer'
 export { reduceTerraformShowJson } from './terraform-reducer'
+export { reduceConsoleInstructions } from './console-reducer'
 export { compareGraph } from './compare'
 export { checkOAuthConformance } from './oauth-conformance'
 export type { ConformanceIssue } from './oauth-conformance'
