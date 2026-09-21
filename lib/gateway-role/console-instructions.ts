@@ -7,6 +7,14 @@
  * which reduces this module's output back into the gate's comparable model — the fourth channel).
  */
 import { EGRESS_CIDR_PARAMETER, TRUST_ACCOUNT_PARAMETER } from './gateway-role'
+import { REGION_TOKEN } from '../parity-gate/model'
+
+/**
+ * Placeholder a template-mode set carries wherever the trust-account parameter's value belongs. The
+ * portal substitutes it from the same configured account it pre-fills into the Launch Stack URL, so
+ * the two channels can never name different trust accounts for one deployment.
+ */
+export const TRUST_ACCOUNT_TOKEN = '{trust-account}'
 
 /** An already-resolved IAM policy statement — every value a plain string; no CloudFormation intrinsic left. */
 export interface ResolvedStatement {
@@ -30,6 +38,10 @@ export interface ResolvedPolicyDocument {
  * shape directly — "author no policy text in this repo"). `egressCidr` is present only when the
  * artifact's version declares the parameter: v1 shipped no egress restriction at all, so a customer
  * still on v1 gets no CIDR to type — the absence is the accurate instruction, not a gap.
+ *
+ * A template-mode set (the published `console-instructions.json`) carries {@link REGION_TOKEN} for
+ * the region and {@link TRUST_ACCOUNT_TOKEN} for the trust account instead of literals, plus
+ * `parameterDefaults`; a fully-resolved set carries neither.
  */
 export interface ConsoleInstructionSet {
   readonly construct: 'apiable-gateway-role'
@@ -40,6 +52,7 @@ export interface ConsoleInstructionSet {
   readonly trustDocument: ResolvedPolicyDocument
   readonly permissionDocument: ResolvedPolicyDocument
   readonly egressCidr?: string
+  readonly parameterDefaults?: Readonly<Record<string, string>>
 }
 
 /**
@@ -81,18 +94,19 @@ const INTRINSIC_KEYS: ReadonlySet<string> = new Set([
 
 /**
  * Resolve a CloudFormation value tree to its final literal form, bounded to the only two intrinsics
- * the role and policy resources use: `Ref` (a pseudo-parameter or a declared parameter's default —
- * never a resource id, which has no default to resolve to) and `Fn::Join`. `AWS::Region` resolves to
- * the SUPPLIED region, never the parity gate's `{region}` comparison token — a customer's instructions
- * need a real region. `AWS::Partition` is fixed `aws`; every published template targets the public
- * partition. Any OTHER intrinsic (`Fn::GetAtt`, `Fn::Sub`, …) or an unresolvable `Ref` throws rather
- * than emitting a value with an unresolved fragment left inside it — the artifact this walks is
- * SCOPED to the role's `AssumeRolePolicyDocument` and the policy's `PolicyDocument` by the caller, so
- * a resource-to-resource `Ref` (e.g. the policy's `Roles` list) is never handed to this function at all.
+ * the role and policy resources use: `Ref` (a pseudo-parameter or a declared parameter — never a
+ * resource id, which has no value to resolve to) and `Fn::Join`. `AWS::Region` resolves to the
+ * SUPPLIED region — a literal for a customer's instructions, the parity gate's `{region}` token for
+ * the published template-mode set. `AWS::Partition` is fixed `aws`; every published template targets
+ * the public partition. Any OTHER intrinsic (`Fn::GetAtt`, `Fn::Sub`, …) or an unresolvable `Ref`
+ * throws rather than emitting a value with an unresolved fragment left inside it — the artifact this
+ * walks is SCOPED to the role's `AssumeRolePolicyDocument` and the policy's `PolicyDocument` by the
+ * caller, so a resource-to-resource `Ref` (e.g. the policy's `Roles` list) is never handed to this
+ * function at all.
  */
-const resolveValue = (value: unknown, parameterDefaults: Readonly<Record<string, string>>, region: string): unknown => {
+const resolveValue = (value: unknown, parameterValues: Readonly<Record<string, string>>, region: string): unknown => {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
-  if (Array.isArray(value)) return value.map((entry) => resolveValue(entry, parameterDefaults, region))
+  if (Array.isArray(value)) return value.map((entry) => resolveValue(entry, parameterValues, region))
   if (!isRecord(value)) {
     throw new Error(`cannot resolve a console-instruction value of type ${typeof value}: ${JSON.stringify(value)}`)
   }
@@ -103,7 +117,7 @@ const resolveValue = (value: unknown, parameterDefaults: Readonly<Record<string,
   if (intrinsicKeysPresent.length === 0) {
     // Plain data (Version, Effect, Sid, Action, Resource, Principal, Condition, an operator name like
     // "aws:SourceIp", …) — recurse into its own keys rather than treat it as an intrinsic.
-    return Object.fromEntries(keys.map((key) => [key, resolveValue(value[key], parameterDefaults, region)]))
+    return Object.fromEntries(keys.map((key) => [key, resolveValue(value[key], parameterValues, region)]))
   }
 
   // A genuine CloudFormation intrinsic is always exactly one key on its own; anything else sharing an
@@ -118,7 +132,7 @@ const resolveValue = (value: unknown, parameterDefaults: Readonly<Record<string,
     const ref = value.Ref
     if (ref === 'AWS::Region') return region
     if (ref === 'AWS::Partition') return 'aws'
-    if (typeof ref === 'string' && Object.prototype.hasOwnProperty.call(parameterDefaults, ref)) return parameterDefaults[ref]
+    if (typeof ref === 'string' && Object.prototype.hasOwnProperty.call(parameterValues, ref)) return parameterValues[ref]
     throw new Error(`unresolvable Ref "${String(ref)}" — no parameter default on the artifact and not a supported pseudo-parameter`)
   }
 
@@ -129,7 +143,7 @@ const resolveValue = (value: unknown, parameterDefaults: Readonly<Record<string,
     }
     const delimiter = join[0]
     const parts = join[1] as unknown[]
-    return parts.map((part) => resolveValue(part, parameterDefaults, region)).join(delimiter)
+    return parts.map((part) => resolveValue(part, parameterValues, region)).join(delimiter)
   }
 
   // Recognised but unsupported here (Fn::GetAtt, Fn::Sub, Fn::ImportValue, …) — fails loudly rather
@@ -181,18 +195,21 @@ const assertNoUnsatisfiableTrustCondition = (trustDocument: ResolvedPolicyDocume
 }
 
 /**
- * Generate the console instruction set for a published `apiable-gateway-role` artifact. `template`
- * is the already-loaded, parsed CloudFormation template for `version` — locating those bytes (a
- * fresh local synth for the CURRENT version, a committed fixture for a superseded one) is the
- * caller's job; this function only trusts `version` enough to refuse one that was never published
- * BEFORE it touches `template` at all, so an unpublished version can never reach the resolver and
- * produce a plausible-looking set from defaults.
+ * How the two values a deployment supplies are rendered: as the literals a customer types, or as the
+ * tokens a published set leaves for the serving side to fill. Every other parameter resolves to its
+ * template default either way — exactly as the Launch Stack URL leaves it to the template default.
  */
-export const generateConsoleInstructions = (
+interface Rendering {
+  readonly region: string
+  readonly parameterOverrides: Readonly<Record<string, string>>
+  readonly emitParameterDefaults: boolean
+}
+
+const generate = (
   template: unknown,
   version: string,
   currentVersion: string,
-  region: string,
+  rendering: Rendering,
 ): ConsoleInstructionSet => {
   if (!isPublishedVersion(version, currentVersion)) {
     throw new Error(
@@ -203,23 +220,25 @@ export const generateConsoleInstructions = (
 
   const cfn = template as CfnLikeTemplate
   const parameterDefaults = parameterDefaultsOf(cfn)
+  const parameterValues = { ...parameterDefaults, ...rendering.parameterOverrides }
+  const { region } = rendering
 
   const roleProperties = soleResourcePropertiesOfType(cfn, 'AWS::IAM::Role')
   const policyProperties = soleResourcePropertiesOfType(cfn, 'AWS::IAM::Policy')
 
-  const roleName = resolveValue(roleProperties.RoleName, parameterDefaults, region) as string
-  const trustDocument = resolveValue(roleProperties.AssumeRolePolicyDocument, parameterDefaults, region) as ResolvedPolicyDocument
-  const permissionDocument = resolveValue(policyProperties.PolicyDocument, parameterDefaults, region) as ResolvedPolicyDocument
+  const roleName = resolveValue(roleProperties.RoleName, parameterValues, region) as string
+  const trustDocument = resolveValue(roleProperties.AssumeRolePolicyDocument, parameterValues, region) as ResolvedPolicyDocument
+  const permissionDocument = resolveValue(policyProperties.PolicyDocument, parameterValues, region) as ResolvedPolicyDocument
 
   assertNoUnsatisfiableTrustCondition(trustDocument)
 
   if (!Object.prototype.hasOwnProperty.call(parameterDefaults, TRUST_ACCOUNT_PARAMETER)) {
     throw new Error(`the artifact declares no ${TRUST_ACCOUNT_PARAMETER} parameter default`)
   }
-  const trustAccount = parameterDefaults[TRUST_ACCOUNT_PARAMETER]
+  const trustAccount = parameterValues[TRUST_ACCOUNT_PARAMETER]
 
-  const egressCidr = Object.prototype.hasOwnProperty.call(parameterDefaults, EGRESS_CIDR_PARAMETER)
-    ? parameterDefaults[EGRESS_CIDR_PARAMETER]
+  const egressCidr = Object.prototype.hasOwnProperty.call(parameterValues, EGRESS_CIDR_PARAMETER)
+    ? parameterValues[EGRESS_CIDR_PARAMETER]
     : undefined
 
   return {
@@ -231,5 +250,38 @@ export const generateConsoleInstructions = (
     trustDocument,
     permissionDocument,
     ...(egressCidr !== undefined ? { egressCidr } : {}),
+    ...(rendering.emitParameterDefaults ? { parameterDefaults } : {}),
   }
 }
+
+/**
+ * Generate the console instruction set for a published `apiable-gateway-role` artifact, fully
+ * resolved for `region`. `template` is the already-loaded, parsed CloudFormation template for
+ * `version` — locating those bytes (a fresh local synth for the CURRENT version, a committed fixture
+ * for a superseded one) is the caller's job; this function only trusts `version` enough to refuse
+ * one that was never published BEFORE it touches `template` at all, so an unpublished version can
+ * never reach the resolver and produce a plausible-looking set from defaults.
+ */
+export const generateConsoleInstructions = (
+  template: unknown,
+  version: string,
+  currentVersion: string,
+  region: string,
+): ConsoleInstructionSet => generate(template, version, currentVersion, { region, parameterOverrides: {}, emitParameterDefaults: false })
+
+/**
+ * Generate the set that publishes beside the template as `console-instructions.json`: the region
+ * and the trust account — the two values the Launch Stack URL also supplies per deployment — stay
+ * as {@link REGION_TOKEN} and {@link TRUST_ACCOUNT_TOKEN} for the serving portal to fill; every
+ * other parameter is baked at its template default, and `parameterDefaults` records those defaults.
+ */
+export const generateConsoleInstructionTemplate = (
+  template: unknown,
+  version: string,
+  currentVersion: string,
+): ConsoleInstructionSet =>
+  generate(template, version, currentVersion, {
+    region: REGION_TOKEN,
+    parameterOverrides: { [TRUST_ACCOUNT_PARAMETER]: TRUST_ACCOUNT_TOKEN },
+    emitParameterDefaults: true,
+  })

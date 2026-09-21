@@ -6,8 +6,9 @@
 # holds even against a caller that skips this script entirely and calls the S3 API directly.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
-# OnboardingLaunchStackUrlGenerator.kt::templateHttpsUrl — `<construct>/<version>/template.yaml`
-# under the bucket; a code artifact publishes alongside it at the same version segment.
+# PublishedArtifactAddress.kt — `<construct>/<version>/template.yaml`, `<construct>/<version>/
+# terraform.zip` and `<construct>/<version>/console-instructions.json` under the bucket; a code
+# artifact publishes alongside them at the same version segment.
 #
 # Reads the currently-published store the same way every real consumer does: an anonymous GET against
 # the public HTTPS endpoint, never an authenticated S3 API call — the bucket already serves every
@@ -44,14 +45,13 @@ if [[ ! -d "${SRC_DIR}" ]]; then
   exit 1
 fi
 
-# while-read, not mapfile: this script also runs on a macOS operator machine (bash 3.2). The glob
-# (*template.yaml, not an exact 'template.yaml') matches publish-launchstack.sh's own
-# --include '*template.yaml' sync pattern, so nothing the sync would upload can fall outside what this
-# guard inspects first.
+# while-read, not mapfile: this script also runs on a macOS operator machine (bash 3.2). The set
+# matches publish-launchstack.sh's own publish set exactly, so nothing the publish would upload can
+# fall outside what this guard inspects first.
 ARTIFACTS=()
 while IFS= read -r line; do
   ARTIFACTS+=("${line}")
-done < <(find "${SRC_DIR}" -type f \( -name '*template.yaml' -o -name '*.zip' \) | sort)
+done < <(find "${SRC_DIR}" -type f \( -name '*template.yaml' -o -name '*.zip' -o -name 'console-instructions.json' \) | sort)
 
 if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
   echo "no artifacts under ${SRC_DIR} — nothing to guard" >&2

@@ -8,7 +8,12 @@ export {
   GATEWAY_ROLE_LOGICAL_ID,
 } from './gateway-role'
 export type { GatewayRoleProps, GatewayRoleStackProps } from './gateway-role'
-export { generateConsoleInstructions, isPublishedVersion } from './console-instructions'
+export {
+  generateConsoleInstructions,
+  generateConsoleInstructionTemplate,
+  isPublishedVersion,
+  TRUST_ACCOUNT_TOKEN,
+} from './console-instructions'
 export type { ConsoleInstructionSet, ResolvedPolicyDocument, ResolvedStatement } from './console-instructions'
 export {
   CONSTRUCT_NAME,

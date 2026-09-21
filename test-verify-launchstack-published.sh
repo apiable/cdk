@@ -45,9 +45,18 @@ python3 -c "
 import zipfile
 with zipfile.ZipFile('${ARTIFACT_DIR}/authorizer.zip', 'w') as zf:
     zf.writestr('index.mjs', 'export const handler = async () => ({})')
+with zipfile.ZipFile('${ARTIFACT_DIR}/terraform.zip', 'w') as zf:
+    zf.writestr('main.tf', 'resource \"null_resource\" \"this\" {}\n')
+    zf.writestr('variables.tf', 'variable \"region\" { type = string }\n')
 "
-cp "${ARTIFACT_DIR}/template.yaml" "${SERVE_DIR}/template.yaml"
-cp "${ARTIFACT_DIR}/authorizer.zip" "${SERVE_DIR}/authorizer.zip"
+# The shape the portal serves from: named construct + version, the three load-bearing fields, and the
+# two tokens the portal fills.
+cat > "${ARTIFACT_DIR}/console-instructions.json" <<'JSON'
+{"construct":"apiable-test-construct","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
+JSON
+for artifact in template.yaml authorizer.zip terraform.zip console-instructions.json; do
+  cp "${ARTIFACT_DIR}/${artifact}" "${SERVE_DIR}/${artifact}"
+done
 
 PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
 
@@ -62,6 +71,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'application/x-yaml')
         elif self.path.endswith('.zip'):
             self.send_header('Content-Type', 'application/zip')
+        elif self.path.endswith('.json'):
+            self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
         super().end_headers()
 
@@ -135,9 +146,38 @@ exit 1
 WAITEOF
 chmod +x "${SCRATCH}/wait-status.sh"
 
-echo "=== S1/S2/S6: valid template + zip served with the real store's headers -> exit 0 ==="
+echo "=== S1/S2/S6: valid template + zip + module archive + instruction set served with the real store's headers -> exit 0 ==="
 check "happy path passes" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+
+echo "=== a module archive whose main.tf is not at the archive root -> fails closed ==="
+# Corrupted on both sides so the fidelity hash still matches: the shape arm is the only thing that reds.
+cp "${ARTIFACT_DIR}/terraform.zip" "${SCRATCH}/terraform.zip.bak"
+python3 -c "
+import zipfile
+with zipfile.ZipFile('${ARTIFACT_DIR}/terraform.zip', 'w') as zf:
+    zf.writestr('${CONSTRUCT}/main.tf', 'resource \"null_resource\" \"this\" {}\n')
+"
+cp "${ARTIFACT_DIR}/terraform.zip" "${SERVE_DIR}/terraform.zip"
+check "a module archive with main.tf nested below the root fails closed" 1 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+cp "${SCRATCH}/terraform.zip.bak" "${ARTIFACT_DIR}/terraform.zip"
+cp "${SCRATCH}/terraform.zip.bak" "${SERVE_DIR}/terraform.zip"
+
+echo "=== a console instruction set published under a version it does not name -> fails closed ==="
+cp "${ARTIFACT_DIR}/console-instructions.json" "${SCRATCH}/console-instructions.json.bak"
+sed 's/"version":"9.9.9"/"version":"9.9.8"/' "${SCRATCH}/console-instructions.json.bak" > "${ARTIFACT_DIR}/console-instructions.json"
+cp "${ARTIFACT_DIR}/console-instructions.json" "${SERVE_DIR}/console-instructions.json"
+check "an instruction set naming a different version than its key fails closed" 1 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+
+echo "=== a console instruction set already resolved (no token left for the portal to fill) -> fails closed ==="
+sed 's/{region}/eu-west-1/g; s/{trust-account}/034444869755/g' "${SCRATCH}/console-instructions.json.bak" > "${ARTIFACT_DIR}/console-instructions.json"
+cp "${ARTIFACT_DIR}/console-instructions.json" "${SERVE_DIR}/console-instructions.json"
+check "an instruction set with its tokens already resolved fails closed" 1 \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+cp "${SCRATCH}/console-instructions.json.bak" "${ARTIFACT_DIR}/console-instructions.json"
+cp "${SCRATCH}/console-instructions.json.bak" "${SERVE_DIR}/console-instructions.json"
 
 echo "=== S5: corrupted served zip (truncated) -> fails closed ==="
 cp "${SERVE_DIR}/authorizer.zip" "${SCRATCH}/authorizer.zip.bak"
@@ -200,6 +240,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'application/x-yaml')
         elif self.path.endswith('.zip'):
             self.send_header('Content-Type', 'application/zip')
+        elif self.path.endswith('.json'):
+            self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
         super().end_headers()
 

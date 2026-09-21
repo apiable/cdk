@@ -6,7 +6,8 @@
  * parameter default, and generic scalar passthrough. Every case drives the real generator, never a
  * re-declaration of its resolution logic.
  */
-import { generateConsoleInstructions, isPublishedVersion } from '@apiable/cdk-gateway-role'
+import { generateConsoleInstructions, generateConsoleInstructionTemplate, isPublishedVersion, TRUST_ACCOUNT_TOKEN } from '@apiable/cdk-gateway-role'
+import { REGION_TOKEN } from '@apiable/parity-gate'
 
 const REGION = 'eu-central-1'
 const VALID_TRUST_STATEMENT = {
@@ -95,5 +96,85 @@ describe('console-instructions generator (TA) — generic scalar passthrough', (
       },
     }
     expect(generateConsoleInstructions(nestedJoin, '2.0.0', '2.0.0', REGION).roleName).toBe(`apiable-gateway-management-role-${REGION}-prod`)
+  })
+})
+
+describe('console-instructions generator (TA) — template mode for the published set', () => {
+  // The three parameter shapes the real artifact carries: the trust account (a token), the egress
+  // CIDR (baked at its default), and the pseudo-parameters (region a token, partition fixed).
+  const templateWithEveryParameterKind = {
+    Parameters: {
+      ApiableTrustAccount: { Type: 'String', Default: '034444869755' },
+      ApiableEgressCidr: { Type: 'String', Default: '63.180.116.108/32' },
+    },
+    Resources: {
+      Role: {
+        Type: 'AWS::IAM::Role',
+        Properties: {
+          RoleName: { 'Fn::Join': ['-', ['apiable-gateway-management-role', { Ref: 'AWS::Region' }]] },
+          AssumeRolePolicyDocument: {
+            Version: '2012-10-17',
+            Statement: [
+              {
+                Effect: 'Allow',
+                Action: 'sts:AssumeRole',
+                Principal: { AWS: { 'Fn::Join': ['', ['arn:', { Ref: 'AWS::Partition' }, ':iam::', { Ref: 'ApiableTrustAccount' }, ':root']] } },
+              },
+            ],
+          },
+        },
+      },
+      Policy: {
+        Type: 'AWS::IAM::Policy',
+        Properties: {
+          PolicyDocument: {
+            Version: '2012-10-17',
+            Statement: [
+              {
+                Sid: 'DenyOutsideApiableEgress',
+                Effect: 'Deny',
+                Action: 'apigateway:*',
+                Resource: '*',
+                Condition: { NotIpAddress: { 'aws:SourceIp': { Ref: 'ApiableEgressCidr' } } },
+              },
+            ],
+          },
+        },
+      },
+    },
+  }
+
+  it('leaves the region and the trust account as the two tokens, everywhere each occurs', () => {
+    const set = generateConsoleInstructionTemplate(templateWithEveryParameterKind, '2.0.0', '2.0.0')
+
+    expect(set.region).toBe(REGION_TOKEN)
+    expect(set.roleName).toBe(`apiable-gateway-management-role-${REGION_TOKEN}`)
+    expect(set.trustAccount).toBe(TRUST_ACCOUNT_TOKEN)
+    expect(set.trustDocument.Statement[0].Principal?.AWS).toBe(`arn:aws:iam::${TRUST_ACCOUNT_TOKEN}:root`)
+  })
+
+  it('bakes every other parameter at its template default and records those defaults', () => {
+    const set = generateConsoleInstructionTemplate(templateWithEveryParameterKind, '2.0.0', '2.0.0')
+
+    expect(set.egressCidr).toBe('63.180.116.108/32')
+    expect(set.permissionDocument.Statement[0].Condition).toEqual({ NotIpAddress: { 'aws:SourceIp': '63.180.116.108/32' } })
+    expect(set.parameterDefaults).toEqual({ ApiableTrustAccount: '034444869755', ApiableEgressCidr: '63.180.116.108/32' })
+  })
+
+  it('the fully-resolved set carries neither a token nor the parameter defaults', () => {
+    const set = generateConsoleInstructions(templateWithEveryParameterKind, '2.0.0', '2.0.0', REGION)
+
+    expect(JSON.stringify(set)).not.toMatch(/\{[a-z-]+\}/)
+    expect(set.trustAccount).toBe('034444869755')
+    expect(set.parameterDefaults).toBeUndefined()
+  })
+
+  it('template mode still refuses an unpublished version before touching the artifact', () => {
+    expect(() => generateConsoleInstructionTemplate(templateWithEveryParameterKind, '9.9.9', '2.0.0')).toThrow(/not a published version/)
+  })
+
+  it('template mode still refuses an artifact that declares no trust-account parameter default', () => {
+    const noTrustParameter = { Parameters: {}, Resources: { Role: validRoleResource(), Policy: validPolicyResource } }
+    expect(() => generateConsoleInstructionTemplate(noTrustParameter, '2.0.0', '2.0.0')).toThrow(/declares no ApiableTrustAccount parameter default/)
   })
 })

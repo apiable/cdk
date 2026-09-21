@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 #
-# Publish the synthesized launch-stack templates — and any construct's code artifact, e.g. the
-# lambda-authorizer's zip (too large for CloudFormation's inline ZipFile) — to the store the portal
+# Publish the synthesized launch-stack artifacts — the templates, each construct's Terraform module
+# archive, any code artifact such as the lambda-authorizer's zip (too large for CloudFormation's
+# inline ZipFile), and the gateway role's console instruction set — to the store the portal
 # addresses. Run synth-launchstack.sh for every construct first; this script only uploads what is on
 # disk.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
-# OnboardingLaunchStackUrlGenerator.kt::templateHttpsUrl — `<construct>/<version>/template.yaml`
-# under the bucket; a code artifact publishes alongside it at the same version segment
-# (launchStackCodeKey). dist/launchstack/ mirrors both key-for-key.
+# PublishedArtifactAddress.kt — `<construct>/<version>/template.yaml`, `<construct>/<version>/
+# terraform.zip` and `<construct>/<version>/console-instructions.json` under the bucket; a code
+# artifact publishes alongside them at the same version segment (launchStackCodeKey).
+# dist/launchstack/ mirrors every key one-for-one.
 #
-# Only template.yaml and *.zip are published. The template.json twin beside a template is an input
-# to the parity specs, which read it locally; nothing fetches it over HTTP, so it stays out of the
-# public store.
+# Only template.yaml, *.zip and console-instructions.json are published. The template.json twin
+# beside a template is an input to the parity specs, which read it locally; nothing fetches it over
+# HTTP, so it stays out of the public store.
 #
 # Write-once has two independent layers, and this script is only the first: launchstack-overwrite-
 # guard.sh decides, per artifact, whether it is new (upload) or already published byte-identical
@@ -53,7 +55,7 @@ while IFS= read -r key; do
 done <<< "${guard_output}"
 
 if [[ ${#NEW_ARTIFACTS[@]} -eq 0 ]]; then
-  echo "published ${SRC_DIR}/**/{template.yaml,*.zip} to s3://${LAUNCHSTACK_BUCKET}/ (idempotent: 0 new artifacts)"
+  echo "published ${SRC_DIR}/**/{template.yaml,*.zip,console-instructions.json} to s3://${LAUNCHSTACK_BUCKET}/ (idempotent: 0 new artifacts)"
   exit 0
 fi
 
@@ -61,6 +63,7 @@ for key in "${NEW_ARTIFACTS[@]}"; do
   src="${SRC_DIR}/${key}"
   case "${key}" in
     *.zip) content_type="application/zip" ;;
+    *.json) content_type="application/json" ;;
     *) content_type="application/x-yaml" ;;
   esac
   aws s3api put-object \
