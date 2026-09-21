@@ -9,11 +9,7 @@
 import { EGRESS_CIDR_PARAMETER, TRUST_ACCOUNT_PARAMETER } from './gateway-role'
 import { REGION_TOKEN } from '../parity-gate/model'
 
-/**
- * Placeholder a template-mode set carries wherever the trust-account parameter's value belongs. The
- * portal substitutes it from the same configured account it pre-fills into the Launch Stack URL, so
- * the two channels can never name different trust accounts for one deployment.
- */
+/** Trust-account placeholder in a template-mode set; the portal fills it from the account it also pre-fills into the Launch Stack URL. */
 export const TRUST_ACCOUNT_TOKEN = '{trust-account}'
 
 /** An already-resolved IAM policy statement — every value a plain string; no CloudFormation intrinsic left. */
