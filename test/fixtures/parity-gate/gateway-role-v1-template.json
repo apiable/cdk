@@ -1,0 +1,114 @@
+{
+  "Description": "Apiable gateway-management role - one-click provisioning",
+  "Parameters": {
+    "ApiableTrustAccount": {
+      "Type": "String",
+      "Default": "034444869755",
+      "AllowedPattern": "^[0-9]{12}$",
+      "ConstraintDescription": "must be exactly one 12-digit AWS account id",
+      "Description": "AWS account authorised to assume the Apiable gateway-management role",
+      "MaxLength": 12,
+      "MinLength": 12
+    }
+  },
+  "Resources": {
+    "GatewayRoleGatewayManagementRoleACBD3808": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": "sts:AssumeRole",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:",
+                      {
+                        "Ref": "AWS::Partition"
+                      },
+                      ":iam::",
+                      {
+                        "Ref": "ApiableTrustAccount"
+                      },
+                      ":root"
+                    ]
+                  ]
+                }
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Description": "Role for Apiable to manage the API Gateway",
+        "RoleName": {
+          "Fn::Join": [
+            "",
+            [
+              "apiable-gateway-management-role-",
+              {
+                "Ref": "AWS::Region"
+              }
+            ]
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "apiable:logical-id",
+            "Value": "apiable-gateway-role"
+          }
+        ]
+      },
+      "Metadata": {
+        "aws:cdk:path": "apiable-gateway-role/GatewayRole/GatewayManagementRole/Resource"
+      }
+    },
+    "GatewayRoleGatewayManagementRoleDefaultPolicy472C1A67": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "apigateway:*",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:apigateway:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    "::/*"
+                  ]
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "PolicyName": "GatewayRoleGatewayManagementRoleDefaultPolicy472C1A67",
+        "Roles": [
+          {
+            "Ref": "GatewayRoleGatewayManagementRoleACBD3808"
+          }
+        ]
+      },
+      "Metadata": {
+        "aws:cdk:path": "apiable-gateway-role/GatewayRole/GatewayManagementRole/DefaultPolicy/Resource"
+      }
+    }
+  },
+  "Outputs": {
+    "GatewayRoleGatewayManagementRoleArnF0F4FA8B": {
+      "Value": {
+        "Fn::GetAtt": [
+          "GatewayRoleGatewayManagementRoleACBD3808",
+          "Arn"
+        ]
+      }
+    }
+  }
+}

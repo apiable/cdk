@@ -1,10 +1,11 @@
 name: parity-gate
 
-# Release-time gate that proves the three distribution channels (CDK construct, published
-# CloudFormation template, hand-rolled Terraform module) would provision the same component.
-# The static tiers run here with zero live AWS; the live-deploy half (S9) runs only against the
-# isolated apiable-logging account and is never wired to this default gate, so a per-PR run can
-# never reach a production-containing account.
+# Release-time gate that proves the distribution channels (CDK construct, published CloudFormation
+# template, hand-rolled Terraform module — three for every construct, plus a fourth generated
+# hand-build console channel for apiable-gateway-role, the one construct that publishes a customer
+# hand-build path) would provision the same component. The static tiers run here with zero live
+# AWS; the live-deploy half (S9) runs only against the isolated apiable-logging account and is
+# never wired to this default gate, so a per-PR run can never reach a production-containing account.
 
 on:
   pull_request:

@@ -5,8 +5,11 @@ export {
   TRUST_ACCOUNT_PARAMETER,
   EGRESS_CIDR_PARAMETER,
   GATEWAY_ROLE_COMPONENT,
+  GATEWAY_ROLE_LOGICAL_ID,
 } from './gateway-role'
 export type { GatewayRoleProps, GatewayRoleStackProps } from './gateway-role'
+export { generateConsoleInstructions, isPublishedVersion } from './console-instructions'
+export type { ConsoleInstructionSet, ResolvedPolicyDocument, ResolvedStatement } from './console-instructions'
 export {
   CONSTRUCT_NAME,
   DEFAULT_APIABLE_TRUST_ACCOUNT,

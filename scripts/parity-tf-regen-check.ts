@@ -13,7 +13,13 @@
  * to a token on both sides, making the model comparison stable across whichever account CI ran the plan in.
  */
 import * as fs from 'fs'
-import { reduceTerraformShowJson, ChannelModel } from '../lib/parity-gate'
+// Import from the leaf source modules, NOT the parity-gate barrel: the barrel re-exports the console
+// channel's reducer (013-1-36), which transitively pulls the gateway-role construct and its heavy
+// `@apiable/cdk-ssm-composition` dependency — unresolvable in this lightweight CI regen step's ts-node
+// context (it runs after a bare `terraform show`, without the full workspace). This script only needs
+// the Terraform reducer and the model type.
+import { reduceTerraformShowJson } from '../lib/parity-gate/terraform-reducer'
+import type { ChannelModel } from '../lib/parity-gate/model'
 
 /** The meaning of a reduced channel: the comparable model, with the graph order-normalised. */
 const meaningOf = (model: ChannelModel): unknown => ({
