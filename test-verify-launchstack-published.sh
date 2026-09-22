@@ -150,34 +150,64 @@ echo "=== S1/S2/S6: valid template + zip + module archive + instruction set serv
 check "happy path passes" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
 
-echo "=== a module archive whose main.tf is not at the archive root -> fails closed ==="
-# Corrupted on both sides so the fidelity hash still matches: the shape arm is the only thing that reds.
-cp "${ARTIFACT_DIR}/terraform.zip" "${SCRATCH}/terraform.zip.bak"
+# Publishes a corrupted artifact on both sides (so the fidelity hash still matches and only the shape
+# arm can red), asserts the gate refuses it AND names the reason, then restores the good artifact.
+# The message assertion is what makes each case non-vacuous: an exit code alone cannot tell a shape
+# refusal from a dead stand-in, and a predicate whose failure never reached the caller would print
+# no reason at all.
+refuses_artifact() {
+  local artifact="$1" desc="$2" expect_msg="$3" corrupted="$4"
+  cp "${ARTIFACT_DIR}/${artifact}" "${SCRATCH}/${artifact}.good"
+  cp "${corrupted}" "${ARTIFACT_DIR}/${artifact}"
+  cp "${corrupted}" "${SERVE_DIR}/${artifact}"
+  check_message "${desc}" 1 "${expect_msg}" \
+    env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+  cp "${SCRATCH}/${artifact}.good" "${ARTIFACT_DIR}/${artifact}"
+  cp "${SCRATCH}/${artifact}.good" "${SERVE_DIR}/${artifact}"
+}
+
+echo "=== a module archive whose main.tf is not at the archive root -> fails closed, reason named ==="
 python3 -c "
 import zipfile
-with zipfile.ZipFile('${ARTIFACT_DIR}/terraform.zip', 'w') as zf:
+with zipfile.ZipFile('${SCRATCH}/nested.zip', 'w') as zf:
     zf.writestr('${CONSTRUCT}/main.tf', 'resource \"null_resource\" \"this\" {}\n')
 "
-cp "${ARTIFACT_DIR}/terraform.zip" "${SERVE_DIR}/terraform.zip"
-check "a module archive with main.tf nested below the root fails closed" 1 \
-  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
-cp "${SCRATCH}/terraform.zip.bak" "${ARTIFACT_DIR}/terraform.zip"
-cp "${SCRATCH}/terraform.zip.bak" "${SERVE_DIR}/terraform.zip"
+refuses_artifact terraform.zip "a module archive with main.tf nested below the root fails closed" \
+  "main.tf is not at the archive root" "${SCRATCH}/nested.zip"
 
-echo "=== a console instruction set published under a version it does not name -> fails closed ==="
-cp "${ARTIFACT_DIR}/console-instructions.json" "${SCRATCH}/console-instructions.json.bak"
-sed 's/"version":"9.9.9"/"version":"9.9.8"/' "${SCRATCH}/console-instructions.json.bak" > "${ARTIFACT_DIR}/console-instructions.json"
-cp "${ARTIFACT_DIR}/console-instructions.json" "${SERVE_DIR}/console-instructions.json"
-check "an instruction set naming a different version than its key fails closed" 1 \
-  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+echo "=== a console instruction set the gate must refuse, each with the reason named ==="
+GOOD_SET="${ARTIFACT_DIR}/console-instructions.json"
+sed 's/"construct":"apiable-test-construct"/"construct":"other-construct"/' "${GOOD_SET}" > "${SCRATCH}/set-other-construct.json"
+refuses_artifact console-instructions.json "an instruction set naming another construct than its key fails closed" \
+  "names other-construct@9.9.9 but is published under apiable-test-construct/9.9.9" "${SCRATCH}/set-other-construct.json"
+sed 's/"version":"9.9.9"/"version":"9.9.8"/' "${GOOD_SET}" > "${SCRATCH}/set-other-version.json"
+refuses_artifact console-instructions.json "an instruction set naming a different version than its key fails closed" \
+  "names apiable-test-construct@9.9.8 but is published under apiable-test-construct/9.9.9" "${SCRATCH}/set-other-version.json"
+python3 -c "
+import json, sys
+doc = json.load(open(sys.argv[1]))
+del doc['permissionDocument']
+json.dump(doc, open(sys.argv[2], 'w'))
+" "${GOOD_SET}" "${SCRATCH}/set-no-policy.json"
+refuses_artifact console-instructions.json "an instruction set missing a load-bearing field fails closed" \
+  "carries no permissionDocument" "${SCRATCH}/set-no-policy.json"
+sed 's/{region}/eu-west-1/g; s/{trust-account}/034444869755/g' "${GOOD_SET}" > "${SCRATCH}/set-resolved.json"
+refuses_artifact console-instructions.json "an instruction set with its tokens already resolved fails closed" \
+  "carries no {region} token for the portal to fill" "${SCRATCH}/set-resolved.json"
+printf '{"construct": "apiable-test-construct",' > "${SCRATCH}/set-malformed.json"
+refuses_artifact console-instructions.json "an instruction set that is not JSON fails closed" \
+  "not JSON" "${SCRATCH}/set-malformed.json"
 
-echo "=== a console instruction set already resolved (no token left for the portal to fill) -> fails closed ==="
-sed 's/{region}/eu-west-1/g; s/{trust-account}/034444869755/g' "${SCRATCH}/console-instructions.json.bak" > "${ARTIFACT_DIR}/console-instructions.json"
-cp "${ARTIFACT_DIR}/console-instructions.json" "${SERVE_DIR}/console-instructions.json"
-check "an instruction set with its tokens already resolved fails closed" 1 \
-  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
-cp "${SCRATCH}/console-instructions.json.bak" "${ARTIFACT_DIR}/console-instructions.json"
-cp "${SCRATCH}/console-instructions.json.bak" "${SERVE_DIR}/console-instructions.json"
+echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
+printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
+refuses_artifact template.yaml "a template with no Resources fails closed" \
+  "parsed but carries no Resources" "${SCRATCH}/template-no-resources.yaml"
+printf "AWSTemplateFormatVersion: '2010-09-09'\nResources: [unclosed\n" > "${SCRATCH}/template-not-yaml.yaml"
+refuses_artifact template.yaml "a template that is not YAML fails closed" \
+  "not a well-formed CloudFormation template" "${SCRATCH}/template-not-yaml.yaml"
+printf "Description: a template with no marker at all\n" > "${SCRATCH}/template-no-marker.yaml"
+refuses_artifact template.yaml "a template with no template-shape marker fails closed" \
+  "no template-shape marker" "${SCRATCH}/template-no-marker.yaml"
 
 echo "=== S5: corrupted served zip (truncated) -> fails closed ==="
 cp "${SERVE_DIR}/authorizer.zip" "${SCRATCH}/authorizer.zip.bak"

@@ -79,10 +79,13 @@ sha256_of() { sha256_bin "$1" | awk '{print $1}'; }
 
 # A local artifact's well-formedness, and the served body's, are checked by the same predicate per
 # kind, so the two passes below (local, then served) can never drift apart into checking different
-# things for the same key. Each predicate leaves its reason in parse_error on failure.
+# things for the same key. Each predicate leaves its reason in parse_error on failure, captured by a
+# plain command substitution — never through a pipeline, so a refusal reaches the caller whether or
+# not pipefail is in effect.
 is_wellformed_template() {
-  grep -qE 'AWSTemplateFormatVersion|^Resources:|^Parameters:' <(head -20 "$1") &&
-    parse_error=$(node -e "
+  grep -qE 'AWSTemplateFormatVersion|^Resources:|^Parameters:' <(head -20 "$1") \
+    || { parse_error="no template-shape marker in the first 20 lines"; return 1; }
+  if ! parse_error=$(node -e "
       const yaml = require('js-yaml');
       try {
         const doc = yaml.load(require('fs').readFileSync(process.argv[1], 'utf8'));
@@ -93,7 +96,9 @@ is_wellformed_template() {
         console.error(String(e.message).split('\n')[0]);
         process.exit(1);
       }
-    " "$1" 2>&1)
+    " "$1" 2>&1); then
+    return 1
+  fi
 }
 
 # `unzip -t` decompresses every entry and checks its CRC — a stronger integrity proof than a magic-byte
@@ -114,20 +119,33 @@ is_wellformed_module_zip() {
 # at and the two tokens it fills are present; the same shape check runs here so a mislabelled or
 # already-resolved file never reaches the store. $2 is the artifact's key.
 is_wellformed_instructions() {
-  parse_error=$(node -e "
-    const doc = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-    const [construct, version] = process.argv[2].split('/');
-    if (doc.construct !== construct || doc.version !== version) {
-      throw new Error('names ' + doc.construct + '@' + doc.version + ' but is published under ' + construct + '/' + version);
+  if ! parse_error=$(node -e "
+    const fs = require('fs');
+    try {
+      let doc;
+      try {
+        doc = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+      } catch (e) {
+        throw new Error('not JSON: ' + String(e.message).split('\n')[0]);
+      }
+      const [construct, version] = process.argv[2].split('/');
+      if (!doc || typeof doc !== 'object' || doc.construct !== construct || doc.version !== version) {
+        throw new Error('names ' + (doc && doc.construct) + '@' + (doc && doc.version) + ' but is published under ' + construct + '/' + version);
+      }
+      for (const field of ['roleName', 'trustDocument', 'permissionDocument']) {
+        if (doc[field] === undefined) throw new Error('carries no ' + field);
+      }
+      const text = JSON.stringify(doc);
+      for (const token of ['{region}', '{trust-account}']) {
+        if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
+      }
+    } catch (e) {
+      console.error(String(e.message).split('\n')[0]);
+      process.exit(1);
     }
-    for (const field of ['roleName', 'trustDocument', 'permissionDocument']) {
-      if (doc[field] === undefined) throw new Error('carries no ' + field);
-    }
-    const text = JSON.stringify(doc);
-    for (const token of ['{region}', '{trust-account}']) {
-      if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
-    }
-  " "$1" "$2" 2>&1 | tail -1)
+  " "$1" "$2" 2>&1); then
+    return 1
+  fi
 }
 
 is_wellformed_artifact() {
