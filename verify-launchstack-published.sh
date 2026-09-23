@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 #
-# Verify every synthesized launch-stack template — and code artifact, e.g. the lambda-authorizer's
-# zip — is anonymously fetchable at the address the portal (or the template itself) composes for
-# it, and that the served bytes are the bytes that were synthesized.
+# Verify every synthesized launch-stack artifact — the CloudFormation template, a code artifact such
+# as the lambda-authorizer's zip, a Terraform module archive, and the gateway role's console
+# instruction set — is anonymously fetchable at the address the portal (or the template itself)
+# composes for it, and that the served bytes are the bytes that were synthesized.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
-# OnboardingLaunchStackUrlGenerator.kt::templateHttpsUrl — `<construct>/<version>/template.yaml`
-# under the bucket; a code artifact publishes alongside it at the same version segment
-# (launchStackCodeKey). A change to either grammar must change this script in the same PR.
+# PublishedArtifactAddress.kt — `<construct>/<version>/template.yaml`, `<construct>/<version>/
+# terraform.zip` and `<construct>/<version>/console-instructions.json` under the bucket; a code
+# artifact publishes alongside them at the same version segment (launchStackCodeKey). A change to
+# any of these grammars must change this script in the same PR.
 #
 # The inventory is derived from dist/launchstack/, so it can never drift from what was published.
-# Only template.yaml and *.zip are checked, matching what publish-launchstack.sh uploads — the
-# template.json twin beside a template is a local parity-spec input and is deliberately not in the
-# store. Fetches carry no credentials: the CloudFormation console (and, for a code artifact, the
-# Lambda service provisioning in the customer's account) fetches unauthenticated, so anonymous read
-# is the behaviour under test.
+# Only template.yaml, *.zip and console-instructions.json are checked, matching what
+# publish-launchstack.sh uploads — the template.json twin beside a template is a local parity-spec
+# input and is deliberately not in the store. Fetches carry no credentials: the CloudFormation
+# console, `terraform init`, the portal and (for a code artifact) the Lambda service provisioning in
+# the customer's account all fetch unauthenticated, so anonymous read is the behaviour under test.
 #
 # Redirects are followed because the console follows them. The region-neutral
 # `<bucket>.s3.amazonaws.com` host answers 307 to the region-specific host until a new bucket's
@@ -44,7 +46,7 @@ fi
 ARTIFACTS=()
 while IFS= read -r line; do
   ARTIFACTS+=("${line}")
-done < <(find "${SRC_DIR}" -type f \( -name 'template.yaml' -o -name '*.zip' \) | sort)
+done < <(find "${SRC_DIR}" -type f \( -name 'template.yaml' -o -name '*.zip' -o -name 'console-instructions.json' \) | sort)
 
 if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
   echo "no artifacts under ${SRC_DIR} — nothing to verify, which is itself a synth failure" >&2
@@ -76,11 +78,14 @@ fi
 sha256_of() { sha256_bin "$1" | awk '{print $1}'; }
 
 # A local artifact's well-formedness, and the served body's, are checked by the same predicate per
-# kind — YAML template vs. code zip — so the two passes below (local, then served) can never drift
-# apart into checking different things for the same key.
+# kind, so the two passes below (local, then served) can never drift apart into checking different
+# things for the same key. Each predicate leaves its reason in parse_error on failure, captured by a
+# plain command substitution — never through a pipeline, so a refusal reaches the caller whether or
+# not pipefail is in effect.
 is_wellformed_template() {
-  grep -qE 'AWSTemplateFormatVersion|^Resources:|^Parameters:' <(head -20 "$1") &&
-    parse_error=$(node -e "
+  grep -qE 'AWSTemplateFormatVersion|^Resources:|^Parameters:' <(head -20 "$1") \
+    || { parse_error="no template-shape marker in the first 20 lines"; return 1; }
+  if ! parse_error=$(node -e "
       const yaml = require('js-yaml');
       try {
         const doc = yaml.load(require('fs').readFileSync(process.argv[1], 'utf8'));
@@ -91,7 +96,9 @@ is_wellformed_template() {
         console.error(String(e.message).split('\n')[0]);
         process.exit(1);
       }
-    " "$1" 2>&1)
+    " "$1" 2>&1); then
+    return 1
+  fi
 }
 
 # `unzip -t` decompresses every entry and checks its CRC — a stronger integrity proof than a magic-byte
@@ -101,12 +108,65 @@ is_wellformed_zip() {
   parse_error=$(unzip -tqq "$1" 2>&1) && [[ -n "$(unzip -l "$1" 2>/dev/null | tail -1)" ]]
 }
 
+# A module archive is what `terraform init` unpacks, and init needs the root module's main.tf at the
+# archive root — a module nested one directory down is a valid zip that fails every apply.
+is_wellformed_module_zip() {
+  is_wellformed_zip "$1" || return 1
+  unzip -Z1 "$1" 2>/dev/null | grep -qx 'main.tf' || { parse_error="main.tf is not at the archive root"; return 1; }
+}
+
+# The portal serves an instruction set only when its construct and version equal the key it fetched it
+# at and the two tokens it fills are present; the same shape check runs here so a mislabelled or
+# already-resolved file never reaches the store. $2 is the artifact's key.
+is_wellformed_instructions() {
+  if ! parse_error=$(node -e "
+    const fs = require('fs');
+    try {
+      let doc;
+      try {
+        doc = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+      } catch (e) {
+        throw new Error('not JSON: ' + String(e.message).split('\n')[0]);
+      }
+      const [construct, version] = process.argv[2].split('/');
+      if (!doc || typeof doc !== 'object' || doc.construct !== construct || doc.version !== version) {
+        throw new Error('names ' + (doc && doc.construct) + '@' + (doc && doc.version) + ' but is published under ' + construct + '/' + version);
+      }
+      for (const field of ['roleName', 'trustDocument', 'permissionDocument']) {
+        if (doc[field] === undefined) throw new Error('carries no ' + field);
+      }
+      const text = JSON.stringify(doc);
+      for (const token of ['{region}', '{trust-account}']) {
+        if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
+      }
+    } catch (e) {
+      console.error(String(e.message).split('\n')[0]);
+      process.exit(1);
+    }
+  " "$1" "$2" 2>&1); then
+    return 1
+  fi
+}
+
+is_wellformed_artifact() {
+  local kind="$1" file="$2" key="$3"
+  parse_error=""
+  case "${kind}" in
+    template) is_wellformed_template "${file}" ;;
+    zip) is_wellformed_zip "${file}" ;;
+    module) is_wellformed_module_zip "${file}" ;;
+    instructions) is_wellformed_instructions "${file}" "${key}" ;;
+  esac
+}
+
 for src in "${ARTIFACTS[@]}"; do
   key="${src#"${SRC_DIR}"/}"
   url="${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${key}"
   before=${failures}
   case "${key}" in
+    */terraform.zip) kind="module"; kind_label="Terraform module archive"; content_type_pattern="zip" ;;
     *.zip) kind="zip"; kind_label="code zip"; content_type_pattern="zip" ;;
+    */console-instructions.json) kind="instructions"; kind_label="console instruction set"; content_type_pattern="json" ;;
     *) kind="template"; kind_label="CloudFormation template"; content_type_pattern="yaml" ;;
   esac
 
@@ -116,12 +176,7 @@ for src in "${ARTIFACTS[@]}"; do
     fail "${key} — local artifact is empty; synth produced nothing to publish"
     continue
   fi
-  parse_error=""
-  if [[ "${kind}" == "zip" ]]; then
-    is_wellformed_zip "${src}" || { fail "${key} — local artifact is not a well-formed zip: ${parse_error}"; continue; }
-  else
-    is_wellformed_template "${src}" || { fail "${key} — local artifact has no template-shape marker"; continue; }
-  fi
+  is_wellformed_artifact "${kind}" "${src}" "${key}" || { fail "${key} — local artifact is not a well-formed ${kind_label}: ${parse_error}"; continue; }
 
   body_file="$(mktemp)"
   header_file="$(mktemp)"
@@ -157,15 +212,11 @@ for src in "${ARTIFACTS[@]}"; do
   # Matching the source hash only proves the upload was faithful, not that what was uploaded is
   # usable — a corrupt artifact hash-matches its equally corrupt source. So the served bytes are
   # parsed the way the real consumer parses them: the CloudFormation console for a template, the
-  # Lambda service unpacking a deployment package for a code zip. This is deliberately a local parse
-  # rather than cloudformation:ValidateTemplate: the publishing identity is scoped to S3 alone, and a
-  # check that degrades to "skipped" on AccessDenied would wave through exactly what it exists to catch.
-  parse_error=""
-  if [[ "${kind}" == "zip" ]]; then
-    is_wellformed_zip "${body_file}" || fail "${key} — served body is not a well-formed zip: ${parse_error}"
-  else
-    is_wellformed_template "${body_file}" || fail "${key} — served body is not a well-formed CloudFormation template: ${parse_error}"
-  fi
+  # Lambda service unpacking a deployment package for a code zip, `terraform init` for a module
+  # archive, the portal for an instruction set. This is deliberately a local parse rather than
+  # cloudformation:ValidateTemplate: the publishing identity is scoped to S3 alone, and a check that
+  # degrades to "skipped" on AccessDenied would wave through exactly what it exists to catch.
+  is_wellformed_artifact "${kind}" "${body_file}" "${key}" || fail "${key} — served body is not a well-formed ${kind_label}: ${parse_error}"
 
   rm -f "${body_file}" "${header_file}"
 

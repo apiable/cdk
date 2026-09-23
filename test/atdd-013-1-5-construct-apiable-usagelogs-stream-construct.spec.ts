@@ -151,10 +151,10 @@ describe('013-1-5 apiable-usagelogs-stream — synth contract', () => {
     expect(synth).toContain('lib/${CONSTRUCT_NAME#apiable-}')
     expect(synth).toMatch(/VERSION="\$\(node -p "require\(.*package\.json.*\)\.version"\)"/)
 
-    // Terraform channel: the publish wiring derives the tag from that same single source — lockstep by construction
+    // Terraform channel: the validate script names the archive at that same single-sourced version — lockstep by construction
     const publish = fs.readFileSync(path.join(REPO_ROOT, 'publish-terraform.sh'), 'utf8')
     expect(publish).toContain("require('./lib/logs-stream/package.json').version")
-    expect(publish).toMatch(/TAG=.*\$\{VERSION\}/)
+    expect(publish).toMatch(/\$\{CONSTRUCT_NAME\}\/\$\{VERSION\}\/terraform\.zip/)
 
     // and the Terraform module pins no competing version literal of its own
     expect(allTfSources()).not.toContain(npmVersion)

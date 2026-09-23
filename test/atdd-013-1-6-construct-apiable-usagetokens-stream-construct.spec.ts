@@ -158,7 +158,7 @@ describe('013-1-6 apiable-usagetokens-stream — synth contract (shared shape, t
     const launchApp = fs.readFileSync(path.join(REPO_ROOT, 'scripts/launchstack-app.ts'), 'utf8')
     expect(launchApp).toContain('buildPublishedTokensStack')
 
-    // Terraform channel: the publish wiring derives the tag from the same single shared source — lockstep
+    // Terraform channel: the validate script names the archive at the same single shared source's version — lockstep
     const publish = fs.readFileSync(path.join(REPO_ROOT, 'publish-terraform.sh'), 'utf8')
     expect(publish).toContain('apiable-usagetokens-stream')
     expect(publish).toContain("require('./lib/logs-stream/package.json').version")

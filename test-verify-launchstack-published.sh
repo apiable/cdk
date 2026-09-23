@@ -45,9 +45,18 @@ python3 -c "
 import zipfile
 with zipfile.ZipFile('${ARTIFACT_DIR}/authorizer.zip', 'w') as zf:
     zf.writestr('index.mjs', 'export const handler = async () => ({})')
+with zipfile.ZipFile('${ARTIFACT_DIR}/terraform.zip', 'w') as zf:
+    zf.writestr('main.tf', 'resource \"null_resource\" \"this\" {}\n')
+    zf.writestr('variables.tf', 'variable \"region\" { type = string }\n')
 "
-cp "${ARTIFACT_DIR}/template.yaml" "${SERVE_DIR}/template.yaml"
-cp "${ARTIFACT_DIR}/authorizer.zip" "${SERVE_DIR}/authorizer.zip"
+# The shape the portal serves from: named construct + version, the three load-bearing fields, and the
+# two tokens the portal fills.
+cat > "${ARTIFACT_DIR}/console-instructions.json" <<'JSON'
+{"construct":"apiable-test-construct","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
+JSON
+for artifact in template.yaml authorizer.zip terraform.zip console-instructions.json; do
+  cp "${ARTIFACT_DIR}/${artifact}" "${SERVE_DIR}/${artifact}"
+done
 
 PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print(s.getsockname()[1]); s.close()")
 
@@ -62,6 +71,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'application/x-yaml')
         elif self.path.endswith('.zip'):
             self.send_header('Content-Type', 'application/zip')
+        elif self.path.endswith('.json'):
+            self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
         super().end_headers()
 
@@ -135,9 +146,68 @@ exit 1
 WAITEOF
 chmod +x "${SCRATCH}/wait-status.sh"
 
-echo "=== S1/S2/S6: valid template + zip served with the real store's headers -> exit 0 ==="
+echo "=== S1/S2/S6: valid template + zip + module archive + instruction set served with the real store's headers -> exit 0 ==="
 check "happy path passes" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+
+# Publishes a corrupted artifact on both sides (so the fidelity hash still matches and only the shape
+# arm can red), asserts the gate refuses it AND names the reason, then restores the good artifact.
+# The message assertion is what makes each case non-vacuous: an exit code alone cannot tell a shape
+# refusal from a dead stand-in, and a predicate whose failure never reached the caller would print
+# no reason at all.
+refuses_artifact() {
+  local artifact="$1" desc="$2" expect_msg="$3" corrupted="$4"
+  cp "${ARTIFACT_DIR}/${artifact}" "${SCRATCH}/${artifact}.good"
+  cp "${corrupted}" "${ARTIFACT_DIR}/${artifact}"
+  cp "${corrupted}" "${SERVE_DIR}/${artifact}"
+  check_message "${desc}" 1 "${expect_msg}" \
+    env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+  cp "${SCRATCH}/${artifact}.good" "${ARTIFACT_DIR}/${artifact}"
+  cp "${SCRATCH}/${artifact}.good" "${SERVE_DIR}/${artifact}"
+}
+
+echo "=== a module archive whose main.tf is not at the archive root -> fails closed, reason named ==="
+python3 -c "
+import zipfile
+with zipfile.ZipFile('${SCRATCH}/nested.zip', 'w') as zf:
+    zf.writestr('${CONSTRUCT}/main.tf', 'resource \"null_resource\" \"this\" {}\n')
+"
+refuses_artifact terraform.zip "a module archive with main.tf nested below the root fails closed" \
+  "main.tf is not at the archive root" "${SCRATCH}/nested.zip"
+
+echo "=== a console instruction set the gate must refuse, each with the reason named ==="
+GOOD_SET="${ARTIFACT_DIR}/console-instructions.json"
+sed 's/"construct":"apiable-test-construct"/"construct":"other-construct"/' "${GOOD_SET}" > "${SCRATCH}/set-other-construct.json"
+refuses_artifact console-instructions.json "an instruction set naming another construct than its key fails closed" \
+  "names other-construct@9.9.9 but is published under apiable-test-construct/9.9.9" "${SCRATCH}/set-other-construct.json"
+sed 's/"version":"9.9.9"/"version":"9.9.8"/' "${GOOD_SET}" > "${SCRATCH}/set-other-version.json"
+refuses_artifact console-instructions.json "an instruction set naming a different version than its key fails closed" \
+  "names apiable-test-construct@9.9.8 but is published under apiable-test-construct/9.9.9" "${SCRATCH}/set-other-version.json"
+python3 -c "
+import json, sys
+doc = json.load(open(sys.argv[1]))
+del doc['permissionDocument']
+json.dump(doc, open(sys.argv[2], 'w'))
+" "${GOOD_SET}" "${SCRATCH}/set-no-policy.json"
+refuses_artifact console-instructions.json "an instruction set missing a load-bearing field fails closed" \
+  "carries no permissionDocument" "${SCRATCH}/set-no-policy.json"
+sed 's/{region}/eu-west-1/g; s/{trust-account}/034444869755/g' "${GOOD_SET}" > "${SCRATCH}/set-resolved.json"
+refuses_artifact console-instructions.json "an instruction set with its tokens already resolved fails closed" \
+  "carries no {region} token for the portal to fill" "${SCRATCH}/set-resolved.json"
+printf '{"construct": "apiable-test-construct",' > "${SCRATCH}/set-malformed.json"
+refuses_artifact console-instructions.json "an instruction set that is not JSON fails closed" \
+  "not JSON" "${SCRATCH}/set-malformed.json"
+
+echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
+printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
+refuses_artifact template.yaml "a template with no Resources fails closed" \
+  "parsed but carries no Resources" "${SCRATCH}/template-no-resources.yaml"
+printf "AWSTemplateFormatVersion: '2010-09-09'\nResources: [unclosed\n" > "${SCRATCH}/template-not-yaml.yaml"
+refuses_artifact template.yaml "a template that is not YAML fails closed" \
+  "not a well-formed CloudFormation template" "${SCRATCH}/template-not-yaml.yaml"
+printf "Description: a template with no marker at all\n" > "${SCRATCH}/template-no-marker.yaml"
+refuses_artifact template.yaml "a template with no template-shape marker fails closed" \
+  "no template-shape marker" "${SCRATCH}/template-no-marker.yaml"
 
 echo "=== S5: corrupted served zip (truncated) -> fails closed ==="
 cp "${SERVE_DIR}/authorizer.zip" "${SCRATCH}/authorizer.zip.bak"
@@ -200,6 +270,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Type', 'application/x-yaml')
         elif self.path.endswith('.zip'):
             self.send_header('Content-Type', 'application/zip')
+        elif self.path.endswith('.json'):
+            self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'public, max-age=31536000, immutable')
         super().end_headers()
 

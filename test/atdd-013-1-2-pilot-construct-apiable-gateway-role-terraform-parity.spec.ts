@@ -188,10 +188,10 @@ describe('terraform gateway-management role — versioning', () => {
     ).version
     expect(oneClickVersion).toMatch(/^\d+\.\d+\.\d+$/)
 
-    // the publish wiring derives the tag version from that same single source — lockstep by construction
+    // the validate script names the archive at that same single-sourced version — lockstep by construction
     const publish = fs.readFileSync(path.join(REPO_ROOT, 'publish-terraform.sh'), 'utf8')
     expect(publish).toContain("require('./lib/gateway-role/package.json').version")
-    expect(publish).toMatch(/TAG=.*\$\{VERSION\}/)
+    expect(publish).toMatch(/\$\{CONSTRUCT_NAME\}\/\$\{VERSION\}\/terraform\.zip/)
 
     // and the module pins no competing version literal of its own
     expect(allModuleSources()).not.toContain(oneClickVersion)
