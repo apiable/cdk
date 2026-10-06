@@ -50,9 +50,9 @@ with zipfile.ZipFile('${ARTIFACT_DIR}/terraform.zip', 'w') as zf:
     zf.writestr('variables.tf', 'variable \"region\" { type = string }\n')
 "
 # The shape the portal serves from: named construct + version, the three load-bearing fields, and the
-# two tokens the portal fills.
+# three tokens the portal fills.
 cat > "${ARTIFACT_DIR}/console-instructions.json" <<'JSON'
-{"construct":"apiable-test-construct","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
+{"construct":"apiable-test-construct","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":"arn:aws:iam::{trust-account}:root"},"Condition":{"StringEquals":{"sts:ExternalId":"{external-id}"}}}]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
 JSON
 for artifact in template.yaml authorizer.zip terraform.zip console-instructions.json; do
   cp "${ARTIFACT_DIR}/${artifact}" "${SERVE_DIR}/${artifact}"
@@ -194,6 +194,9 @@ refuses_artifact console-instructions.json "an instruction set missing a load-be
 sed 's/{region}/eu-west-1/g; s/{trust-account}/034444869755/g' "${GOOD_SET}" > "${SCRATCH}/set-resolved.json"
 refuses_artifact console-instructions.json "an instruction set with its tokens already resolved fails closed" \
   "carries no {region} token for the portal to fill" "${SCRATCH}/set-resolved.json"
+sed 's/{external-id}/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d/g' "${GOOD_SET}" > "${SCRATCH}/set-external-id-baked.json"
+refuses_artifact console-instructions.json "an instruction set with one portal's external ID baked in fails closed" \
+  "carries no {external-id} token for the portal to fill" "${SCRATCH}/set-external-id-baked.json"
 printf '{"construct": "apiable-test-construct",' > "${SCRATCH}/set-malformed.json"
 refuses_artifact console-instructions.json "an instruction set that is not JSON fails closed" \
   "not JSON" "${SCRATCH}/set-malformed.json"

@@ -10,9 +10,12 @@ import {
   DEFAULT_APIABLE_TRUST_ACCOUNT,
 } from '@apiable/cdk-gateway-role'
 
+const EXTERNAL_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
+
 const VALID = {
   tenantId: 't-1',
   roleTrustTarget: DEFAULT_APIABLE_TRUST_ACCOUNT,
+  externalId: EXTERNAL_ID,
   region: 'eu-central-1',
   version: '1.0.0',
 }
@@ -42,6 +45,28 @@ describe('generateLaunchStackUrl — edge and error paths', () => {
 
   it('rejects a non-12-digit trust target', () => {
     expect(() => generateLaunchStackUrl({ ...VALID, roleTrustTarget: '123' })).toThrow(/account/i)
+  })
+
+  it('throws when the external ID is missing', () => {
+    expect(() => generateLaunchStackUrl({ ...VALID, externalId: '' })).toThrow(/external ID is required/)
+  })
+
+  it('rejects a wildcard external ID', () => {
+    expect(() => generateLaunchStackUrl({ ...VALID, externalId: '*' })).toThrow(/external ID must be exactly one/)
+  })
+
+  it('rejects a list of external IDs', () => {
+    expect(() =>
+      generateLaunchStackUrl({ ...VALID, externalId: `${EXTERNAL_ID},f6e5d4c3-b2a1-4c8d-9e0f-5d4c3b2a1f0e` }),
+    ).toThrow(/external ID must be exactly one/)
+  })
+
+  it('rejects an uppercase external ID', () => {
+    expect(() => generateLaunchStackUrl({ ...VALID, externalId: EXTERNAL_ID.toUpperCase() })).toThrow(/external ID must be exactly one/)
+  })
+
+  it('pre-fills the external ID as a deployment parameter', () => {
+    expect(generateLaunchStackUrl(VALID)).toContain(`param_ApiableExternalId=${EXTERNAL_ID}`)
   })
 
   it('uses the default launchstack bucket when none is supplied', () => {

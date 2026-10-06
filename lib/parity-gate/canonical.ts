@@ -201,6 +201,22 @@ export const canonicaliseLogsBucketParam = (resource: string, paramDestinations:
   return resource
 }
 
+/** Logical id of the gateway-role template's external-ID parameter. The construct re-exports it; the gate owns the spelling, as for {@link LOGS_BUCKET_ARN_PARAMETER}. */
+export const EXTERNAL_ID_PARAMETER = 'ApiableExternalId'
+
+/** The Terraform reference to the same deploy-time input — the channel-twin of {@link EXTERNAL_ID_PARAMETER}. */
+export const EXTERNAL_ID_VAR_REFERENCE = 'var.external_id'
+
+/** The plan-level variable key {@link EXTERNAL_ID_VAR_REFERENCE} resolves against. */
+export const EXTERNAL_ID_VAR_KEY = 'external_id'
+
+/**
+ * The token the declared external ID reduces to in every channel, and the placeholder the published
+ * console instruction set leaves for the serving portal to fill. A real external ID can never equal
+ * it: STS accepts no brace in one.
+ */
+export const EXTERNAL_ID_TOKEN = '{external-id}'
+
 /**
  * The Terraform reference to the deploy-time tenant-name variable — the channel-twin of the published
  * CloudFormation `TenantName` parameter. The published cognito module names the variable `name`, so a

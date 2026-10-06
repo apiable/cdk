@@ -94,11 +94,42 @@ jobs:
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
         run: |
-          if terraform plan -input=false -var region=${{ env.AWS_REGION }} -var trust_account='*' 2>plan-err.log; then
+          if terraform plan -input=false -var region=${{ env.AWS_REGION }} -var external_id=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d -var trust_account='*' 2>plan-err.log; then
             echo "expected the wildcard trust_account to be rejected, but the plan succeeded"
             exit 1
           fi
           grep -q '12-digit' plan-err.log
+
+      # Engine-level proof that the external ID is required and cannot be widened: with no value the
+      # plan must stop on the missing variable, and a blank, a wildcard and a list must each be refused
+      # by the module's own variable validation. Each case passes only when the plan fails for that
+      # reason; the diagnostics are folded as in the guardrail's no-widen step below, so each assertion
+      # is a whole phrase.
+      - name: terraform rejects a missing, blank, wildcard or list external_id
+        working-directory: terraform/apiable-gateway-role
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: |
+          refused_for() {
+            sed 's/^[^[:alnum:]]*//' plan-err.log | tr '\n' ' ' | tr -s ' ' | grep -q "$1"
+          }
+          if terraform plan -input=false -no-color -var region=${{ env.AWS_REGION }} 2>plan-err.log; then
+            echo "expected a plan with no external_id to be refused, but it succeeded"
+            exit 1
+          fi
+          if ! refused_for 'No value for required variable'; then
+            echo "the plan with no external_id failed, but not for the missing variable"; cat plan-err.log; exit 1;
+          fi
+          for bad in '' '*' 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d,f6e5d4c3-b2a1-4c8d-9e0f-5d4c3b2a1f0e'; do
+            if terraform plan -input=false -no-color -var region=${{ env.AWS_REGION }} -var "external_id=${bad}" 2>plan-err.log; then
+              echo "expected external_id='${bad}' to be rejected, but the plan succeeded"
+              exit 1
+            fi
+            if ! refused_for 'lowercase version 4 UUID'; then
+              echo "external_id='${bad}' was rejected but not by the UUID validation"; cat plan-err.log; exit 1;
+            fi
+          done
 
       # F1 — ground-truth the Terraform leg: regenerate `terraform show -json` from a fresh plan and
       # assert it reduces to the SAME parity model as the committed fixture (by meaning, not a byte
@@ -119,7 +150,7 @@ jobs:
             skip_metadata_api_check     = true
           }
           EOF
-          terraform plan -input=false -refresh=false -var region=${{ env.AWS_REGION }} -var trust_account=034444869755 -out=tfplan.bin
+          terraform plan -input=false -refresh=false -var region=${{ env.AWS_REGION }} -var trust_account=034444869755 -var external_id=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d -out=tfplan.bin
           terraform show -json tfplan.bin > tf-show.json
           rm -f ci_provider_override.tf tfplan.bin
           npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-gateway-role-show.json ${{ env.AWS_REGION }}

@@ -25,6 +25,7 @@ const APIABLE_TRUST_ACCOUNT = DEFAULT_APIABLE_TRUST_ACCOUNT
 const REGION = 'eu-central-1'
 const STACK_ID = 'apiable-gateway-role'
 const EXPECTED_ROLE_NAME = `apiable-gateway-management-role-${REGION}`
+const EXTERNAL_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
 
 /** Synthesize a fresh stack and return its template. */
 const templateFor = (props: GatewayRoleStackProps = {}): Template =>
@@ -63,6 +64,7 @@ describe('gateway-management role — synth contract', () => {
     const url = generateLaunchStackUrl({
       tenantId: 't-123',
       roleTrustTarget: APIABLE_TRUST_ACCOUNT,
+      externalId: EXTERNAL_ID,
       region: REGION,
       version: '1.0.0',
     })
@@ -146,7 +148,7 @@ describe('gateway-management role — synth contract', () => {
   // S8 — link generation without a required value fails loudly and emits no link
   it('S8: generating a launch link with a blank trust target throws and returns no URL', () => {
     expect(() =>
-      generateLaunchStackUrl({ tenantId: 't-123', roleTrustTarget: '', region: REGION, version: '1.0.0' }),
+      generateLaunchStackUrl({ tenantId: 't-123', roleTrustTarget: '', externalId: EXTERNAL_ID, region: REGION, version: '1.0.0' }),
     ).toThrow(/role-trust target|required/i)
   })
 

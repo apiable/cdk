@@ -7,7 +7,7 @@
  * `.live.spec.ts` name (see jest.config.js) and run only via `npm run test:live`.
  *
  * Manual hand-off (AC3): a human exports credentials for the sandbox account and runs
- *   RUN_LIVE_DEPLOY=1 AWS_REGION=<region> npm run test:live
+ *   RUN_LIVE_DEPLOY=1 AWS_REGION=<region> APIABLE_EXTERNAL_ID=<the sandbox portal's ID> npm run test:live
  * then applies the module, confirms the role, and re-plans for zero drift. Without
  * RUN_LIVE_DEPLOY these specs are a documented no-op (mirrors 013-1-1's S4 hand-off).
  */
@@ -15,6 +15,7 @@ import * as path from 'path'
 
 const runLiveDeploy = Boolean(process.env.RUN_LIVE_DEPLOY)
 const MODULE_DIR = path.resolve(__dirname, '../terraform/apiable-gateway-role')
+const EXTERNAL_ID = process.env.APIABLE_EXTERNAL_ID ?? '<the External ID the sandbox API Portal shows>'
 
 describe('terraform gateway-management role — live apply (manual, CI-excluded)', () => {
   // S3 — apply provisions the role identically to the one-click channel
@@ -24,7 +25,7 @@ describe('terraform gateway-management role — live apply (manual, CI-excluded)
       // eslint-disable-next-line no-console
       console.log(
         `[S3 manual hand-off] from ${MODULE_DIR} run ` +
-          `terraform init && terraform apply -var region=${region}, then verify the role ARN ` +
+          `terraform init && terraform apply -var region=${region} -var external_id=${EXTERNAL_ID}, then verify the role ARN ` +
           `ends in :role/apiable-gateway-management-role-${region} — identical to the one-click path.`,
       )
       return
@@ -41,7 +42,7 @@ describe('terraform gateway-management role — live apply (manual, CI-excluded)
       // eslint-disable-next-line no-console
       console.log(
         `[S4 manual hand-off] after the S3 apply, from ${MODULE_DIR} run ` +
-          `terraform plan -var region=${region} and confirm it reports "No changes" (zero drift).`,
+          `terraform plan -var region=${region} -var external_id=${EXTERNAL_ID} and confirm it reports "No changes" (zero drift).`,
       )
       return
     }

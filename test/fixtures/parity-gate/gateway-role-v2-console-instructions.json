@@ -1,0 +1,80 @@
+{
+  "construct": "apiable-gateway-role",
+  "version": "2.0.0",
+  "region": "{region}",
+  "roleName": "apiable-gateway-management-role-{region}",
+  "trustAccount": "{trust-account}",
+  "trustDocument": {
+    "Statement": [
+      {
+        "Action": "sts:AssumeRole",
+        "Effect": "Allow",
+        "Principal": {
+          "AWS": "arn:aws:iam::{trust-account}:root"
+        }
+      }
+    ],
+    "Version": "2012-10-17"
+  },
+  "permissionDocument": {
+    "Statement": [
+      {
+        "Action": "apigateway:GET",
+        "Effect": "Allow",
+        "Resource": [
+          "arn:aws:apigateway:{region}::/restapis",
+          "arn:aws:apigateway:{region}::/restapis/*"
+        ],
+        "Sid": "ReadRestApisOnly"
+      },
+      {
+        "Action": [
+          "apigateway:DELETE",
+          "apigateway:GET",
+          "apigateway:PATCH",
+          "apigateway:POST"
+        ],
+        "Effect": "Allow",
+        "Resource": [
+          "arn:aws:apigateway:{region}::/apikeys",
+          "arn:aws:apigateway:{region}::/apikeys/*",
+          "arn:aws:apigateway:{region}::/usageplans",
+          "arn:aws:apigateway:{region}::/usageplans/*"
+        ],
+        "Sid": "ManageApiKeysAndUsagePlans"
+      },
+      {
+        "Action": "apigateway:PUT",
+        "Effect": "Allow",
+        "Resource": "arn:aws:apigateway:{region}::/tags/*",
+        "Sid": "TagUsagePlans"
+      },
+      {
+        "Action": "apigateway:*",
+        "Effect": "Deny",
+        "Resource": [
+          "arn:aws:apigateway:{region}::/apis",
+          "arn:aws:apigateway:{region}::/apis/*"
+        ],
+        "Sid": "DenyHttpAndWebSocketApis"
+      },
+      {
+        "Action": "apigateway:*",
+        "Condition": {
+          "NotIpAddress": {
+            "aws:SourceIp": "63.180.116.108/32"
+          }
+        },
+        "Effect": "Deny",
+        "Resource": "*",
+        "Sid": "DenyOutsideApiableEgress"
+      }
+    ],
+    "Version": "2012-10-17"
+  },
+  "egressCidr": "63.180.116.108/32",
+  "parameterDefaults": {
+    "ApiableTrustAccount": "034444869755",
+    "ApiableEgressCidr": "63.180.116.108/32"
+  }
+}

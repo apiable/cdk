@@ -6,8 +6,9 @@ Hand-rolled HCL module that provisions the `apiable-gateway-management-role-<reg
 
 ```hcl
 module "apiable_gateway_role" {
-  source = "./terraform/apiable-gateway-role"
-  region = "eu-central-1"
+  source      = "./terraform/apiable-gateway-role"
+  region      = "eu-central-1"
+  external_id = "<the External ID your API Portal shows>"
   # trust_account defaults to the Apiable account; override only with a single 12-digit account id.
 }
 ```

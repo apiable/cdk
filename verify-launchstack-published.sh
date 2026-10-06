@@ -116,7 +116,7 @@ is_wellformed_module_zip() {
 }
 
 # The portal serves an instruction set only when its construct and version equal the key it fetched it
-# at and the two tokens it fills are present; the same shape check runs here so a mislabelled or
+# at and the three tokens it fills are present; the same shape check runs here so a mislabelled or
 # already-resolved file never reaches the store. $2 is the artifact's key.
 is_wellformed_instructions() {
   if ! parse_error=$(node -e "
@@ -136,7 +136,7 @@ is_wellformed_instructions() {
         if (doc[field] === undefined) throw new Error('carries no ' + field);
       }
       const text = JSON.stringify(doc);
-      for (const token of ['{region}', '{trust-account}']) {
+      for (const token of ['{region}', '{trust-account}', '{external-id}']) {
         if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
       }
     } catch (e) {

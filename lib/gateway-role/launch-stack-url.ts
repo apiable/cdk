@@ -39,11 +39,18 @@ export const CIDR_PATTERN_SOURCE = '^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[1-2][0
 /** Compiled form of {@link CIDR_PATTERN_SOURCE} for runtime validation. */
 export const CIDR_PATTERN = new RegExp(CIDR_PATTERN_SOURCE)
 
+/** Matches exactly one lowercase version 4 UUID; rejects a blank, a wildcard, or a list. */
+export const EXTERNAL_ID_PATTERN_SOURCE = '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+
+const EXTERNAL_ID_PATTERN = new RegExp(EXTERNAL_ID_PATTERN_SOURCE)
+
 export interface LaunchStackUrlInput {
   /** Customer identifier the provisioning is requested for. */
   readonly tenantId: string
   /** AWS account authorised to assume the role; pre-filled as a deployment parameter. */
   readonly roleTrustTarget: string
+  /** External ID the role requires on every AssumeRole; pre-filled as a deployment parameter. */
+  readonly externalId: string
   /** AWS region the customer deploys into. */
   readonly region: string
   /** Published template version, e.g. "1.0.0". */
@@ -70,24 +77,30 @@ const templateHttpsUrl = (version: string, bucket: string): string =>
  * Build a one-click AWS Console launch-stack URL for the published gateway-role template,
  * with the customer's values pre-filled as deployment parameters.
  *
- * Throws when a required value is missing, or when the trust target names anything other
- * than exactly one account, so a link never carries a blank or trust-widening value.
+ * Throws when a required value is missing, when the trust target names anything other than
+ * exactly one account, or when the external ID is anything other than exactly one UUID, so a
+ * link never carries a blank or trust-widening value.
  */
 export const generateLaunchStackUrl = (input: LaunchStackUrlInput): string => {
-  const { tenantId, roleTrustTarget, region, version, bucket = DEFAULT_LAUNCHSTACK_BUCKET } = input
+  const { tenantId, roleTrustTarget, externalId, region, version, bucket = DEFAULT_LAUNCHSTACK_BUCKET } = input
 
   if (!tenantId) throw new Error('tenantId is required to generate a launch stack URL')
   if (!roleTrustTarget) throw new Error('role-trust target is required to generate a launch stack URL')
+  if (!externalId) throw new Error('external ID is required to generate a launch stack URL')
   if (!region) throw new Error('region is required to generate a launch stack URL')
   if (!version) throw new Error('version is required to generate a launch stack URL')
   if (!ACCOUNT_ID_PATTERN.test(roleTrustTarget)) {
     throw new Error('role-trust target must be exactly one 12-digit AWS account id')
+  }
+  if (!EXTERNAL_ID_PATTERN.test(externalId)) {
+    throw new Error('external ID must be exactly one lowercase version 4 UUID')
   }
 
   const params = new URLSearchParams({
     templateURL: templateHttpsUrl(version, bucket),
     stackName: CONSTRUCT_NAME,
     param_ApiableTrustAccount: roleTrustTarget,
+    param_ApiableExternalId: externalId,
   })
   return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/create/review?${params.toString()}`
 }

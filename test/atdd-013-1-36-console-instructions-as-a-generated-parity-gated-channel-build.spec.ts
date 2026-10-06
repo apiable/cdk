@@ -6,7 +6,7 @@
  *
  * One un-skipped spec per contract scenario (S1–S10), driven through the real generator
  * (`@apiable/cdk-gateway-role`'s `generateConsoleInstructions`) and the real gate + reducers
- * (`@apiable/parity-gate`) against the REAL published artifacts: the current (v2) CFN twin the
+ * (`@apiable/parity-gate`) against the REAL published artifacts: the current CFN twin the
  * release workflow synthesizes before `npm test` runs (`synth-all-launchstack.sh`), and a committed
  * fixture standing in for v1 — outside what a local synth of current source can reproduce, so its
  * bytes are a real, once-fetched snapshot of the still-live `1.0.0` published template (mirroring
@@ -20,6 +20,8 @@ import { Template } from 'aws-cdk-lib/assertions'
 import {
   buildPublishedStack,
   ConsoleInstructionSet,
+  EXTERNAL_ID_PARAMETER,
+  EXTERNAL_ID_TOKEN,
   GATEWAY_ROLE_LOGICAL_ID,
   generateConsoleInstructions,
 } from '@apiable/cdk-gateway-role'
@@ -164,12 +166,17 @@ describe('013-1-36-console-instructions-as-a-generated-parity-gated-channel', ()
 
   // contract: S4
   it('[P1] S4 — A condition the platform cannot satisfy never reaches the set', () => {
+    // The one condition the platform satisfies is the external ID a portal sends on every AssumeRole,
+    // left as the token that portal fills. The generated trust carries it and no other.
     const instructions = instructionsFor(currentVersion())
-    for (const statement of instructions.trustDocument.Statement) expect(statement.Condition).toBeUndefined()
+    expect(instructions.trustDocument.Statement.map((statement) => statement.Condition)).toEqual([
+      { StringEquals: { 'sts:ExternalId': EXTERNAL_ID_TOKEN } },
+    ])
 
-    // A future artifact that regressed a trust Condition (e.g. sts:ExternalId) back in must be refused.
-    const withTrustCondition = {
-      Parameters: { ApiableTrustAccount: { Type: 'String', Default: '034444869755' } },
+    // A literal no portal sends, and any condition on a version published before the parameter, are
+    // conditions AssumeRole cannot meet, so neither artifact generates a set.
+    const withTrustCondition = (parameters: Record<string, unknown>): unknown => ({
+      Parameters: { ApiableTrustAccount: { Type: 'String', Default: '034444869755' }, ...parameters },
       Resources: {
         Role: {
           Type: 'AWS::IAM::Role',
@@ -190,8 +197,11 @@ describe('013-1-36-console-instructions-as-a-generated-parity-gated-channel', ()
         },
         Policy: { Type: 'AWS::IAM::Policy', Properties: { PolicyDocument: { Version: '2012-10-17', Statement: [] } } },
       },
-    }
-    expect(() => generateConsoleInstructions(withTrustCondition, currentVersion(), currentVersion(), REGION)).toThrow(/Condition/)
+    })
+    expect(() =>
+      generateConsoleInstructions(withTrustCondition({ [EXTERNAL_ID_PARAMETER]: { Type: 'String' } }), currentVersion(), currentVersion(), REGION),
+    ).toThrow(/requires the external ID/)
+    expect(() => generateConsoleInstructions(withTrustCondition({}), '1.0.0', currentVersion(), REGION)).toThrow(/takes no external ID/)
   })
 
   // contract: S5

@@ -15,6 +15,7 @@ resource "aws_iam_role" "this" {
         Effect    = "Allow"
         Principal = { AWS = "arn:aws:iam::${var.trust_account}:root" }
         Action    = "sts:AssumeRole"
+        Condition = { StringEquals = { "sts:ExternalId" = var.external_id } }
       }
     ]
   })
