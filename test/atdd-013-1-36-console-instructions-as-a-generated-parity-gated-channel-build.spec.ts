@@ -8,10 +8,11 @@
  * (`@apiable/cdk-gateway-role`'s `generateConsoleInstructions`) and the real gate + reducers
  * (`@apiable/parity-gate`) against the REAL published artifacts: the current CFN twin the
  * release workflow synthesizes before `npm test` runs (`synth-all-launchstack.sh`), and a committed
- * fixture standing in for v1 — outside what a local synth of current source can reproduce, so its
- * bytes are a real, once-fetched snapshot of the still-live `1.0.0` published template (mirroring
- * the fixture-not-live-fetch pattern the Terraform channel already uses for its own committed
- * `terraform show -json` snapshots — the default gate stays hermetic, no network in the loop).
+ * fixture standing in for each superseded version — outside what a local synth of current source can
+ * reproduce. `1.0.0`'s bytes are a real, once-fetched snapshot of the still-live published template;
+ * `2.0.0`'s are the template its own source synthesized (mirroring the fixture-not-live-fetch pattern
+ * the Terraform channel already uses for its own committed `terraform show -json` snapshots — the
+ * default gate stays hermetic, no network in the loop).
  */
 import * as fs from 'fs'
 import * as path from 'path'
@@ -38,6 +39,7 @@ const REPO_ROOT = path.resolve(__dirname, '..')
 const CONSTRUCT = 'apiable-gateway-role'
 const REGION = 'eu-central-1'
 const V1_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/gateway-role-v1-template.json')
+const V2_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/gateway-role-v2-template.json')
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-gateway-role-show.json')
 const ROLE_REF = `iam-role:${GATEWAY_ROLE_LOGICAL_ID}`
 
@@ -50,6 +52,7 @@ const currentVersion = (): string => publishedVersion(CONSTRUCT)
 const templateFor = (version: string): unknown => {
   if (version === currentVersion()) return JSON.parse(fs.readFileSync(publishedTemplatePath(CONSTRUCT), 'utf8'))
   if (version === '1.0.0') return JSON.parse(fs.readFileSync(V1_FIXTURE, 'utf8'))
+  if (version === '2.0.0') return JSON.parse(fs.readFileSync(V2_FIXTURE, 'utf8'))
   throw new Error(`test harness has no committed artifact for ${CONSTRUCT}@${version}`)
 }
 
@@ -219,26 +222,62 @@ describe('013-1-36-console-instructions-as-a-generated-parity-gated-channel', ()
   })
 
   // contract: S7
-  it('[P1] S7 — Both published versions generate correctly', () => {
+  it('[P1] S7 — Every published version generates correctly', () => {
     const v1 = instructionsFor('1.0.0')
-    const v2 = instructionsFor(currentVersion())
+    const v2 = instructionsFor('2.0.0')
+    const current = instructionsFor(currentVersion())
 
     expect(v1.permissionDocument.Statement).toHaveLength(1)
     expect(v1.permissionDocument.Statement[0]).toMatchObject({ Effect: 'Allow', Action: 'apigateway:*' })
     expect(v1.egressCidr).toBeUndefined()
+    expect(v1.trustDocument.Statement[0].Condition).toBeUndefined()
 
     expect(v2.permissionDocument.Statement).toHaveLength(5)
     expect(v2.egressCidr).toBe('63.180.116.108/32')
+    expect(v2.trustDocument.Statement[0].Condition).toBeUndefined()
 
-    // Same trust account, genuinely different permission shape — the version drives real output,
-    // not a pinned v2 answer regardless of what was asked for.
-    expect(v1.trustAccount).toBe(v2.trustAccount)
+    expect(current.permissionDocument.Statement).toHaveLength(5)
+    expect(current.egressCidr).toBe('63.180.116.108/32')
+    expect(current.trustDocument.Statement[0].Condition).toEqual({ StringEquals: { 'sts:ExternalId': EXTERNAL_ID_TOKEN } })
+
+    // Same trust account, genuinely different shapes — the version drives real output, not one pinned
+    // answer regardless of what was asked for: 1.0.0 and 2.0.0 differ in what the role may do, 2.0.0
+    // and the current version in the trust condition.
+    expect(v1.trustAccount).toBe(current.trustAccount)
+    expect(v2.trustAccount).toBe(current.trustAccount)
     expect(v1.permissionDocument).not.toEqual(v2.permissionDocument)
+    expect(v2.trustDocument).not.toEqual(current.trustDocument)
 
     // Each matches its own artifact: reducing each generated set lands on the SAME declared-id role
     // ref and the SAME trust-account value the artifact itself declares.
-    expect(reduceConsoleInstructions(v1, REGION).values[`role-trust-account:${ROLE_REF}`]).toBe('034444869755')
-    expect(reduceConsoleInstructions(v2, REGION).values[`role-trust-account:${ROLE_REF}`]).toBe('034444869755')
+    const generated: readonly (readonly [string, ConsoleInstructionSet])[] = [
+      ['1.0.0', v1],
+      ['2.0.0', v2],
+      [currentVersion(), current],
+    ]
+    for (const [, set] of generated) {
+      expect(reduceConsoleInstructions(set, REGION).values[`role-trust-account:${ROLE_REF}`]).toBe('034444869755')
+    }
+
+    // And each agrees with its own artifact, and with neither of the others, on every tier the gate
+    // compares. The artifact stands in for the three channels the gate requires, so the generated set
+    // is the only thing that can diverge.
+    for (const [setVersion, set] of generated) {
+      for (const [artifactVersion] of generated) {
+        const artifact = templateFor(artifactVersion)
+        const agrees = gate([
+          reduceCloudFormation(artifact, 'cdk'),
+          reduceCloudFormation(artifact, 'cfn'),
+          reduceCloudFormation(artifact, 'terraform'),
+          reduceConsoleInstructions(set, REGION),
+        ]).passed
+        expect({ set: setVersion, artifact: artifactVersion, agrees }).toEqual({
+          set: setVersion,
+          artifact: artifactVersion,
+          agrees: setVersion === artifactVersion,
+        })
+      }
+    }
   })
 
   // contract: S8
