@@ -34,6 +34,7 @@ import {
   reduceTerraformShowJson,
 } from '@apiable/parity-gate'
 import { asArray, asRecord, asString } from '../lib/parity-gate/narrow'
+import { HclBlock, HclCall, HclRef, HclValue, parseHcl } from './support/hcl'
 import { publishedTemplatePath, publishedVersion } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -80,7 +81,18 @@ const cdkTemplate = (): unknown => Template.fromStack(buildPublishedStack(new cd
 const publishedTemplate = (): unknown => readJson(publishedTemplatePath(CONSTRUCT))
 const publishedYaml = (): unknown => yaml.load(fs.readFileSync(publishedTemplatePath(CONSTRUCT, 'yaml'), 'utf8'))
 const terraformPlan = (): unknown => readJson(path.join(FIXTURES, 'terraform-gateway-role-show.json'))
-const moduleFile = (name: string): string => fs.readFileSync(path.join(MODULE_DIR, name), 'utf8')
+/** Every top-level block of the module's `.tf` files, read as data so that a commented-out line is not there to match. */
+const moduleBlocks = (): HclBlock[] =>
+  fs
+    .readdirSync(MODULE_DIR)
+    .filter((file) => file.endsWith('.tf'))
+    .sort()
+    .flatMap((file) => parseHcl(fs.readFileSync(path.join(MODULE_DIR, file), 'utf8')).blocks)
+const moduleBlock = (type: string, firstLabel: string): HclBlock =>
+  sole(moduleBlocks().filter((block) => block.type === type && block.labels[0] === firstLabel))
+const moduleResource = (type: string): HclBlock => moduleBlock('resource', type)
+const moduleVariable = (name: string): HclBlock => moduleBlock('variable', name)
+const v2PublishedSet = (): unknown => readJson(path.join(FIXTURES, 'gateway-role-v2-console-instructions.json'))
 const publishedSetText = (): string => fs.readFileSync(path.join(publishedDir(), 'console-instructions.json'), 'utf8')
 
 /** The published set with the region and the trust account filled as the portal fills them. The
@@ -183,10 +195,26 @@ describe('gateway role — every channel requires the external ID', () => {
   })
 
   it('the Terraform module conditions its only trust statement on the external_id variable', () => {
-    const role = moduleFile('main.tf').split('resource "aws_iam_role_policy"')[0]
-    expect(role).toMatch(/Condition\s*=\s*\{\s*StringEquals\s*=\s*\{\s*"sts:ExternalId"\s*=\s*var\.external_id\s*\}\s*\}/)
+    expect(moduleResource('aws_iam_role').attributes.assume_role_policy).toStrictEqual(
+      new HclCall('jsonencode', [
+        {
+          Version: '2012-10-17',
+          Statement: [
+            {
+              Effect: 'Allow',
+              Principal: { AWS: 'arn:aws:iam::${var.trust_account}:root' },
+              Action: 'sts:AssumeRole',
+              Condition: { StringEquals: { 'sts:ExternalId': new HclRef('var.external_id') } },
+            },
+          ],
+        },
+      ]),
+    )
+  })
 
+  it('the Terraform plan the gate reads carries the planned ID as the condition of its only trust statement', () => {
     const plan = terraformPlan()
+
     expect(tfPlannedExternalId(plan)).toMatch(new RegExp(EXTERNAL_ID_PATTERN_SOURCE))
     expect(sole(statementsOf(tfTrust(plan))).Condition).toEqual({ StringEquals: { 'sts:ExternalId': tfPlannedExternalId(plan) } })
   })
@@ -270,15 +298,11 @@ describe('gateway role — the external ID is required and is exactly one lowerc
     return new RegExp(`^(?:${pattern})$`)
   }
 
-  const moduleVariable = (): string => {
-    const block = moduleFile('variables.tf').match(/variable\s+"external_id"\s*\{[\s\S]*?\n\}/)?.[0]
-    if (block === undefined) throw new Error('the Terraform module declares no external_id variable')
-    return block
-  }
   // Terraform's regex() searches, so the module's own anchors are what make its check whole-value.
   const modulePattern = (): RegExp => {
-    const pattern = moduleVariable().match(/regex\(\s*"([^"]+)"\s*,\s*var\.external_id\s*\)/)?.[1]
-    if (pattern === undefined) throw new Error('the external_id variable carries no regex check')
+    const check = sole(moduleVariable('external_id').blocks).attributes.condition
+    const pattern = check instanceof HclCall && check.args[0] instanceof HclCall ? check.args[0].args[0] : undefined
+    if (typeof pattern !== 'string') throw new Error('the external_id variable carries no regex check')
     return new RegExp(pattern)
   }
 
@@ -306,11 +330,14 @@ describe('gateway role — the external ID is required and is exactly one lowerc
     expect(templatePattern().test(ISSUED_ID)).toBe(true)
   })
 
-  it('the Terraform module declares the variable with no default and a positive check on it', () => {
-    expect(moduleVariable()).toMatch(/type\s*=\s*string/)
-    expect(moduleVariable()).not.toMatch(/\bdefault\s*=/)
-    expect(moduleVariable().match(/condition\s*=\s*(.+)/)?.[1].trim()).toMatch(/^can\(\s*regex\(/)
-    expect(modulePattern().source).toBe(new RegExp(EXTERNAL_ID_PATTERN_SOURCE).source)
+  it('the Terraform module declares the variable with no default and one check on it, the pattern and nothing beside it', () => {
+    const variable = moduleVariable('external_id')
+
+    expect(variable.attributes).toStrictEqual({ description: expect.any(String), type: new HclRef('string') })
+    expect(variable.blocks.map((block) => block.type)).toEqual(['validation'])
+    expect(variable.blocks[0].attributes.condition).toStrictEqual(
+      new HclCall('can', [new HclCall('regex', [EXTERNAL_ID_PATTERN_SOURCE, new HclRef('var.external_id')])]),
+    )
   })
 
   it.each(REFUSED_VALUES)('the Terraform module refuses %s', (_label, value) => {
@@ -413,6 +440,31 @@ describe('gateway role — the console generator refuses any trust but the one c
 describe('gateway role — the current version adds the condition and nothing else', () => {
   const v2Template = (): unknown => supersededTemplate('gateway-role-v2-template.json')
 
+  const listOf = (value: unknown): unknown[] => (Array.isArray(value) ? [...value] : [value])
+
+  /** A policy document with each statement's Action and Resource as sorted lists, so a string and a one-item list, or two orders of one list, read alike. */
+  const statementForStatement = (document: unknown): unknown => ({
+    ...asRecord(document),
+    Statement: statementsOf(document).map((statement) => ({ ...statement, Action: listOf(statement.Action).sort(), Resource: listOf(statement.Resource).sort() })),
+  })
+
+  /** The module's policy in the published set's terms: the region as its token and the egress CIDR at the variable's default. Any other input throws. */
+  const inPublishedForm = (value: HclValue): unknown => {
+    if (typeof value === 'string') {
+      const text = value.split('${var.region}').join(REGION_TOKEN)
+      if (text.includes('${')) throw new Error(`the module's policy interpolates something other than the region: ${value}`)
+      return text
+    }
+    if (value instanceof HclRef) {
+      if (value.path !== 'var.egress_cidr') throw new Error(`the module's policy refers to ${value.path}`)
+      return moduleVariable('egress_cidr').attributes.default
+    }
+    if (value instanceof HclCall) throw new Error(`the module's policy calls ${value.name}`)
+    if (Array.isArray(value)) return value.map(inPublishedForm)
+    if (typeof value === 'number') return value
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, inPublishedForm(entry)]))
+  }
+
   /** The template with the one parameter and the one condition taken out again. */
   const withoutTheExternalId = (template: unknown): unknown => {
     const copy = cfnWithTrust(template, dropCondition)
@@ -431,9 +483,31 @@ describe('gateway role — the current version adds the condition and nothing el
 
   it('the console instruction set grants the permissions of 2.0.0, statement for statement', () => {
     const published = JSON.parse(publishedSetText()) as ConsoleInstructionSet
-    const v2Published = readJson(path.join(FIXTURES, 'gateway-role-v2-console-instructions.json'))
 
-    expect(published.permissionDocument).toEqual(asRecord(v2Published).permissionDocument)
+    expect(published.permissionDocument).toEqual(asRecord(v2PublishedSet()).permissionDocument)
+  })
+
+  it('the Terraform module declares exactly the role and its inline policy', () => {
+    const blocks = moduleBlocks()
+    const role = moduleResource('aws_iam_role')
+
+    // Terraform would load a .tf.json file, and the blocks above are read from the .tf files only.
+    expect(fs.readdirSync(MODULE_DIR).filter((file) => file.endsWith('.tf.json'))).toEqual([])
+    expect(blocks.map((block) => block.type)).not.toContain('module')
+    expect(blocks.filter((block) => block.type === 'resource').map((block) => block.labels)).toEqual([
+      ['aws_iam_role', 'this'],
+      ['aws_iam_role_policy', 'apigateway_management'],
+    ])
+    expect(Object.keys(role.attributes).sort()).toEqual(['assume_role_policy', 'description', 'name', 'tags'])
+    expect(role.blocks).toEqual([])
+    expect(moduleResource('aws_iam_role_policy').attributes.role).toStrictEqual(new HclRef('aws_iam_role.this.id'))
+  })
+
+  it('the Terraform module grants the permissions of 2.0.0, statement for statement', () => {
+    const policy = moduleResource('aws_iam_role_policy').attributes.policy
+    if (!(policy instanceof HclCall) || policy.name !== 'jsonencode') throw new Error('the module does not jsonencode its permission policy')
+
+    expect(statementForStatement(inPublishedForm(sole(policy.args)))).toEqual(statementForStatement(asRecord(v2PublishedSet()).permissionDocument))
   })
 
   it('the CDK construct, the Terraform plan and the served console set, each without the condition, are 2.0.0 on every tier of the gate', () => {
