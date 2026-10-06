@@ -282,6 +282,20 @@ describe('gateway role — the parity gate fails when one channel stops requirin
     expect(trustDivergenceOf(fourChannels({ terraform: tfModel(hardcoded) }))).toEqual(['terraform'])
   })
 
+  it('fails when the Terraform configuration gives the variable a default', () => {
+    const defaulted = clone(terraformPlan())
+    asRecord(asRecord(asRecord(defaulted).configuration).root_module).variables = { external_id: { default: tfPlannedExternalId(defaulted) } }
+
+    expect(trustDivergenceOf(fourChannels({ terraform: tfModel(defaulted) }))).toEqual(['terraform'])
+  })
+
+  it('fails when the Terraform plan carries a blank external ID', () => {
+    const blank = tfWithTrust(terraformPlan(), requireExternalId(''))
+    asRecord(asRecord(asRecord(blank).variables).external_id).value = ''
+
+    expect(trustDivergenceOf(fourChannels({ terraform: tfModel(blank) }))).toEqual(['terraform'])
+  })
+
   it('fails when the published template gives the parameter a default', () => {
     const defaulted = clone(publishedTemplate())
     asRecord(cfnParameters(defaulted)[EXTERNAL_ID_PARAMETER]).Default = ISSUED_ID

@@ -406,8 +406,13 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   // `variables` block — the deploy input itself, the trustworthy anchor a hosted-UI domain is checked
   // against (a resource attribute carrying it could be desynced by the author; the deploy input cannot be).
   const tenantInput = asString(asRecord(asRecord(root.variables)[TENANT_NAME_VAR_KEY]).value)
-  // The planned value of `var.external_id`, read from the same block for the same reason.
+  // The planned value of `var.external_id`, read from the same block for the same reason. It stands for
+  // the required input only while it is not blank and the configuration gives the variable no default,
+  // as the CloudFormation parameter does only while it has none.
   const externalIdInput = asString(asRecord(asRecord(root.variables)[EXTERNAL_ID_VAR_KEY]).value)
+  const externalIdDeclaration = asRecord(asRecord(asRecord(asRecord(root.configuration).root_module).variables)[EXTERNAL_ID_VAR_KEY])
+  const requiredExternalId =
+    externalIdInput !== undefined && externalIdInput !== '' && !('default' in externalIdDeclaration) ? externalIdInput : undefined
 
   const resources: TfResource[] = plannedResources
     .map((entry) => asRecord(entry))
@@ -639,8 +644,8 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       // variable, reduces to the shared token. Any other literal — a hardcoded ID, or the planned ID on
       // a trust that never references the variable — keeps its identity and diverges.
       const resolveTrustConditionOperand =
-        externalIdInput !== undefined && externalIdInput !== '' && trustBoundToExternalIdVar.has(res.address)
-          ? (operand: unknown): string => (operand === externalIdInput ? EXTERNAL_ID_TOKEN : tfResolve(operand))
+        requiredExternalId !== undefined && trustBoundToExternalIdVar.has(res.address)
+          ? (operand: unknown): string => (operand === requiredExternalId ? EXTERNAL_ID_TOKEN : tfResolve(operand))
           : tfResolve
       // File each trust grant under the role's own node ref, mirroring the CloudFormation side, so two
       // roles' trusts never pool into one multiset where a cross-role swap nets out.
