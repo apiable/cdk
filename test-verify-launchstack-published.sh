@@ -201,6 +201,65 @@ printf '{"construct": "apiable-test-construct",' > "${SCRATCH}/set-malformed.jso
 refuses_artifact console-instructions.json "an instruction set that is not JSON fails closed" \
   "not JSON" "${SCRATCH}/set-malformed.json"
 
+echo "=== a set is held to the tokens its own version takes: the published 2.0.0 set beside a current one ==="
+# 2.0.0 takes no external ID and stays published, so a store can hold its set beside a current one.
+# The 2.0.0 set is the published one, committed as a fixture; the current set is that set at the
+# package's version with the one trust condition the version adds.
+V2_SET="test/fixtures/parity-gate/gateway-role-v2-console-instructions.json"
+CURRENT_VERSION="$(node -p "require('./lib/gateway-role/package.json').version")"
+TWO_SRC="${SCRATCH}/two-versions/dist/launchstack"
+TWO_DIST="${TWO_SRC}/apiable-gateway-role"
+TWO_SERVED="${SCRATCH}/served/apiable-gateway-role"
+mkdir -p "${TWO_DIST}/2.0.0" "${TWO_DIST}/${CURRENT_VERSION}" "${TWO_SERVED}/2.0.0" "${TWO_SERVED}/${CURRENT_VERSION}"
+# Writes the 2.0.0 set to $2 as version $1; with a third argument, with the external-ID condition on its trust.
+set_at_version() {
+  python3 -c "
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc['version'] = sys.argv[2]
+if len(sys.argv) > 4:
+    doc['trustDocument']['Statement'][0]['Condition'] = {'StringEquals': {'sts:ExternalId': '{external-id}'}}
+json.dump(doc, open(sys.argv[3], 'w'))
+" "${V2_SET}" "$@"
+}
+publish_two() {
+  cp "$1" "${TWO_DIST}/$2/console-instructions.json"
+  cp "$1" "${TWO_SERVED}/$2/console-instructions.json"
+}
+verify_two() {
+  env SRC_DIR="${TWO_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+set_at_version "${CURRENT_VERSION}" "${SCRATCH}/set-current.json" with-token
+publish_two "${V2_SET}" 2.0.0
+publish_two "${SCRATCH}/set-current.json" "${CURRENT_VERSION}"
+check "the published 2.0.0 set beside a current set verifies clean" 0 verify_two
+
+set_at_version 2.0.0 "${SCRATCH}/set-v2-with-token.json" with-token
+publish_two "${SCRATCH}/set-v2-with-token.json" 2.0.0
+check_message "a 2.0.0 set that carries the external-ID token fails closed" 1 \
+  "apiable-gateway-role/2.0.0/console-instructions.json — local artifact is not a well-formed console instruction set: carries an {external-id} token, and its version takes no external ID" \
+  verify_two
+publish_two "${V2_SET}" 2.0.0
+
+set_at_version "${CURRENT_VERSION}" "${SCRATCH}/set-current-without-token.json"
+publish_two "${SCRATCH}/set-current-without-token.json" "${CURRENT_VERSION}"
+check_message "a current set without the external-ID token fails closed" 1 \
+  "apiable-gateway-role/${CURRENT_VERSION}/console-instructions.json — local artifact is not a well-formed console instruction set: carries no {external-id} token for the portal to fill" \
+  verify_two
+
+# The rule cannot be applied when the generator does not answer, so the verifier has to stop there.
+# The tree is the one the last case left, a current set without its token: a verifier that went on
+# with no answer would pass it.
+mkdir "${SCRATCH}/no-npx"
+printf '#!/usr/bin/env bash\nexit 1\n' > "${SCRATCH}/no-npx/npx"
+chmod +x "${SCRATCH}/no-npx/npx"
+verify_two_with_no_generator() {
+  env PATH="${SCRATCH}/no-npx:${PATH}" SRC_DIR="${TWO_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+check_message "the verifier stops when the generator cannot be asked which versions take the external ID" 1 \
+  "could not ask the generator which versions take the external ID" \
+  verify_two_with_no_generator
+
 echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
 printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
 refuses_artifact template.yaml "a template with no Resources fails closed" \

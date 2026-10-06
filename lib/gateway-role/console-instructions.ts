@@ -68,7 +68,7 @@ export interface ConsoleInstructionSet {
 const HISTORICAL_PUBLISHED_VERSIONS: ReadonlySet<string> = new Set(['1.0.0', '2.0.0'])
 
 /** Whether `version`'s trust requires the external ID. Neither historical version takes one. */
-const requiresExternalId = (version: string): boolean => !HISTORICAL_PUBLISHED_VERSIONS.has(version)
+export const requiresExternalId = (version: string): boolean => !HISTORICAL_PUBLISHED_VERSIONS.has(version)
 
 /**
  * Whether `version` is a version of `apiable-gateway-role` known to be published. `currentVersion` is
