@@ -6,9 +6,12 @@
  * version, it carries exactly those three tokens and nothing else unresolved, filling the region and
  * the trust account reproduces the set the generator resolves for that region, and the filled set is
  * still the fourth channel the parity gate compares — so what the portal hands a customer is what
- * the gate approved.
+ * the gate approved. The last spec holds the writer itself to refusing a set with no external-ID
+ * token, because nothing after it can take a set back out of a write-once store.
  */
+import { spawnSync } from 'child_process'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
@@ -28,6 +31,9 @@ const REGION = 'eu-central-1'
 const TRUST_ACCOUNT = '034444869755'
 const EXTERNAL_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'
 const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-gateway-role-show.json')
+const V2_TEMPLATE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/gateway-role-v2-template.json')
+const WRITER = path.join(REPO_ROOT, 'scripts/console-instructions-publish.ts')
+const TS_NODE = path.join(REPO_ROOT, 'node_modules/ts-node/dist/bin.js')
 
 const publishedSetText = (): string =>
   fs.readFileSync(path.join(path.dirname(publishedTemplatePath(CONSTRUCT)), 'console-instructions.json'), 'utf8')
@@ -88,4 +94,28 @@ describe('published console instruction set — the artifact the portal serves',
     const trustDivergence = divergent.divergences.find((d) => d.tier === 'value' && d.detail.includes('role-trust-account'))
     expect(trustDivergence?.channels).toEqual(['console'])
   })
+})
+
+describe('published console instruction set — the writer', () => {
+  // The publish job uploads before it verifies and the store is write-once, so the writer is the last
+  // check before a set is stored for good. 2.0.0 is an input the generator accepts, and its set carries
+  // no external-ID token.
+  it('refuses to write a set that carries no external-ID token, and leaves no file behind', () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-instructions-'))
+    const outPath = path.join(outDir, 'console-instructions.json')
+    try {
+      // The real script, with the flags synth-launchstack.sh runs it with.
+      const run = spawnSync(
+        process.execPath,
+        [TS_NODE, '-r', 'tsconfig-paths/register', '--prefer-ts-exts', WRITER, V2_TEMPLATE, '2.0.0', outPath],
+        { cwd: REPO_ROOT, encoding: 'utf8' },
+      )
+
+      expect(run.status).toBeGreaterThan(0)
+      expect(run.stderr).toContain(`carries no ${EXTERNAL_ID_TOKEN} token`)
+      expect(fs.existsSync(outPath)).toBe(false)
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true })
+    }
+  }, 60000)
 })
