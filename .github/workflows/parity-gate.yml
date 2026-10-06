@@ -18,6 +18,8 @@ on:
       - 'dist/launchstack/**'
       - 'test/**'
       - 'jest.config.js'
+      - 'check-gateway-role-module.sh'
+      - 'test-check-gateway-role-module.sh'
       - '.github/workflows/parity-gate.yml'
   push:
     branches:
@@ -85,75 +87,25 @@ jobs:
           terraform fmt -check
           terraform validate
 
-      # Engine-level no-widen proof: a wildcard trust target must be refused by the module's own
-      # variable validation, not merely by a JS-side polarity guard. The step passes only when the
-      # plan fails for that reason.
-      - name: terraform rejects a trust-widening value
-        working-directory: terraform/apiable-gateway-role
+      # Engine-level proof on the gateway-role module, by the one script the publish job also runs
+      # before it archives the module: a wildcard trust target, and an external ID that is missing,
+      # blank, a wildcard or a list, are each refused by the module's own validation, and the
+      # committed `terraform show -json` fixture still reduces to a fresh plan of the module (by
+      # meaning, not a byte diff). The plans call no cloud account; the placeholder keys are there
+      # because the provider wants keys to be present.
+      - name: terraform engine checks (gateway-role module)
         env:
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
-        run: |
-          if terraform plan -input=false -var region=${{ env.AWS_REGION }} -var external_id=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d -var trust_account='*' 2>plan-err.log; then
-            echo "expected the wildcard trust_account to be rejected, but the plan succeeded"
-            exit 1
-          fi
-          grep -q '12-digit' plan-err.log
+        run: bash check-gateway-role-module.sh terraform/apiable-gateway-role
 
-      # Engine-level proof that the external ID is required and cannot be widened: with no value the
-      # plan must stop on the missing variable, and a blank, a wildcard and a list must each be refused
-      # by the module's own variable validation. Each case passes only when the plan fails for that
-      # reason; the diagnostics are folded as in the guardrail's no-widen step below, so each assertion
-      # is a whole phrase.
-      - name: terraform rejects a missing, blank, wildcard or list external_id
-        working-directory: terraform/apiable-gateway-role
+      # That script is worth what it refuses: it has to pass on the module as committed and fail on
+      # each changed copy of it the test makes, at the check that is there for that change.
+      - name: the engine checks fail on a changed gateway-role module
         env:
           AWS_ACCESS_KEY_ID: testing
           AWS_SECRET_ACCESS_KEY: testing
-        run: |
-          refused_for() {
-            sed 's/^[^[:alnum:]]*//' plan-err.log | tr '\n' ' ' | tr -s ' ' | grep -q "$1"
-          }
-          if terraform plan -input=false -no-color -var region=${{ env.AWS_REGION }} 2>plan-err.log; then
-            echo "expected a plan with no external_id to be refused, but it succeeded"
-            exit 1
-          fi
-          if ! refused_for 'No value for required variable'; then
-            echo "the plan with no external_id failed, but not for the missing variable"; cat plan-err.log; exit 1;
-          fi
-          for bad in '' '*' 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d,f6e5d4c3-b2a1-4c8d-9e0f-5d4c3b2a1f0e'; do
-            if terraform plan -input=false -no-color -var region=${{ env.AWS_REGION }} -var "external_id=${bad}" 2>plan-err.log; then
-              echo "expected external_id='${bad}' to be rejected, but the plan succeeded"
-              exit 1
-            fi
-            if ! refused_for 'lowercase version 4 UUID'; then
-              echo "external_id='${bad}' was rejected but not by the UUID validation"; cat plan-err.log; exit 1;
-            fi
-          done
-
-      # F1 — ground-truth the Terraform leg: regenerate `terraform show -json` from a fresh plan and
-      # assert it reduces to the SAME parity model as the committed fixture (by meaning, not a byte
-      # diff). A credential-less plan needs the provider's configure-time validation skipped, injected
-      # here as a CI-only override so the committed module stays clean; the harness fails the gate if
-      # the committed fixture has drifted from the fresh plan.
-      - name: terraform regen ground-truths the committed fixture (gateway-role)
-        working-directory: terraform/apiable-gateway-role
-        env:
-          AWS_ACCESS_KEY_ID: testing
-          AWS_SECRET_ACCESS_KEY: testing
-        run: |
-          cat > ci_provider_override.tf <<'EOF'
-          provider "aws" {
-            region                      = "eu-central-1"
-            skip_credentials_validation = true
-            skip_requesting_account_id  = true
-            skip_metadata_api_check     = true
-          }
-          EOF
-          terraform plan -input=false -refresh=false -var region=${{ env.AWS_REGION }} -var trust_account=034444869755 -var external_id=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d -out=tfplan.bin
-          terraform show -json tfplan.bin > tf-show.json
-          rm -f ci_provider_override.tf tfplan.bin
-          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-gateway-role-show.json ${{ env.AWS_REGION }}
+        run: bash test-check-gateway-role-module.sh
 
       - name: terraform validate (logs-bucket module)
         working-directory: terraform/apiable-logs-bucket
