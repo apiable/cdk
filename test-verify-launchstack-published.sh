@@ -264,7 +264,11 @@ check_message "the verifier stops when the generator cannot be asked which versi
 # recording npx, first on the path, writes down the environment it is given and hands the question to
 # the real one, so the tree of the first case here has to verify clean again. Every stand-in value
 # carries one marker, so a value that reached the question under any name is found.
+# The names in the recording are held to a list, both ways: the four the verifier gives the question,
+# and the three the recording npx's own shell has set by the time it writes them down. PWD, SHLVL and
+# _ are those three under bash 3.2 on macOS and under bash 5.2 on Linux alike.
 GENERATOR_ENV="${SCRATCH}/generator-env.txt"
+GENERATOR_NAMES="$(printf '%s\n' PATH HOME SET_VERSIONS npm_config_update_notifier PWD SHLVL _)"
 mkdir "${SCRATCH}/recording-npx"
 cat > "${SCRATCH}/recording-npx/npx" <<EOF
 #!/usr/bin/env bash
@@ -281,6 +285,14 @@ asks_the_generator_with_no_credential() {
   grep -q '^SET_VERSIONS=' "${GENERATOR_ENV}" || { echo "the question did not reach the recording npx with its versions"; return 1; }
   if grep -F 'stand-in' "${GENERATOR_ENV}"; then
     echo "the question was asked with the values above in its environment"
+    return 1
+  fi
+  local recorded outside missing
+  recorded="$(sed 's/=.*//' "${GENERATOR_ENV}")"
+  outside="$(grep -vxF -f <(echo "${GENERATOR_NAMES}") <<< "${recorded}" | paste -sd ' ' -)"
+  missing="$(grep -vxF -f <(echo "${recorded}") <<< "${GENERATOR_NAMES}" | paste -sd ' ' -)"
+  if [[ -n "${outside}${missing}" ]]; then
+    echo "the question was asked under names outside its list: ${outside:-none}; names of the list it was not given: ${missing:-none}"
     return 1
   fi
   grep -qx 'npm_config_update_notifier=false' "${GENERATOR_ENV}" || { echo "the question was asked without the npm setting"; return 1; }
