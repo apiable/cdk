@@ -4,12 +4,12 @@
 If it is the first time running CDK on AWS, then you need to install the CDK toolkit following the instructions here: [https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html](https://docs.aws.amazon.com/cdk/v2/guide/getting_started.html)
 
 ## Gateway Management Role installation
-Create the role from the setup instructions your API Portal shows. This repository's gateway role script is not a way to create the role.
+Create the role from the setup instructions your API Portal shows. This repository has no script that creates it.
 
 > **Existing `gatewayrole` stacks:** do not re-deploy an existing stack with this code. The IAM role name is unchanged and the already-provisioned role keeps working as-is; the restructured template gives the role a new logical id, so an in-place re-deploy collides on the unchanged role name (`EntityAlreadyExists`). Provision new tenants via the one-click `apiable-gateway-role` stack instead.
 
 ### Get the Role Arn
-You can find the role arn in the output of the stack.
+The role's ARN is an output of the stack or Terraform module that created it. For a role created by hand, copy it from the role's page in IAM.
 
 ## AuthZ Gateway Authorizer installation
 ### Export the paramaters
