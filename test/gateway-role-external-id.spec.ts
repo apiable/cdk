@@ -236,14 +236,6 @@ describe('gateway role — every channel requires the external ID', () => {
     expect(publishedSetText().split(EXTERNAL_ID_TOKEN)).toHaveLength(2)
   })
 
-  it('the Launch Stack link pre-fills the parameter the published template declares', () => {
-    const url = new URL(generateLaunchStackUrl({ tenantId: 't-1', roleTrustTarget: DEFAULT_APIABLE_TRUST_ACCOUNT, externalId: ISSUED_ID, region: REGION, version: currentVersion() }))
-    const prefilled = [...new URLSearchParams(url.hash.split('?')[1]).keys()].filter((key) => key.startsWith('param_')).map((key) => key.slice('param_'.length))
-
-    expect(prefilled).toContain(EXTERNAL_ID_PARAMETER)
-    for (const parameter of prefilled) expect(cfnParameters(publishedYaml())).toHaveProperty(parameter)
-  })
-
   it('all four channels reduce the parameter to one named value and the parity gate passes', () => {
     const models = fourChannels()
     const result = gate(models)
@@ -412,6 +404,24 @@ describe('gateway role — the versions published before the external ID keep th
       expect(isPublishedVersion(version, currentVersion())).toBe(true)
       expect(currentVersion()).not.toBe(version)
     }
+  })
+})
+
+describe('gateway role — the Launch Stack link of every published version fits the template it launches', () => {
+  const everyPublishedVersion: readonly (readonly [string, () => unknown])[] = [
+    ...SUPERSEDED.map(([version, fixture]) => [version, () => supersededTemplate(fixture)] as const),
+    [currentVersion(), publishedYaml],
+  ]
+
+  it.each(everyPublishedVersion)('the %s link pre-fills only parameters its template declares, and every one that has no default', (version, template) => {
+    const declared = cfnParameters(template())
+    const externalId = EXTERNAL_ID_PARAMETER in declared ? ISSUED_ID : undefined
+    const url = new URL(generateLaunchStackUrl({ tenantId: 't-1', roleTrustTarget: DEFAULT_APIABLE_TRUST_ACCOUNT, externalId, region: REGION, version }))
+    const prefilled = [...new URLSearchParams(url.hash.split('?')[1]).keys()].filter((key) => key.startsWith('param_')).map((key) => key.slice('param_'.length))
+    const withoutDefault = Object.keys(declared).filter((parameter) => asRecord(declared[parameter]).Default === undefined)
+
+    for (const parameter of prefilled) expect(declared).toHaveProperty(parameter)
+    for (const parameter of withoutDefault) expect(prefilled).toContain(parameter)
   })
 })
 
