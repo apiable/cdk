@@ -5,6 +5,7 @@
  * the hand-build console instruction set — against the artifact each channel ships, and hold the
  * versions published before the ID to the trust they shipped with.
  */
+import { spawnSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as yaml from 'js-yaml'
@@ -94,6 +95,16 @@ const moduleResource = (type: string): HclBlock => moduleBlock('resource', type)
 const moduleVariable = (name: string): HclBlock => moduleBlock('variable', name)
 const v2PublishedSet = (): unknown => readJson(path.join(FIXTURES, 'gateway-role-v2-console-instructions.json'))
 const publishedSetText = (): string => fs.readFileSync(path.join(publishedDir(), 'console-instructions.json'), 'utf8')
+/** The entries of the module archive the synth wrote, listed the way verify-launchstack-published.sh lists one. */
+const publishedModuleEntries = (): string[] => {
+  const archive = path.join(publishedDir(), 'terraform.zip')
+  const listing = spawnSync('unzip', ['-Z1', archive], { encoding: 'utf8' })
+  if (listing.status !== 0) throw new Error(`could not list ${path.relative(REPO_ROOT, archive)}: ${listing.error?.message ?? listing.stderr.trim()}`)
+  return listing.stdout
+    .split('\n')
+    .filter((entry) => entry !== '')
+    .sort()
+}
 
 /** The published set with the region and the trust account filled as the portal fills them. The
  * external ID stays the token: it is a deploy-time input in every channel, with no default to fill. */
@@ -505,8 +516,6 @@ describe('gateway role — the current version adds the condition and nothing el
     const blocks = moduleBlocks()
     const role = moduleResource('aws_iam_role')
 
-    // Terraform would load a .tf.json file, and the blocks above are read from the .tf files only.
-    expect(fs.readdirSync(MODULE_DIR).filter((file) => file.endsWith('.tf.json'))).toEqual([])
     expect(blocks.map((block) => block.type)).not.toContain('module')
     expect(blocks.filter((block) => block.type === 'resource').map((block) => block.labels)).toEqual([
       ['aws_iam_role', 'this'],
@@ -515,6 +524,12 @@ describe('gateway role — the current version adds the condition and nothing el
     expect(Object.keys(role.attributes).sort()).toEqual(['assume_role_policy', 'description', 'name', 'tags'])
     expect(role.blocks).toEqual([])
     expect(moduleResource('aws_iam_role_policy').attributes.role).toStrictEqual(new HclRef('aws_iam_role.this.id'))
+  })
+
+  // The archive is every tracked file of the module directory, and the engines load more from one than
+  // the `.tf` files these specs read: a `.tf.json` file, and for OpenTofu a `.tofu` file.
+  it('the published Terraform archive carries exactly the five files of the module', () => {
+    expect(publishedModuleEntries()).toEqual(['README.md', 'main.tf', 'outputs.tf', 'variables.tf', 'versions.tf'])
   })
 
   it('the Terraform module grants the permissions of 2.0.0, statement for statement', () => {
