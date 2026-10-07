@@ -260,6 +260,33 @@ check_message "the verifier stops when the generator cannot be asked which versi
   "could not ask the generator which versions take the external ID" \
   verify_two_with_no_generator
 
+# The question is asked with no cloud credential in its environment, wherever the verifier runs. A
+# recording npx, first on the path, writes down the environment it is given and hands the question to
+# the real one, so the tree of the first case here has to verify clean again. Every stand-in value
+# carries one marker, so a value that reached the question under any name is found.
+GENERATOR_ENV="${SCRATCH}/generator-env.txt"
+mkdir "${SCRATCH}/recording-npx"
+cat > "${SCRATCH}/recording-npx/npx" <<EOF
+#!/usr/bin/env bash
+env > "${GENERATOR_ENV}"
+exec "$(command -v npx)" "\$@"
+EOF
+chmod +x "${SCRATCH}/recording-npx/npx"
+publish_two "${SCRATCH}/set-current.json" "${CURRENT_VERSION}"
+asks_the_generator_with_no_credential() {
+  env PATH="${SCRATCH}/recording-npx:${PATH}" \
+    AWS_ACCESS_KEY_ID=stand-in-key-id AWS_SECRET_ACCESS_KEY=stand-in-secret-key AWS_SESSION_TOKEN=stand-in-session-token \
+    STORE_PUBLISHER_TOKEN=stand-in-of-another-name \
+    SRC_DIR="${TWO_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh || return 1
+  grep -q '^SET_VERSIONS=' "${GENERATOR_ENV}" || { echo "the question did not reach the recording npx with its versions"; return 1; }
+  if grep -F 'stand-in' "${GENERATOR_ENV}"; then
+    echo "the question was asked with the values above in its environment"
+    return 1
+  fi
+  grep -qx 'npm_config_update_notifier=false' "${GENERATOR_ENV}" || { echo "the question was asked without the npm setting"; return 1; }
+}
+check "the generator is asked in an environment of its own, with none of the credentials the verifier runs with" 0 asks_the_generator_with_no_credential
+
 echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
 printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
 refuses_artifact template.yaml "a template with no Resources fails closed" \

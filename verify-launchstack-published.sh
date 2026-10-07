@@ -55,6 +55,9 @@ fi
 
 # Which versions take the external ID is the generator's rule, so the generator is asked: once, for the
 # version of every instruction set in this run. No list of versions lives in this script.
+# The question gets an environment of its own: the path, the home directory and the versions, and no
+# cloud credential, wherever this script runs. npm cannot tell there that it is in CI, so it is told
+# not to look for a newer version of itself.
 SET_VERSIONS=""
 for src in "${ARTIFACTS[@]}"; do
   if [[ "${src}" == */console-instructions.json ]]; then
@@ -64,7 +67,8 @@ for src in "${ARTIFACTS[@]}"; do
 done
 VERSIONS_TAKING_EXTERNAL_ID=""
 if [[ -n "${SET_VERSIONS}" ]]; then
-  if ! VERSIONS_TAKING_EXTERNAL_ID=$(SET_VERSIONS="${SET_VERSIONS}" npx ts-node --transpile-only -r tsconfig-paths/register --prefer-ts-exts -e "
+  if ! VERSIONS_TAKING_EXTERNAL_ID=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
+    npx ts-node --transpile-only -r tsconfig-paths/register --prefer-ts-exts -e "
       import { requiresExternalId } from './lib/gateway-role/console-instructions'
       for (const version of (process.env.SET_VERSIONS ?? '').split(' ').filter(Boolean)) {
         if (requiresExternalId(version)) console.log(version)
