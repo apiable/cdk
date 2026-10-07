@@ -53,6 +53,32 @@ if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
   exit 1
 fi
 
+# Which versions take the external ID is the generator's rule, so the generator is asked: once, for the
+# version of every instruction set in this run. No list of versions lives in this script.
+# The question gets an environment of its own: the path, the home directory and the versions, and no
+# cloud credential, wherever this script runs. npm cannot tell there that it is in CI, so it is told
+# not to look for a newer version of itself.
+SET_VERSIONS=""
+for src in "${ARTIFACTS[@]}"; do
+  if [[ "${src}" == */console-instructions.json ]]; then
+    version_dir="${src%/console-instructions.json}"
+    SET_VERSIONS="${SET_VERSIONS} ${version_dir##*/}"
+  fi
+done
+VERSIONS_TAKING_EXTERNAL_ID=""
+if [[ -n "${SET_VERSIONS}" ]]; then
+  if ! VERSIONS_TAKING_EXTERNAL_ID=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
+    npx ts-node --transpile-only -r tsconfig-paths/register --prefer-ts-exts -e "
+      import { requiresExternalId } from './lib/gateway-role/console-instructions'
+      for (const version of (process.env.SET_VERSIONS ?? '').split(' ').filter(Boolean)) {
+        if (requiresExternalId(version)) console.log(version)
+      }
+    "); then
+    echo "could not ask the generator which versions take the external ID — the instruction sets cannot be verified" >&2
+    exit 1
+  fi
+fi
+
 echo "verifying ${#ARTIFACTS[@]} published artifacts against ${TEMPLATE_STORE_HOST}"
 
 failures=0
@@ -116,9 +142,14 @@ is_wellformed_module_zip() {
 }
 
 # The portal serves an instruction set only when its construct and version equal the key it fetched it
-# at and the two tokens it fills are present; the same shape check runs here so a mislabelled or
-# already-resolved file never reaches the store. $2 is the artifact's key.
+# at and the tokens it fills are present; the same shape check runs here so a mislabelled or
+# already-resolved file never reaches the store. The region and the trust account are tokens in every
+# set. The external ID is a token in a set exactly when its version takes one. $2 is the artifact's key.
 is_wellformed_instructions() {
+  local version="${2#*/}"
+  version="${version%%/*}"
+  local takes_external_id="false"
+  grep -qxF -- "${version}" <<< "${VERSIONS_TAKING_EXTERNAL_ID}" && takes_external_id="true"
   if ! parse_error=$(node -e "
     const fs = require('fs');
     try {
@@ -139,11 +170,18 @@ is_wellformed_instructions() {
       for (const token of ['{region}', '{trust-account}']) {
         if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
       }
+      const takesExternalId = process.argv[3] === 'true';
+      if (takesExternalId && !text.includes('{external-id}')) {
+        throw new Error('carries no {external-id} token for the portal to fill');
+      }
+      if (!takesExternalId && text.includes('{external-id}')) {
+        throw new Error('carries an {external-id} token, and its version takes no external ID');
+      }
     } catch (e) {
       console.error(String(e.message).split('\n')[0]);
       process.exit(1);
     }
-  " "$1" "$2" 2>&1); then
+  " "$1" "$2" "${takes_external_id}" 2>&1); then
     return 1
   fi
 }

@@ -3,6 +3,7 @@ import { CfnOutput, CfnParameter } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as iam from 'aws-cdk-lib/aws-iam'
 import { publishOutputs } from '@apiable/cdk-ssm-composition'
+import { EXTERNAL_ID_PARAMETER } from '../parity-gate/canonical'
 import {
   ACCOUNT_ID_PATTERN,
   ACCOUNT_ID_PATTERN_SOURCE,
@@ -11,6 +12,7 @@ import {
   CONSTRUCT_NAME,
   DEFAULT_APIABLE_EGRESS_CIDR,
   DEFAULT_APIABLE_TRUST_ACCOUNT,
+  EXTERNAL_ID_PATTERN_SOURCE,
 } from './launch-stack-url'
 
 /** Logical id of the trust-account parameter; the launch-stack URL pre-fills `param_<this>`. */
@@ -18,6 +20,9 @@ export const TRUST_ACCOUNT_PARAMETER = 'ApiableTrustAccount'
 
 /** Logical id of the egress-CIDR parameter; the launch-stack URL pre-fills `param_<this>`. */
 export const EGRESS_CIDR_PARAMETER = 'ApiableEgressCidr'
+
+/** Logical id of the external-ID parameter; the launch-stack URL pre-fills `param_<this>`. */
+export { EXTERNAL_ID_PARAMETER }
 
 /** Kebab kit-component segment this construct publishes its outputs under. */
 export const GATEWAY_ROLE_COMPONENT = 'gateway-role'
@@ -33,7 +38,7 @@ export const GATEWAY_ROLE_LOGICAL_ID = 'apiable-gateway-role'
 export interface GatewayRoleProps {
   /**
    * AWS account authorised to assume the gateway-management role. Omitting it defaults to
-   * Apiable's account, reproducing the role existing customers already run.
+   * Apiable's account.
    */
   readonly trustAccount?: string
   /**
@@ -66,6 +71,7 @@ export class GatewayRole extends Construct {
   public readonly role: iam.Role
   public readonly trustAccountParameter: CfnParameter
   public readonly egressCidrParameter: CfnParameter
+  public readonly externalIdParameter: CfnParameter
   public readonly roleArnOutput: CfnOutput
 
   constructor(scope: Construct, id: string, props: GatewayRoleProps = {}) {
@@ -103,10 +109,20 @@ export class GatewayRole extends Construct {
     })
     this.egressCidrParameter.overrideLogicalId(EGRESS_CIDR_PARAMETER)
 
+    // No default: the ID is each API Portal's own, so there is no value to default to.
+    this.externalIdParameter = new CfnParameter(this, EXTERNAL_ID_PARAMETER, {
+      type: 'String',
+      allowedPattern: EXTERNAL_ID_PATTERN_SOURCE,
+      description: 'External ID your API Portal shows; the role refuses every request to assume it that does not carry this ID',
+      constraintDescription: 'must be the External ID your API Portal shows, a lowercase version 4 UUID',
+    })
+    this.externalIdParameter.overrideLogicalId(EXTERNAL_ID_PARAMETER)
+
     const name = `apiable-gateway-management-role-${region}`
 
     this.role = new iam.Role(this, 'GatewayManagementRole', {
       assumedBy: new iam.AccountPrincipal(this.trustAccountParameter.valueAsString),
+      externalIds: [this.externalIdParameter.valueAsString],
       roleName: name,
       description: 'Role for Apiable to manage the API Gateway',
     })

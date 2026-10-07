@@ -51,13 +51,13 @@ const PRINCIPAL_KEYS = ['AWS', 'Service', 'Federated'] as const
  * (a condition that pins an external account is load-bearing). Keys and operators are sorted so the
  * same condition signs alike whatever order a channel emits it in; an absent condition is undefined.
  */
-const conditionOf = (condition: unknown, resolve: (v: unknown) => string): string | undefined => {
+const conditionOf = (condition: unknown, resolveOperand: (operand: unknown) => string): string | undefined => {
   if (!isRecord(condition)) return undefined
   const operators = Object.keys(condition).sort()
   const canonical = operators.map((operator) => {
     const operands = asRecord(condition[operator])
     const keys = Object.keys(operands).sort()
-    const pairs = keys.map((key) => [key, [...toList(operands[key])].map(resolve).sort()] as const)
+    const pairs = keys.map((key) => [key, [...toList(operands[key])].map(resolveOperand).sort()] as const)
     return [operator, pairs] as const
   })
   return canonical.length > 0 ? JSON.stringify(canonical) : undefined
@@ -76,6 +76,9 @@ const identityResource = (resource: string): string => resource
  * and false-diverges; with it both sides reduce to the one canonical node ref. It defaults to the
  * identity so a grant on an external/literal ARN (the gateway-role pilot's apigateway resource) is
  * left exactly as resolved.
+ *
+ * `resolveConditionOperand` reduces a condition operand that IS a declared deploy-time parameter to
+ * that parameter's channel-stable token. It defaults to `resolve`, which leaves every operand by value.
  */
 export const grantsFromPolicyDocument = (
   doc: unknown,
@@ -83,6 +86,7 @@ export const grantsFromPolicyDocument = (
   region: string | undefined,
   kind: 'trust' | 'inline',
   canonicaliseResource: (resource: string) => string = identityResource,
+  resolveConditionOperand: (operand: unknown) => string = resolve,
 ): PermissionGrant[] =>
   asArray(asRecord(doc).Statement).map((stmtUnknown) => {
     const statement = asRecord(stmtUnknown)
@@ -90,7 +94,7 @@ export const grantsFromPolicyDocument = (
     const resources = [...new Set(toList(statement.Resource).map((r) => canonicaliseResource(normaliseLogical(resolve(r), region))))].sort()
     const effect = asString(statement.Effect) ?? 'Allow'
     const principal = principalOf(statement.Principal, resolve, region)
-    const condition = conditionOf(statement.Condition, resolve)
+    const condition = conditionOf(statement.Condition, resolveConditionOperand)
     const ref = kind === 'trust' ? 'grant:assume-role' : `grant:${policyServices(actions)}`
     return { ref, effect, actions, resources, principal, condition }
   })

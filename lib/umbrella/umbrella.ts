@@ -100,6 +100,7 @@ export const umbrellaStackName = {
 /** Resource-name token the firehose stack scopes its physical names by (e.g. `usagelogs-staging`). */
 const logsStreamResourceName = (variant: LogsStreamVariant, suffix: string): string => `${variant}-${suffix}`
 
+/** Synthesized by the specs and deployed by no script. A deploy passes the external ID as a CloudFormation parameter. */
 export const buildGatewayRoleStack = (app: cdk.App, config: GatewayRoleConfig): cdk.Stack =>
   new GatewayRoleStack(app, 'GatewayRole', {
     stackName: umbrellaStackName.gatewayrole(),

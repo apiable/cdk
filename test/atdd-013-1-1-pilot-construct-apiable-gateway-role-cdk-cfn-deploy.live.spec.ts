@@ -7,14 +7,18 @@
  * name (see jest.config.js) and runs only via `npm run test:live`.
  *
  * Manual hand-off (AC4): a human exports credentials for the sandbox account, runs
- *   RUN_LIVE_DEPLOY=1 AWS_REGION=<region> npm run test:live
- * then follows the generated launch link, confirms creation, and checks the role ARN.
+ *   RUN_LIVE_DEPLOY=1 AWS_REGION=<region> APIABLE_EXTERNAL_ID=<the sandbox portal's ID> npm run test:live
+ * then follows the generated launch link and verifies four things: the stack asks for the External
+ * ID, it refuses a value that is not one lowercase version 4 UUID, creation succeeds, and the role
+ * has the expected ARN and a trust that requires that External ID.
+ * The link is for the package's current version unless LAUNCHSTACK_VERSION names another.
  * Without RUN_LIVE_DEPLOY this spec is a documented no-op.
  */
 import {
   generateLaunchStackUrl,
   DEFAULT_APIABLE_TRUST_ACCOUNT,
 } from '@apiable/cdk-gateway-role'
+import { publishedVersion } from './support/published-template'
 
 const runLiveDeploy = Boolean(process.env.RUN_LIVE_DEPLOY)
 
@@ -23,19 +27,28 @@ describe('gateway-management role — live deploy contract', () => {
   it('S4: deploying via the generated link provisions the role and returns the expected identifier', () => {
     const region = process.env.AWS_REGION ?? 'eu-central-1'
     const roleTrustTarget = process.env.APIABLE_TRUST_ACCOUNT ?? DEFAULT_APIABLE_TRUST_ACCOUNT
+    const externalId = process.env.APIABLE_EXTERNAL_ID
+    if (externalId === undefined) {
+      // The ID is the sandbox portal's own and has no default, so there is no link to hand off without it.
+      // eslint-disable-next-line no-console
+      console.log('manual hand-off: set APIABLE_EXTERNAL_ID to the External ID the sandbox API Portal shows, then run again')
+      return
+    }
     const url = generateLaunchStackUrl({
       tenantId: process.env.TENANT_ID ?? 'sandbox-tenant',
       roleTrustTarget,
+      externalId,
       region,
-      version: process.env.LAUNCHSTACK_VERSION ?? '1.0.0',
+      version: process.env.LAUNCHSTACK_VERSION ?? publishedVersion('apiable-gateway-role'),
     })
 
     if (!runLiveDeploy) {
       // Documented manual hand-off: the operator follows the link and verifies the ARN by hand.
       // eslint-disable-next-line no-console
       console.log(
-        `[S4 manual hand-off] open ${url}, confirm stack creation (~90s), then verify the role ARN ` +
-          `ends in :role/apiable-gateway-management-role-${region}`,
+        `[S4 manual hand-off] open ${url}, confirm the stack asks for the External ID and refuses a value that is ` +
+          `not one lowercase version 4 UUID, confirm stack creation (~90s), then verify the role ARN ends in ` +
+          `:role/apiable-gateway-management-role-${region} and that its trust requires that External ID`,
       )
       return
     }

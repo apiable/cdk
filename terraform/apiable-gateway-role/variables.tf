@@ -28,3 +28,15 @@ variable "egress_cidr" {
     error_message = "egress_cidr must be one IPv4 CIDR block, for example 203.0.113.4/32."
   }
 }
+
+variable "external_id" {
+  description = "External ID your API Portal shows; the role refuses every request to assume it that does not carry this ID"
+  type        = string
+
+  # No default: the ID is each API Portal's own, so there is no value to default to.
+  # One UUID only, so a wildcard or a list cannot widen it.
+  validation {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", var.external_id))
+    error_message = "external_id must be the External ID your API Portal shows, a lowercase version 4 UUID."
+  }
+}

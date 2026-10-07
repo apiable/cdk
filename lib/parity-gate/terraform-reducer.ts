@@ -40,6 +40,9 @@ import {
   DECLARED_ID_TAG,
   discriminatorOf,
   ENFORCED_DECLARED_ID_KINDS,
+  EXTERNAL_ID_TOKEN,
+  EXTERNAL_ID_VAR_KEY,
+  EXTERNAL_ID_VAR_REFERENCE,
   LOGS_BUCKET_VAR_REFERENCE,
   missingDeclaredId,
   nodeRef,
@@ -403,6 +406,13 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   // `variables` block — the deploy input itself, the trustworthy anchor a hosted-UI domain is checked
   // against (a resource attribute carrying it could be desynced by the author; the deploy input cannot be).
   const tenantInput = asString(asRecord(asRecord(root.variables)[TENANT_NAME_VAR_KEY]).value)
+  // The planned value of `var.external_id`, read from the same block for the same reason. It stands for
+  // the required input only while it is not blank and the configuration gives the variable no default,
+  // as the CloudFormation parameter does only while it has none.
+  const externalIdInput = asString(asRecord(asRecord(root.variables)[EXTERNAL_ID_VAR_KEY]).value)
+  const externalIdDeclaration = asRecord(asRecord(asRecord(asRecord(root.configuration).root_module).variables)[EXTERNAL_ID_VAR_KEY])
+  const requiredExternalId =
+    externalIdInput !== undefined && externalIdInput !== '' && !('default' in externalIdDeclaration) ? externalIdInput : undefined
 
   const resources: TfResource[] = plannedResources
     .map((entry) => asRecord(entry))
@@ -447,12 +457,17 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   // its concrete literal and hides the binding) — the witness that the stream's resolved destination
   // literal IS the deploy-time logs-bucket parameter and so reduces to the shared parameter token.
   const streamDestinationBoundToParam = new Set<string>()
+  // Roles whose trust references var.external_id: the witness that the planned ID IS that input.
+  const trustBoundToExternalIdVar = new Set<string>()
   for (const entry of configResources) {
     const record = asRecord(entry)
     const address = asString(record.address)
     if (address === undefined || !addresses.has(address)) continue
     const kind = kindByAddress.get(address)
     const expressions = asRecord(record.expressions)
+    if (kind === 'iam-role' && asStringArray(asRecord(expressions.assume_role_policy).references).includes(EXTERNAL_ID_VAR_REFERENCE)) {
+      trustBoundToExternalIdVar.add(address)
+    }
     if (kind === 'cognito-user-pool-client') {
       const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
       if (poolTarget !== undefined) poolRefByClientAddress.set(address, refToNode.get(poolTarget.address) ?? poolTarget.address)
@@ -625,10 +640,17 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     secrets.push(...collectSecrets(res.values))
     if (kind === 'iam-role') {
       const assumePolicy = parseJson(res.values.assume_role_policy)
+      // A trust condition operand equal to the planned var.external_id, on a trust that references that
+      // variable, reduces to the shared token. Any other literal — a hardcoded ID, or the planned ID on
+      // a trust that never references the variable — keeps its identity and diverges.
+      const resolveTrustConditionOperand =
+        requiredExternalId !== undefined && trustBoundToExternalIdVar.has(res.address)
+          ? (operand: unknown): string => (operand === requiredExternalId ? EXTERNAL_ID_TOKEN : tfResolve(operand))
+          : tfResolve
       // File each trust grant under the role's own node ref, mirroring the CloudFormation side, so two
       // roles' trusts never pool into one multiset where a cross-role swap nets out.
       grants.push(
-        ...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust', canonicaliseResource).map(
+        ...grantsFromPolicyDocument(assumePolicy, tfResolve, region, 'trust', canonicaliseResource, resolveTrustConditionOperand).map(
           (grant) => ({ ...grant, ref: `${grant.ref}:${ref}` }),
         ),
       )

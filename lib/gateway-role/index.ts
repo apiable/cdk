@@ -4,6 +4,7 @@ export {
   buildPublishedStack,
   TRUST_ACCOUNT_PARAMETER,
   EGRESS_CIDR_PARAMETER,
+  EXTERNAL_ID_PARAMETER,
   GATEWAY_ROLE_COMPONENT,
   GATEWAY_ROLE_LOGICAL_ID,
 } from './gateway-role'
@@ -13,6 +14,7 @@ export {
   generateConsoleInstructionTemplate,
   isPublishedVersion,
   TRUST_ACCOUNT_TOKEN,
+  EXTERNAL_ID_TOKEN,
 } from './console-instructions'
 export type { ConsoleInstructionSet, ResolvedPolicyDocument, ResolvedStatement } from './console-instructions'
 export {
@@ -24,6 +26,7 @@ export {
   ACCOUNT_ID_PATTERN_SOURCE,
   CIDR_PATTERN,
   CIDR_PATTERN_SOURCE,
+  EXTERNAL_ID_PATTERN_SOURCE,
   generateLaunchStackUrl,
   launchStackTemplateKey,
   launchStackTemplateS3Uri,

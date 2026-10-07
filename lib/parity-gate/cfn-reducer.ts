@@ -37,6 +37,8 @@ import {
   DECLARED_ID_TAG,
   discriminatorOf,
   ENFORCED_DECLARED_ID_KINDS,
+  EXTERNAL_ID_PARAMETER,
+  EXTERNAL_ID_TOKEN,
   LOGS_BUCKET_ARN_PARAMETER,
   missingDeclaredId,
   nodeRef,
@@ -381,6 +383,14 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
   }
   const resolve = makeResolver(parameters)
 
+  // A trust condition operand that is the declared external-ID parameter reduces to the shared token.
+  // It is read from the raw `Ref`, so a literal that merely spells the ref keeps its identity, and only
+  // while the parameter has no default: a defaulted one resolves to that default and diverges by value.
+  const externalIdParameter = asRecord(root.Parameters)[EXTERNAL_ID_PARAMETER]
+  const declaresRequiredExternalId = isRecord(externalIdParameter) && externalIdParameter.Default === undefined
+  const resolveTrustConditionOperand = (operand: unknown): string =>
+    declaresRequiredExternalId && asString(asRecord(operand).Ref) === EXTERNAL_ID_PARAMETER ? EXTERNAL_ID_TOKEN : resolve(operand)
+
   const resources: Record<string, CfnResource> = {}
   for (const [id, spec] of Object.entries(resourcesRecord)) {
     const type = asString(asRecord(spec).Type)
@@ -558,9 +568,14 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
       // File each trust grant under the role's own node ref: the trust ref is otherwise the constant
       // `grant:assume-role`, so two roles' trusts pool into one multiset and a cross-role swap nets out.
       grants.push(
-        ...grantsFromPolicyDocument(res.properties.AssumeRolePolicyDocument, resolve, region, 'trust', canonicaliseResource).map(
-          (grant) => ({ ...grant, ref: `${grant.ref}:${ref}` }),
-        ),
+        ...grantsFromPolicyDocument(
+          res.properties.AssumeRolePolicyDocument,
+          resolve,
+          region,
+          'trust',
+          canonicaliseResource,
+          resolveTrustConditionOperand,
+        ).map((grant) => ({ ...grant, ref: `${grant.ref}:${ref}` })),
       )
       const trustAccount = trustedAccountsOf(res.properties.AssumeRolePolicyDocument, resolve)
       if (trustAccount !== undefined) values[`role-trust-account:${ref}`] = trustAccount

@@ -50,9 +50,9 @@ with zipfile.ZipFile('${ARTIFACT_DIR}/terraform.zip', 'w') as zf:
     zf.writestr('variables.tf', 'variable \"region\" { type = string }\n')
 "
 # The shape the portal serves from: named construct + version, the three load-bearing fields, and the
-# two tokens the portal fills.
+# three tokens the portal fills.
 cat > "${ARTIFACT_DIR}/console-instructions.json" <<'JSON'
-{"construct":"apiable-test-construct","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
+{"construct":"apiable-test-construct","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":"arn:aws:iam::{trust-account}:root"},"Condition":{"StringEquals":{"sts:ExternalId":"{external-id}"}}}]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
 JSON
 for artifact in template.yaml authorizer.zip terraform.zip console-instructions.json; do
   cp "${ARTIFACT_DIR}/${artifact}" "${SERVE_DIR}/${artifact}"
@@ -194,9 +194,110 @@ refuses_artifact console-instructions.json "an instruction set missing a load-be
 sed 's/{region}/eu-west-1/g; s/{trust-account}/034444869755/g' "${GOOD_SET}" > "${SCRATCH}/set-resolved.json"
 refuses_artifact console-instructions.json "an instruction set with its tokens already resolved fails closed" \
   "carries no {region} token for the portal to fill" "${SCRATCH}/set-resolved.json"
+sed 's/{external-id}/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d/g' "${GOOD_SET}" > "${SCRATCH}/set-external-id-baked.json"
+refuses_artifact console-instructions.json "an instruction set with one portal's external ID baked in fails closed" \
+  "carries no {external-id} token for the portal to fill" "${SCRATCH}/set-external-id-baked.json"
 printf '{"construct": "apiable-test-construct",' > "${SCRATCH}/set-malformed.json"
 refuses_artifact console-instructions.json "an instruction set that is not JSON fails closed" \
   "not JSON" "${SCRATCH}/set-malformed.json"
+
+echo "=== a set is held to the tokens its own version takes: the published 2.0.0 set beside a current one ==="
+# 2.0.0 takes no external ID and stays published, so a store can hold its set beside a current one.
+# The 2.0.0 set is the published one, committed as a fixture; the current set is that set at the
+# package's version with the one trust condition the version adds.
+V2_SET="test/fixtures/parity-gate/gateway-role-v2-console-instructions.json"
+CURRENT_VERSION="$(node -p "require('./lib/gateway-role/package.json').version")"
+TWO_SRC="${SCRATCH}/two-versions/dist/launchstack"
+TWO_DIST="${TWO_SRC}/apiable-gateway-role"
+TWO_SERVED="${SCRATCH}/served/apiable-gateway-role"
+mkdir -p "${TWO_DIST}/2.0.0" "${TWO_DIST}/${CURRENT_VERSION}" "${TWO_SERVED}/2.0.0" "${TWO_SERVED}/${CURRENT_VERSION}"
+# Writes the 2.0.0 set to $2 as version $1; with a third argument, with the external-ID condition on its trust.
+set_at_version() {
+  python3 -c "
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc['version'] = sys.argv[2]
+if len(sys.argv) > 4:
+    doc['trustDocument']['Statement'][0]['Condition'] = {'StringEquals': {'sts:ExternalId': '{external-id}'}}
+json.dump(doc, open(sys.argv[3], 'w'))
+" "${V2_SET}" "$@"
+}
+publish_two() {
+  cp "$1" "${TWO_DIST}/$2/console-instructions.json"
+  cp "$1" "${TWO_SERVED}/$2/console-instructions.json"
+}
+verify_two() {
+  env SRC_DIR="${TWO_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+set_at_version "${CURRENT_VERSION}" "${SCRATCH}/set-current.json" with-token
+publish_two "${V2_SET}" 2.0.0
+publish_two "${SCRATCH}/set-current.json" "${CURRENT_VERSION}"
+check "the published 2.0.0 set beside a current set verifies clean" 0 verify_two
+
+set_at_version 2.0.0 "${SCRATCH}/set-v2-with-token.json" with-token
+publish_two "${SCRATCH}/set-v2-with-token.json" 2.0.0
+check_message "a 2.0.0 set that carries the external-ID token fails closed" 1 \
+  "apiable-gateway-role/2.0.0/console-instructions.json — local artifact is not a well-formed console instruction set: carries an {external-id} token, and its version takes no external ID" \
+  verify_two
+publish_two "${V2_SET}" 2.0.0
+
+set_at_version "${CURRENT_VERSION}" "${SCRATCH}/set-current-without-token.json"
+publish_two "${SCRATCH}/set-current-without-token.json" "${CURRENT_VERSION}"
+check_message "a current set without the external-ID token fails closed" 1 \
+  "apiable-gateway-role/${CURRENT_VERSION}/console-instructions.json — local artifact is not a well-formed console instruction set: carries no {external-id} token for the portal to fill" \
+  verify_two
+
+# The rule cannot be applied when the generator does not answer, so the verifier has to stop there.
+# The tree is the one the last case left, a current set without its token: a verifier that went on
+# with no answer would pass it.
+mkdir "${SCRATCH}/no-npx"
+printf '#!/usr/bin/env bash\nexit 1\n' > "${SCRATCH}/no-npx/npx"
+chmod +x "${SCRATCH}/no-npx/npx"
+verify_two_with_no_generator() {
+  env PATH="${SCRATCH}/no-npx:${PATH}" SRC_DIR="${TWO_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+check_message "the verifier stops when the generator cannot be asked which versions take the external ID" 1 \
+  "could not ask the generator which versions take the external ID" \
+  verify_two_with_no_generator
+
+# The question is asked with no cloud credential in its environment, wherever the verifier runs. A
+# recording npx, first on the path, writes down the environment it is given and hands the question to
+# the real one, so the tree of the first case here has to verify clean again. Every stand-in value
+# carries one marker, so a value that reached the question under any name is found.
+# The names in the recording are held to a list, both ways: the four the verifier gives the question,
+# and the three the recording npx's own shell has set by the time it writes them down. PWD, SHLVL and
+# _ are those three under bash 3.2 on macOS and under bash 5.2 on Linux alike.
+GENERATOR_ENV="${SCRATCH}/generator-env.txt"
+GENERATOR_NAMES="$(printf '%s\n' PATH HOME SET_VERSIONS npm_config_update_notifier PWD SHLVL _)"
+mkdir "${SCRATCH}/recording-npx"
+cat > "${SCRATCH}/recording-npx/npx" <<EOF
+#!/usr/bin/env bash
+env > "${GENERATOR_ENV}"
+exec "$(command -v npx)" "\$@"
+EOF
+chmod +x "${SCRATCH}/recording-npx/npx"
+publish_two "${SCRATCH}/set-current.json" "${CURRENT_VERSION}"
+asks_the_generator_with_no_credential() {
+  env PATH="${SCRATCH}/recording-npx:${PATH}" \
+    AWS_ACCESS_KEY_ID=stand-in-key-id AWS_SECRET_ACCESS_KEY=stand-in-secret-key AWS_SESSION_TOKEN=stand-in-session-token \
+    STORE_PUBLISHER_TOKEN=stand-in-of-another-name \
+    SRC_DIR="${TWO_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh || return 1
+  grep -q '^SET_VERSIONS=' "${GENERATOR_ENV}" || { echo "the question did not reach the recording npx with its versions"; return 1; }
+  if grep -F 'stand-in' "${GENERATOR_ENV}"; then
+    echo "the question was asked with the values above in its environment"
+    return 1
+  fi
+  local recorded outside missing
+  recorded="$(sed 's/=.*//' "${GENERATOR_ENV}")"
+  outside="$(grep -vxF -f <(echo "${GENERATOR_NAMES}") <<< "${recorded}" | paste -sd ' ' -)"
+  missing="$(grep -vxF -f <(echo "${recorded}") <<< "${GENERATOR_NAMES}" | paste -sd ' ' -)"
+  if [[ -n "${outside}${missing}" ]]; then
+    echo "the question was asked under names outside its list: ${outside:-none}; names of the list it was not given: ${missing:-none}"
+    return 1
+  fi
+  grep -qx 'npm_config_update_notifier=false' "${GENERATOR_ENV}" || { echo "the question was asked without the npm setting"; return 1; }
+}
+check "the generator is asked in an environment of its own, with none of the credentials the verifier runs with" 0 asks_the_generator_with_no_credential
 
 echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
 printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"

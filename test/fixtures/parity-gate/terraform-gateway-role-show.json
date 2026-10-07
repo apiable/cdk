@@ -1,6 +1,21 @@
 {
   "format_version": "1.2",
   "terraform_version": "1.8.5",
+  "_comment": "Reference `terraform show -json` for the apiable-gateway-role module, in the reduced shape its sibling fixtures share. It is a hand-maintained reference, not a raw capture: the module names no caller identity, so CI regenerates it from a fresh credential-less plan and asserts both reduce to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts. Plan vars: region=eu-central-1, trust_account=034444869755, external_id=a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d. The top-level variables block carries the planned external ID; the trust's sts:ExternalId condition reconciles with the other channels' parameter only when its value equals that input and the trust references var.external_id, so a hardcoded ID diverges.",
+  "variables": {
+    "egress_cidr": {
+      "value": "63.180.116.108/32"
+    },
+    "external_id": {
+      "value": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+    },
+    "region": {
+      "value": "eu-central-1"
+    },
+    "trust_account": {
+      "value": "034444869755"
+    }
+  },
   "planned_values": {
     "root_module": {
       "resources": [
@@ -18,7 +33,7 @@
             "tags_all": {
               "apiable:logical-id": "apiable-gateway-role"
             },
-            "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::034444869755:root\"},\"Action\":\"sts:AssumeRole\"}]}"
+            "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:AssumeRole\",\"Condition\":{\"StringEquals\":{\"sts:ExternalId\":\"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\"}},\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"arn:aws:iam::034444869755:root\"}}],\"Version\":\"2012-10-17\"}"
           }
         },
         {
@@ -42,6 +57,12 @@
           "type": "aws_iam_role",
           "name": "this",
           "expressions": {
+            "assume_role_policy": {
+              "references": [
+                "var.trust_account",
+                "var.external_id"
+              ]
+            },
             "name": {
               "references": [
                 "var.region"

@@ -111,6 +111,16 @@ jobs:
             terraform -chdir="${module}" validate
           done
 
+      # The synth step below archives the gateway role's module, and a published version is not
+      # replaced, so the module is held here, on the tree that is archived, to the engine checks the
+      # parity workflow runs on it. The placeholder keys are for this step alone: it calls no cloud
+      # account, and the job configures real credentials only after the synth.
+      - name: terraform engine checks (gateway-role module)
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: bash check-gateway-role-module.sh terraform/apiable-gateway-role
+
       - name: Synthesize published launch-stack templates
         run: bash synth-all-launchstack.sh
 
