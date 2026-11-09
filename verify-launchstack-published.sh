@@ -17,15 +17,12 @@
 # what publish-launchstack.sh uploads — the template.json twin beside a template is a local
 # parity-spec input and is deliberately not in the store.
 #
-# Earlier versions the portal still offers, which the pipeline does not build, are named in
-# launchstack-still-offered.json with each file's digest. Their bytes cannot be rebuilt, so each is
-# fetched and parsed like a built artifact and held to its committed digest instead; nothing here or
-# in publish-launchstack.sh ever uploads one.
+# Earlier versions the portal still offers but the pipeline no longer builds are listed in
+# launchstack-still-offered.json; their bytes cannot be rebuilt, so each is held to its committed
+# digest and never uploaded.
 #
-# Only when every artifact passed does this script write each verified construct version's
-# publish-check.json into dist/launchstack/, which the next publish-launchstack.sh uploads and the
-# next run of this script fetches back and checks against its address and its artifacts. The portal
-# serves an artifact only when that record covers it, so a run with any failure writes none.
+# The portal serves only what a publish-check.json covers, so records are written into dist/ only
+# when every artifact passed, and the next run fetches them back and checks them.
 #
 # Fetches carry no credentials: the CloudFormation console, `terraform init`, the portal and (for a
 # code artifact) the Lambda service provisioning in the customer's account all fetch

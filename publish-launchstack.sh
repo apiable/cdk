@@ -12,9 +12,8 @@
 # publish-check.json` under the bucket; a code artifact publishes alongside them at the same version
 # segment (launchStackCodeKey). dist/launchstack/ mirrors every key one-for-one.
 #
-# Only template.yaml, *.zip, console-instructions.json and publish-check.json are published. A
-# publish-check.json exists only after verify-launchstack-published.sh passed, so the pipeline runs
-# publish, verify, publish (the records alone), verify (the records fetched back). The template.json twin
+# Only template.yaml, *.zip, console-instructions.json and publish-check.json are published. Records
+# exist only after verify passes, hence publish, verify, publish, verify. The template.json twin
 # beside a template is an input to the parity specs, which read it locally; nothing fetches it over
 # HTTP, so it stays out of the public store.
 #
