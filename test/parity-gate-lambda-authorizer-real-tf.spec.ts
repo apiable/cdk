@@ -10,23 +10,21 @@
  * genuinely engine-compared.
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
-import { buildPublishedStack } from '@apiable/cdk-lambda-authorizer'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
-import { publishedTemplatePath } from './support/published-template'
+import { LAMBDA_AUTHORIZER } from './support/parity-channels'
 
-const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = publishedTemplatePath('apiable-lambda-authorizer')
-const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-lambda-authorizer-show.json')
-const TF_REGION = 'eu-central-1'
-const TF_DEPLOY_ACCOUNT = '111111111111'
+const PUBLISHED_CFN = LAMBDA_AUTHORIZER.publishedCfn
+const TF_FIXTURE = LAMBDA_AUTHORIZER.tfFixture
+const TF_REGION = LAMBDA_AUTHORIZER.tfRegion
+const CFN_REGION = LAMBDA_AUTHORIZER.cfnRegion
+const TF_DEPLOY_ACCOUNT = LAMBDA_AUTHORIZER.tfDeployAccount
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk', TF_REGION)
-const cfnModel = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn', TF_REGION)
+const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(LAMBDA_AUTHORIZER.buildCdk(new cdk.App())).toJSON(), 'cdk', CFN_REGION)
+const cfnModel = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn', CFN_REGION)
 const tfPlan = (): unknown => JSON.parse(fs.readFileSync(TF_FIXTURE, 'utf8'))
 const tfModel = (plan: unknown = tfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
 

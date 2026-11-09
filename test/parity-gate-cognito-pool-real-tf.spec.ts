@@ -10,23 +10,21 @@
  * genuinely engine-compared.
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
-import { buildPublishedStack } from '@apiable/cdk-cognito-pool'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
-import { publishedTemplatePath } from './support/published-template'
+import { COGNITO_POOL } from './support/parity-channels'
 
-const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = publishedTemplatePath('apiable-cognito-pool')
-const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-cognito-pool-show.json')
-const TF_REGION = 'eu-central-1'
-const TF_DEPLOY_ACCOUNT = '111111111111'
+const PUBLISHED_CFN = COGNITO_POOL.publishedCfn
+const TF_FIXTURE = COGNITO_POOL.tfFixture
+const TF_REGION = COGNITO_POOL.tfRegion
+const CFN_REGION = COGNITO_POOL.cfnRegion
+const TF_DEPLOY_ACCOUNT = COGNITO_POOL.tfDeployAccount
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk', TF_REGION)
-const cfnModel = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn', TF_REGION)
+const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(COGNITO_POOL.buildCdk(new cdk.App())).toJSON(), 'cdk', CFN_REGION)
+const cfnModel = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn', CFN_REGION)
 const tfPlan = (): unknown => JSON.parse(fs.readFileSync(TF_FIXTURE, 'utf8'))
 const tfModel = (plan: unknown = tfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
 
