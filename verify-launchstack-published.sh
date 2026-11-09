@@ -7,14 +7,25 @@
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # PublishedArtifactAddress.kt — `<construct>/<version>/template.yaml`, `<construct>/<version>/
-# terraform.zip` and `<construct>/<version>/console-instructions.json` under the bucket; a code
-# artifact publishes alongside them at the same version segment (launchStackCodeKey). A change to
-# any of these grammars must change this script in the same PR.
+# terraform.zip`, `<construct>/<version>/console-instructions.json` and `<construct>/<version>/
+# publish-check.json` under the bucket; a code artifact publishes alongside them at the same version
+# segment (launchStackCodeKey). A change to any of these grammars must change this script in the
+# same PR.
 #
 # The inventory is derived from dist/launchstack/, so it can never drift from what was published.
-# Only template.yaml, *.zip and console-instructions.json are checked, matching what
-# publish-launchstack.sh uploads — the template.json twin beside a template is a local parity-spec
-# input and is deliberately not in the store. Fetches carry no credentials: the CloudFormation
+# Only template.yaml, *.zip, console-instructions.json and publish-check.json are checked, matching
+# what publish-launchstack.sh uploads — the template.json twin beside a template is a local
+# parity-spec input and is deliberately not in the store.
+#
+# Earlier versions the portal still offers, which the pipeline does not build, are named in
+# launchstack-still-offered.json with each file's digest. Their bytes cannot be rebuilt, so each is
+# fetched and parsed like a built artifact and held to its committed digest instead; nothing here or
+# in publish-launchstack.sh ever uploads one.
+#
+# Only when every artifact passed does this script write each verified construct version's
+# publish-check.json into dist/launchstack/, which the next publish-launchstack.sh uploads and the
+# next run of this script fetches back and checks against its address and its artifacts. The portal
+# serves an artifact only when that record covers it, so a run with any failure writes none. Fetches carry no credentials: the CloudFormation
 # console, `terraform init`, the portal and (for a code artifact) the Lambda service provisioning in
 # the customer's account all fetch unauthenticated, so anonymous read is the behaviour under test.
 #
@@ -36,6 +47,7 @@ TEMPLATE_STORE_HOST="${TEMPLATE_STORE_HOST:-${LAUNCHSTACK_BUCKET}.s3.amazonaws.c
 # always https, so this must never be set in CI or by an operator against the genuine bucket.
 TEMPLATE_STORE_SCHEME="${TEMPLATE_STORE_SCHEME:-https}"
 SRC_DIR="${SRC_DIR:-dist/launchstack}"
+STILL_OFFERED="${STILL_OFFERED:-launchstack-still-offered.json}"
 
 if [[ ! -d "${SRC_DIR}" ]]; then
   echo "no ${SRC_DIR} — run synth-launchstack.sh for each construct first" >&2
@@ -44,12 +56,33 @@ fi
 
 # while-read, not mapfile: this script also runs on a macOS operator machine (bash 3.2).
 ARTIFACTS=()
+RECORDS=()
 while IFS= read -r line; do
-  ARTIFACTS+=("${line}")
-done < <(find "${SRC_DIR}" -type f \( -name 'template.yaml' -o -name '*.zip' -o -name 'console-instructions.json' \) | sort)
+  if [[ "${line}" == */publish-check.json ]]; then
+    RECORDS+=("${line}")
+  else
+    ARTIFACTS+=("${line}")
+  fi
+done < <(find "${SRC_DIR}" -type f \( -name 'template.yaml' -o -name '*.zip' -o -name 'console-instructions.json' -o -name 'publish-check.json' \) | sort)
 
 if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
   echo "no artifacts under ${SRC_DIR} — nothing to verify, which is itself a synth failure" >&2
+  exit 1
+fi
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "${WORK}"' EXIT
+# Each verified artifact as `key<TAB>kind<TAB>sha256`: what the records are written from and held to.
+VERIFIED="${WORK}/verified"
+: > "${VERIFIED}"
+
+publish_check() {
+  node -r ts-node/register/transpile-only scripts/publish-check.ts "$@"
+}
+
+LISTED="${WORK}/listed"
+if ! publish_check still-offered "${STILL_OFFERED}" "${LISTED}"; then
+  echo "the still-offered list ${STILL_OFFERED} is not well-formed (see above) — nothing can be recorded" >&2
   exit 1
 fi
 
@@ -59,12 +92,12 @@ fi
 # cloud credential, wherever this script runs. npm cannot tell there that it is in CI, so it is told
 # not to look for a newer version of itself.
 SET_VERSIONS=""
-for src in "${ARTIFACTS[@]}"; do
-  if [[ "${src}" == */console-instructions.json ]]; then
-    version_dir="${src%/console-instructions.json}"
+while IFS= read -r key; do
+  if [[ "${key}" == */console-instructions.json ]]; then
+    version_dir="${key%/console-instructions.json}"
     SET_VERSIONS="${SET_VERSIONS} ${version_dir##*/}"
   fi
-done
+done < <(printf '%s\n' "${ARTIFACTS[@]}"; cut -f1 "${LISTED}")
 VERSIONS_TAKING_EXTERNAL_ID=""
 if [[ -n "${SET_VERSIONS}" ]]; then
   if ! VERSIONS_TAKING_EXTERNAL_ID=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
@@ -79,7 +112,7 @@ if [[ -n "${SET_VERSIONS}" ]]; then
   fi
 fi
 
-echo "verifying ${#ARTIFACTS[@]} published artifacts against ${TEMPLATE_STORE_HOST}"
+echo "verifying ${#ARTIFACTS[@]} published artifacts, $(wc -l < "${LISTED}" | tr -d ' ') still-offered and ${#RECORDS[@]} recorded checks against ${TEMPLATE_STORE_HOST}"
 
 failures=0
 
@@ -197,16 +230,67 @@ is_wellformed_artifact() {
   esac
 }
 
-for src in "${ARTIFACTS[@]}"; do
-  key="${src#"${SRC_DIR}"/}"
-  url="${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${key}"
-  before=${failures}
-  case "${key}" in
+kind_of() {
+  case "$1" in
     */terraform.zip) kind="module"; kind_label="Terraform module archive"; content_type_pattern="zip" ;;
     *.zip) kind="zip"; kind_label="code zip"; content_type_pattern="zip" ;;
     */console-instructions.json) kind="instructions"; kind_label="console instruction set"; content_type_pattern="json" ;;
+    */publish-check.json) kind="record"; kind_label="publish-check record"; content_type_pattern="json" ;;
     *) kind="template"; kind_label="CloudFormation template"; content_type_pattern="yaml" ;;
   esac
+}
+
+# Fetches $1 anonymously into body_file and checks the headers a versioned address must carry. On a
+# non-200 it fails, removes the body and returns 1; a header failure is counted but the body is kept,
+# so the caller still compares and parses it and every reason is named.
+fetch_served() {
+  local key="$1" url="${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/$1" header_file code content_type cache_control
+  body_file="$(mktemp "${WORK}/body.XXXXXX")"
+  header_file="$(mktemp "${WORK}/headers.XXXXXX")"
+  code=$(curl -sSL -o "${body_file}" -D "${header_file}" -w '%{http_code}' --max-time 20 "${url}")
+
+  if [[ "${code}" != "200" ]]; then
+    fail "${key} — anonymous fetch returned ${code} (expected 200) — ${url}"
+    rm -f "${body_file}" "${header_file}"
+    return 1
+  fi
+
+  content_type=$(grep -i '^content-type:' "${header_file}" | tail -1 | tr -d '\r' | cut -d: -f2- | xargs)
+  cache_control=$(grep -i '^cache-control:' "${header_file}" | tail -1 | tr -d '\r' | cut -d: -f2- | xargs)
+  rm -f "${header_file}"
+
+  if ! echo "${content_type}" | grep -qi "${content_type_pattern}"; then
+    fail "${key} — Content-Type '${content_type}' is not a ${kind_label}"
+  fi
+
+  if ! echo "${cache_control}" | grep -qE 'immutable|max-age=[0-9]{7,}'; then
+    fail "${key} — Cache-Control '${cache_control}' does not mark a versioned address as stable"
+  fi
+}
+
+# Fail closed on a malformed digest: an empty or partial hash on both sides would compare equal and
+# read as a faithful upload. Require a real 64-hex sha256 on each before the comparison means anything.
+compare_digest() {
+  local key="$1" served_sha="$2" expected_sha="$3" expected_label="$4"
+  if [[ ! "${served_sha}" =~ ^[0-9a-f]{64}$ || ! "${expected_sha}" =~ ^[0-9a-f]{64}$ ]]; then
+    fail "${key} — could not compute a sha256 to compare (served '${served_sha}', ${expected_label} '${expected_sha}')"
+  elif [[ "${served_sha}" != "${expected_sha}" ]]; then
+    fail "${key} — served body differs from the ${expected_label} (served ${served_sha:0:12}…, ${expected_label} ${expected_sha:0:12}…)"
+  fi
+}
+
+report_clean() {
+  # Only an artifact that cleared every check is reported clean — a key must never print both a
+  # failure and a tick, or a real failure reads as noise beside a green line.
+  if [[ ${failures} -eq $2 ]]; then
+    echo "  ✓ $1"
+  fi
+}
+
+for src in "${ARTIFACTS[@]}"; do
+  key="${src#"${SRC_DIR}"/}"
+  before=${failures}
+  kind_of "${key}"
 
   # A truncated or marker-less local artifact would hash-match an equally broken published
   # object, so the source is checked before it is trusted as the oracle.
@@ -216,36 +300,10 @@ for src in "${ARTIFACTS[@]}"; do
   fi
   is_wellformed_artifact "${kind}" "${src}" "${key}" || { fail "${key} — local artifact is not a well-formed ${kind_label}: ${parse_error}"; continue; }
 
-  body_file="$(mktemp)"
-  header_file="$(mktemp)"
-  code=$(curl -sSL -o "${body_file}" -D "${header_file}" -w '%{http_code}' --max-time 20 "${url}")
-
-  if [[ "${code}" != "200" ]]; then
-    fail "${key} — anonymous fetch returned ${code} (expected 200) — ${url}"
-    rm -f "${body_file}" "${header_file}"
-    continue
-  fi
-
-  content_type=$(grep -i '^content-type:' "${header_file}" | tail -1 | tr -d '\r' | cut -d: -f2- | xargs)
-  cache_control=$(grep -i '^cache-control:' "${header_file}" | tail -1 | tr -d '\r' | cut -d: -f2- | xargs)
-
-  if ! echo "${content_type}" | grep -qi "${content_type_pattern}"; then
-    fail "${key} — Content-Type '${content_type}' is not a ${kind_label}"
-  fi
-
-  if ! echo "${cache_control}" | grep -qE 'immutable|max-age=[0-9]{7,}'; then
-    fail "${key} — Cache-Control '${cache_control}' does not mark a versioned address as stable"
-  fi
+  fetch_served "${key}" || continue
 
   served_sha=$(sha256_of "${body_file}")
-  source_sha=$(sha256_of "${src}")
-  # Fail closed on a malformed digest: an empty or partial hash on both sides would compare equal and
-  # read as a faithful upload. Require a real 64-hex sha256 on each before the comparison means anything.
-  if [[ ! "${served_sha}" =~ ^[0-9a-f]{64}$ || ! "${source_sha}" =~ ^[0-9a-f]{64}$ ]]; then
-    fail "${key} — could not compute a sha256 to compare (served '${served_sha}', source '${source_sha}')"
-  elif [[ "${served_sha}" != "${source_sha}" ]]; then
-    fail "${key} — served body differs from the synthesized artifact (served ${served_sha:0:12}…, source ${source_sha:0:12}…)"
-  fi
+  compare_digest "${key}" "${served_sha}" "$(sha256_of "${src}")" "synthesized artifact"
 
   # Matching the source hash only proves the upload was faithful, not that what was uploaded is
   # usable — a corrupt artifact hash-matches its equally corrupt source. So the served bytes are
@@ -256,18 +314,66 @@ for src in "${ARTIFACTS[@]}"; do
   # degrades to "skipped" on AccessDenied would wave through exactly what it exists to catch.
   is_wellformed_artifact "${kind}" "${body_file}" "${key}" || fail "${key} — served body is not a well-formed ${kind_label}: ${parse_error}"
 
-  rm -f "${body_file}" "${header_file}"
-
-  # Only an artifact that cleared every check above is reported clean — a key must never print
-  # both a failure and a tick, or a real failure reads as noise beside a green line.
-  if [[ ${failures} -eq ${before} ]]; then
-    echo "  ✓ ${key}"
-  fi
+  rm -f "${body_file}"
+  [[ ${failures} -eq ${before} ]] && printf '%s\t%s\t%s\n' "${key}" "${kind}" "${served_sha}" >> "${VERIFIED}"
+  report_clean "${key}" "${before}"
 done
 
+# A version both built and listed would be recorded from two sources of truth that need not agree.
+# fd 3, so no command in the body can read the list from stdin.
+while IFS=$'\t' read -r key kind committed_sha <&3; do
+  before=${failures}
+  version_dir="${key%/*}"
+  if [[ -d "${SRC_DIR}/${version_dir}" ]] && find "${SRC_DIR}/${version_dir}" -type f ! -name 'publish-check.json' | grep -q .; then
+    fail "${key} — ${version_dir%/*} ${version_dir#*/} is on the still-offered list and also built; a version is one or the other"
+    continue
+  fi
+  kind_of "${key}"
+  fetch_served "${key}" || continue
+  served_sha=$(sha256_of "${body_file}")
+  compare_digest "${key}" "${served_sha}" "${committed_sha}" "digest committed in ${STILL_OFFERED}"
+  is_wellformed_artifact "${kind}" "${body_file}" "${key}" || fail "${key} — served body is not a well-formed ${kind_label}: ${parse_error}"
+  rm -f "${body_file}"
+  [[ ${failures} -eq ${before} ]] && printf '%s\t%s\t%s\n' "${key}" "${kind}" "${served_sha}" >> "${VERIFIED}"
+  report_clean "${key} (still offered)" "${before}"
+done 3< "${LISTED}"
+
+# A published record is trusted only once its served bytes are the local record's and they parse as
+# the record of exactly the artifacts verified beside it in this run.
+SERVED_RECORDS="${WORK}/served-records"
+: > "${SERVED_RECORDS}"
+for src in ${RECORDS[@]+"${RECORDS[@]}"}; do
+  key="${src#"${SRC_DIR}"/}"
+  kind_of "${key}"
+  fetch_served "${key}" || continue
+  compare_digest "${key}" "$(sha256_of "${body_file}")" "$(sha256_of "${src}")" "local record"
+  printf '%s\t%s\n' "${key}" "${body_file}" >> "${SERVED_RECORDS}"
+done
+if [[ -s "${SERVED_RECORDS}" ]]; then
+  RECORD_FAULTS="${WORK}/record-faults"
+  if ! publish_check check "${VERIFIED}" "${SERVED_RECORDS}" "${RECORD_FAULTS}"; then
+    fail "the published records could not be checked (see above)"
+  else
+    while IFS= read -r fault; do
+      fail "${fault}"
+    done < "${RECORD_FAULTS}"
+    while IFS=$'\t' read -r key _; do
+      grep -qF "${key} — " "${RECORD_FAULTS}" || echo "  ✓ ${key}"
+    done < "${SERVED_RECORDS}"
+  fi
+fi
+
 if [[ ${failures} -gt 0 ]]; then
-  echo "${failures} verification failure(s) — artifacts are not correctly published" >&2
+  echo "${failures} verification failure(s) — artifacts are not correctly published; no publish check recorded" >&2
   exit 1
 fi
 
-echo "all ${#ARTIFACTS[@]} artifacts fetch anonymously, match their source bytes, and are cache-stable"
+if ! publish_check write "${VERIFIED}" "${SRC_DIR}"; then
+  echo "the publish-check records could not be written (see above)" >&2
+  exit 1
+fi
+cut -f1 "${VERIFIED}" | sed 's|/[^/]*$||' | sort -u | while IFS= read -r version_dir; do
+  echo "  recorded ${version_dir}/publish-check.json"
+done
+
+echo "all ${#ARTIFACTS[@]} artifacts and $(wc -l < "${LISTED}" | tr -d ' ') still-offered artifacts fetch anonymously, match their expected bytes, and are cache-stable; ${#RECORDS[@]} published record(s) checked"

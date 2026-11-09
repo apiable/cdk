@@ -8,11 +8,13 @@
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # PublishedArtifactAddress.kt — `<construct>/<version>/template.yaml`, `<construct>/<version>/
-# terraform.zip` and `<construct>/<version>/console-instructions.json` under the bucket; a code
-# artifact publishes alongside them at the same version segment (launchStackCodeKey).
-# dist/launchstack/ mirrors every key one-for-one.
+# terraform.zip`, `<construct>/<version>/console-instructions.json` and `<construct>/<version>/
+# publish-check.json` under the bucket; a code artifact publishes alongside them at the same version
+# segment (launchStackCodeKey). dist/launchstack/ mirrors every key one-for-one.
 #
-# Only template.yaml, *.zip and console-instructions.json are published. The template.json twin
+# Only template.yaml, *.zip, console-instructions.json and publish-check.json are published. A
+# publish-check.json exists only after verify-launchstack-published.sh passed, so the pipeline runs
+# publish, verify, publish (the records alone), verify (the records fetched back). The template.json twin
 # beside a template is an input to the parity specs, which read it locally; nothing fetches it over
 # HTTP, so it stays out of the public store.
 #
@@ -55,7 +57,7 @@ while IFS= read -r key; do
 done <<< "${guard_output}"
 
 if [[ ${#NEW_ARTIFACTS[@]} -eq 0 ]]; then
-  echo "published ${SRC_DIR}/**/{template.yaml,*.zip,console-instructions.json} to s3://${LAUNCHSTACK_BUCKET}/ (idempotent: 0 new artifacts)"
+  echo "published ${SRC_DIR}/**/{template.yaml,*.zip,console-instructions.json,publish-check.json} to s3://${LAUNCHSTACK_BUCKET}/ (idempotent: 0 new artifacts)"
   exit 0
 fi
 

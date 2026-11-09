@@ -34,6 +34,11 @@ ARTIFACT_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/${VERSION}"
 SERVE_DIR="${SCRATCH}/served/${CONSTRUCT}/${VERSION}"
 mkdir -p "${ARTIFACT_DIR}" "${SERVE_DIR}"
 
+# The committed list names the real store's 2.0.0, which the stand-in does not serve; every run here
+# reads an empty list unless a check names its own.
+printf '[]\n' > "${SCRATCH}/still-offered-none.json"
+export STILL_OFFERED="${SCRATCH}/still-offered-none.json"
+
 cat > "${ARTIFACT_DIR}/template.yaml" <<'YAML'
 AWSTemplateFormatVersion: '2010-09-09'
 Resources:
@@ -147,8 +152,194 @@ WAITEOF
 chmod +x "${SCRATCH}/wait-status.sh"
 
 echo "=== S1/S2/S6: valid template + zip + module archive + instruction set served with the real store's headers -> exit 0 ==="
+# contract: 024-3-3 S5
 check "happy path passes" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+
+verify_main() {
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+guard_main() {
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+}
+clear_records() {
+  find "${SCRATCH}" -name publish-check.json -delete
+}
+# What publish-launchstack.sh does to a record verify wrote: puts it at its key in the store.
+publish_records() {
+  (cd "${SCRATCH}/dist/launchstack" && find . -name publish-check.json) | while IFS= read -r rel; do
+    mkdir -p "$(dirname "${SCRATCH}/served/${rel}")"
+    cp "${SCRATCH}/dist/launchstack/${rel}" "${SCRATCH}/served/${rel}"
+  done
+}
+# The record of the files in $1 at construct $2 and version $3, written independently of the script
+# under test: compact, fields in a fixed order, artifacts in file order, one trailing newline.
+expected_record() {
+  python3 -c "
+import hashlib, json, os, sys
+d, construct, version = sys.argv[1:4]
+kinds = {'template.yaml': 'template', 'terraform.zip': 'module', 'console-instructions.json': 'instructions'}
+artifacts = [{'file': f, 'kind': kinds.get(f, 'zip'), 'sha256': hashlib.sha256(open(os.path.join(d, f), 'rb').read()).hexdigest()}
+             for f in sorted(os.listdir(d)) if f in kinds or f.endswith('.zip')]
+sys.stdout.write(json.dumps({'construct': construct, 'version': version, 'result': 'passed', 'artifacts': artifacts}, separators=(',', ':')) + '\n')
+" "$@"
+}
+RECORD="${ARTIFACT_DIR}/publish-check.json"
+RECORD_KEY="${CONSTRUCT}/${VERSION}/publish-check.json"
+
+echo "=== a passing run records its check beside the artifacts, and the next run fetches it back ==="
+expected_record "${ARTIFACT_DIR}" "${CONSTRUCT}" "${VERSION}" > "${SCRATCH}/expected-record.json"
+# contract: 024-3-3 S7
+check "the passing run writes one record per construct version, listing each artifact's kind and the digest of its bytes" 0 \
+  cmp "${RECORD}" "${SCRATCH}/expected-record.json"
+one_record_only() {
+  [[ "$(find "${SCRATCH}/dist" -name publish-check.json | wc -l | tr -d ' ')" == "1" ]]
+}
+# contract: 024-3-3 S7
+check "the passing run writes no other record" 0 one_record_only
+publish_records
+# contract: 024-3-3 S7
+check_message "the next run fetches the published record back and passes it" 0 "✓ ${RECORD_KEY}" verify_main
+# contract: 024-3-3 S10
+check "the next run reproduces the record byte for byte" 0 \
+  cmp "${RECORD}" "${SCRATCH}/expected-record.json"
+guard_uploads_no_record() {
+  local out
+  out=$(guard_main 2>/dev/null) || return 1
+  [[ "${out}" != *publish-check.json* ]]
+}
+# contract: 024-3-3 S10
+check "the guard skips a byte-identical published record" 0 guard_uploads_no_record
+sed 's/"result":"passed"/"result":"passed" /' "${SCRATCH}/expected-record.json" > "${RECORD}"
+# contract: 024-3-3 S10
+check_message "the guard refuses a changed record at a published key" 1 \
+  "${RECORD_KEY} — already published with DIFFERENT content" guard_main
+cp "${SCRATCH}/expected-record.json" "${RECORD}"
+printf 'export const extra = 1\n' > "${SCRATCH}/extra.js"
+python3 -c "
+import zipfile, sys
+with zipfile.ZipFile(sys.argv[1], 'w') as zf:
+    zf.write(sys.argv[2], 'index.js')
+" "${ARTIFACT_DIR}/extra.zip" "${SCRATCH}/extra.js"
+# contract: 024-3-3 S10
+check_message "the guard refuses a new artifact at a version whose check is already recorded, naming the construct and version" 1 \
+  "${CONSTRUCT} ${VERSION} — its publish check is already recorded" guard_main
+rm -f "${ARTIFACT_DIR}/extra.zip"
+
+echo "=== a published record that does not match its address or its artifacts fails the run, the reason named ==="
+# Corrupts the record on both sides, so only the record arm can refuse it.
+refuses_record() {
+  local desc="$1" expect_msg="$2" from="$3" to="$4"
+  sed "s/${from}/${to}/" "${SCRATCH}/expected-record.json" > "${RECORD}"
+  cp "${RECORD}" "${SERVE_DIR}/publish-check.json"
+  check_message "${desc}" 1 "${RECORD_KEY} — ${expect_msg}" verify_main
+  cp "${SCRATCH}/expected-record.json" "${RECORD}"
+  cp "${SCRATCH}/expected-record.json" "${SERVE_DIR}/publish-check.json"
+}
+# contract: 024-3-3 S9
+refuses_record "a record naming another construct fails the run" \
+  "names construct apiable-other-construct, published under ${CONSTRUCT}" '"construct":"apiable-test-construct"' '"construct":"apiable-other-construct"'
+# contract: 024-3-3 S9
+refuses_record "a record naming another version fails the run" \
+  "names version 9.9.8, published under ${VERSION}" '"version":"9.9.9"' '"version":"9.9.8"'
+# contract: 024-3-3 S9
+refuses_record "a record whose result is not passed fails the run" \
+  "result is failed, not passed" '"result":"passed"' '"result":"failed"'
+TEMPLATE_SHA="$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "${ARTIFACT_DIR}/template.yaml")"
+# contract: 024-3-3 S9
+refuses_record "a record whose listed digest differs from its artifact's fails the run" \
+  "template.yaml digest 000000000000… differs from its artifact's ${TEMPLATE_SHA:0:12}…" "${TEMPLATE_SHA}" "$(printf '0%.0s' $(seq 1 64))"
+
+echo "=== a run with any failing artifact records nothing ==="
+clear_records
+cp "${SERVE_DIR}/authorizer.zip" "${SCRATCH}/authorizer.zip.good"
+head -c 50 "${SCRATCH}/authorizer.zip.good" > "${SERVE_DIR}/authorizer.zip"
+# contract: 024-3-3 S8
+check_message "a run with a failing artifact fails, naming it" 1 \
+  "${CONSTRUCT}/${VERSION}/authorizer.zip — served body differs" verify_main
+no_record_written() {
+  [[ -z "$(find "${SCRATCH}/dist" -name publish-check.json)" ]]
+}
+# contract: 024-3-3 S8
+check "a run with a failing artifact writes no record" 0 no_record_written
+cp "${SCRATCH}/authorizer.zip.good" "${SERVE_DIR}/authorizer.zip"
+
+echo "=== an earlier version on the still-offered list is fetched, held to its committed digest, parsed and recorded, never uploaded ==="
+LISTED_VERSION="8.0.0"
+LISTED_SERVED="${SCRATCH}/served/${CONSTRUCT}/${LISTED_VERSION}"
+mkdir -p "${LISTED_SERVED}"
+cp "${ARTIFACT_DIR}/template.yaml" "${ARTIFACT_DIR}/terraform.zip" "${LISTED_SERVED}/"
+# Writes a still-offered list to $1 naming every file served for the listed version at its digest.
+# A second argument is the version to list, a third replaces every digest.
+write_list() {
+  python3 -c "
+import hashlib, json, os, sys
+out, d, version = sys.argv[1:4]
+digest = sys.argv[4] if len(sys.argv) > 4 else None
+kinds = {'template.yaml': 'template', 'terraform.zip': 'module'}
+artifacts = [{'file': f, 'kind': kinds[f], 'sha256': digest or hashlib.sha256(open(os.path.join(d, f), 'rb').read()).hexdigest()} for f in sorted(kinds)]
+json.dump([{'construct': '${CONSTRUCT}', 'version': version, 'artifacts': artifacts}], open(out, 'w'))
+" "$1" "${LISTED_SERVED}" "${2:-${LISTED_VERSION}}" ${3:+"$3"}
+}
+verify_listed() {
+  env STILL_OFFERED="$1" SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+write_list "${SCRATCH}/list.json"
+# contract: 024-3-3 S22
+check_message "a listed version whose files are served at their committed digests verifies clean" 0 \
+  "✓ ${CONSTRUCT}/${LISTED_VERSION}/terraform.zip (still offered)" verify_listed "${SCRATCH}/list.json"
+expected_record "${LISTED_SERVED}" "${CONSTRUCT}" "${LISTED_VERSION}" > "${SCRATCH}/expected-listed-record.json"
+# contract: 024-3-3 S22
+check "the listed version is recorded like a built one" 0 \
+  cmp "${SCRATCH}/dist/launchstack/${CONSTRUCT}/${LISTED_VERSION}/publish-check.json" "${SCRATCH}/expected-listed-record.json"
+guard_uploads_only_the_listed_record() {
+  local out
+  out=$(guard_main 2>/dev/null) || return 1
+  [[ "$(grep "/${LISTED_VERSION}/" <<< "${out}")" == "${CONSTRUCT}/${LISTED_VERSION}/publish-check.json" ]]
+}
+# contract: 024-3-3 S22
+check "of a listed version, the publish uploads the record and no artifact" 0 guard_uploads_only_the_listed_record
+publish_records
+# contract: 024-3-3 S22
+check_message "the next run fetches the listed version's record back and passes it" 0 \
+  "✓ ${CONSTRUCT}/${LISTED_VERSION}/publish-check.json" verify_listed "${SCRATCH}/list.json"
+clear_records
+
+write_list "${SCRATCH}/list-wrong-digest.json" "${LISTED_VERSION}" "$(printf 'a%.0s' $(seq 1 64))"
+# contract: 024-3-3 S22
+check_message "a listed file whose served bytes differ from its committed digest fails, naming it" 1 \
+  "${CONSTRUCT}/${LISTED_VERSION}/template.yaml — served body differs from the digest committed in" verify_listed "${SCRATCH}/list-wrong-digest.json"
+# contract: 024-3-3 S8
+check "a failing listed file records nothing for any version" 0 no_record_written
+
+cp "${LISTED_SERVED}/template.yaml" "${SCRATCH}/listed-template.good"
+printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: nothing to create\n" > "${LISTED_SERVED}/template.yaml"
+write_list "${SCRATCH}/list-unparsable.json"
+# contract: 024-3-3 S22
+check_message "a listed file that does not parse as its kind fails, naming it" 1 \
+  "${CONSTRUCT}/${LISTED_VERSION}/template.yaml — served body is not a well-formed CloudFormation template" verify_listed "${SCRATCH}/list-unparsable.json"
+cp "${SCRATCH}/listed-template.good" "${LISTED_SERVED}/template.yaml"
+
+mv "${LISTED_SERVED}/terraform.zip" "${SCRATCH}/listed-module.good"
+# contract: 024-3-3 S22
+check_message "a listed file the store does not serve fails, naming it" 1 \
+  "${CONSTRUCT}/${LISTED_VERSION}/terraform.zip — anonymous fetch returned 404" verify_listed "${SCRATCH}/list.json"
+mv "${SCRATCH}/listed-module.good" "${LISTED_SERVED}/terraform.zip"
+
+write_list "${SCRATCH}/list-built.json" "${VERSION}"
+# contract: 024-3-3 S22
+check_message "a version both listed and built fails, naming the construct and version" 1 \
+  "${CONSTRUCT} ${VERSION} is on the still-offered list and also built" verify_listed "${SCRATCH}/list-built.json"
+
+printf '[{"construct":"%s","version":"%s","artifacts":[]}]' "${CONSTRUCT}" "${LISTED_VERSION}" > "${SCRATCH}/list-no-files.json"
+# contract: 024-3-3 S22
+check_message "a listed version that names no artifact file fails, naming it" 1 \
+  "${CONSTRUCT} ${LISTED_VERSION} names no artifact file" verify_listed "${SCRATCH}/list-no-files.json"
+# contract: 024-3-3 S22
+check_message "a still-offered list that cannot be read fails" 1 \
+  "the still-offered list ${SCRATCH}/no-such-list.json is not well-formed" verify_listed "${SCRATCH}/no-such-list.json"
+clear_records
+rm -rf "${LISTED_SERVED}"
 
 # Publishes a corrupted artifact on both sides (so the fidelity hash still matches and only the shape
 # arm can red), asserts the gate refuses it AND names the reason, then restores the good artifact.
@@ -233,6 +424,7 @@ set_at_version "${CURRENT_VERSION}" "${SCRATCH}/set-current.json" with-token
 publish_two "${V2_SET}" 2.0.0
 publish_two "${SCRATCH}/set-current.json" "${CURRENT_VERSION}"
 check "the published 2.0.0 set beside a current set verifies clean" 0 verify_two
+clear_records
 
 set_at_version 2.0.0 "${SCRATCH}/set-v2-with-token.json" with-token
 publish_two "${SCRATCH}/set-v2-with-token.json" 2.0.0
@@ -298,6 +490,7 @@ asks_the_generator_with_no_credential() {
   grep -qx 'npm_config_update_notifier=false' "${GENERATOR_ENV}" || { echo "the question was asked without the npm setting"; return 1; }
 }
 check "the generator is asked in an environment of its own, with none of the credentials the verifier runs with" 0 asks_the_generator_with_no_credential
+clear_records
 
 echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
 printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
@@ -399,11 +592,15 @@ done
 MASKED_NEW_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/9.9.11"
 mkdir -p "${MASKED_NEW_DIR}"
 cp "${ARTIFACT_DIR}/template.yaml" "${MASKED_NEW_DIR}/template.yaml"
+expected_record "${MASKED_NEW_DIR}" "${CONSTRUCT}" 9.9.11 > "${MASKED_NEW_DIR}/publish-check.json"
 check "guard reads a masked 403 as not-yet-published and passes" 0 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
 masked_stdout=$(env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 2))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh 2>/dev/null)
 check_contains "the masked key reaches stdout as an artifact to upload" \
   "${masked_stdout}" "${CONSTRUCT}/9.9.11/template.yaml"
+# contract: 024-3-3 S10
+check_contains "a masked (403) record key reads as not yet published and reaches stdout to upload" \
+  "${masked_stdout}" "${CONSTRUCT}/9.9.11/publish-check.json"
 rm -rf "${MASKED_NEW_DIR}"
 
 # Reading 403 as absence must not soften the write-once refusal for a key that genuinely IS published.

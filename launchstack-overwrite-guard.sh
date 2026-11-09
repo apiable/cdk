@@ -7,8 +7,13 @@
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # PublishedArtifactAddress.kt — `<construct>/<version>/template.yaml`, `<construct>/<version>/
-# terraform.zip` and `<construct>/<version>/console-instructions.json` under the bucket; a code
-# artifact publishes alongside them at the same version segment.
+# terraform.zip`, `<construct>/<version>/console-instructions.json` and `<construct>/<version>/
+# publish-check.json` under the bucket; a code artifact publishes alongside them at the same version
+# segment.
+#
+# A publish-check.json records the artifact set its version passed with, so a changed record means
+# the set changed after the check was recorded, and a new artifact at a version whose record is
+# already published would sit there uncovered. Both refuse like any other overwrite.
 #
 # Reads the currently-published store the same way every real consumer does: an anonymous GET against
 # the public HTTPS endpoint, never an authenticated S3 API call — the bucket already serves every
@@ -51,7 +56,7 @@ fi
 ARTIFACTS=()
 while IFS= read -r line; do
   ARTIFACTS+=("${line}")
-done < <(find "${SRC_DIR}" -type f \( -name '*template.yaml' -o -name '*.zip' -o -name 'console-instructions.json' \) | sort)
+done < <(find "${SRC_DIR}" -type f \( -name '*template.yaml' -o -name '*.zip' -o -name 'console-instructions.json' -o -name 'publish-check.json' \) | sort)
 
 if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
   echo "no artifacts under ${SRC_DIR} — nothing to guard" >&2
@@ -135,8 +140,29 @@ for src in "${ARTIFACTS[@]}"; do
   fi
 done
 
+# Probed once per version with a new artifact; a record is not itself an artifact of its version.
+recorded_probed=""
+for key in ${new_artifacts[@]+"${new_artifacts[@]}"}; do
+  [[ "${key}" == */publish-check.json ]] && continue
+  version_dir="${key%/*}"
+  case " ${recorded_probed} " in *" ${version_dir} "*) continue ;; esac
+  recorded_probed="${recorded_probed} ${version_dir}"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${version_dir}/publish-check.json")
+  case "${code}" in
+    404|403) ;;
+    200)
+      echo "  ✗ ${version_dir%/*} ${version_dir#*/} — its publish check is already recorded, so its artifact set is fixed; ${key} would be published uncovered — ship this change under a new version instead" >&2
+      refused=$((refused + 1))
+      ;;
+    *)
+      echo "  ✗ ${version_dir}/publish-check.json — unexpected status ${code} probing the published store; refusing (cannot tell whether its check is recorded)" >&2
+      refused=$((refused + 1))
+      ;;
+  esac
+done
+
 if [[ "${refused}" -gt 0 ]]; then
-  echo "overwrite guard REFUSED: ${refused} key(s) would silently replace already-published content — publish aborted before any upload" >&2
+  echo "overwrite guard REFUSED: ${refused} key(s) would change what is already published — publish aborted before any upload" >&2
   exit 1
 fi
 
