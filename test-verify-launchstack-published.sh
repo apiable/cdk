@@ -529,6 +529,11 @@ check_message "corrupted served zip fails closed, naming it" 1 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
 cp "${SCRATCH}/authorizer.zip.bak" "${SERVE_DIR}/authorizer.zip"
 
+# A code archive built and served identically, but not a zip, is refused by its parse, naming it.
+# contract: 024-3-3 S5
+refuses_artifact authorizer.zip "a code archive that is not a readable zip fails closed, naming it" \
+  "${CONSTRUCT}/${VERSION}/authorizer.zip — local artifact is not a well-formed" "${SCRATCH}/truncated.zip"
+
 echo "=== S5: missing served artifact (404) -> fails closed ==="
 rm "${SERVE_DIR}/authorizer.zip"
 # contract: 024-3-3 S5
