@@ -95,9 +95,14 @@ describe('the publish-check record', () => {
       dir,
     )
 
-    expect(fs.readFileSync(path.join(dir, 'apiable-lambda-authorizer/1.2.0/publish-check.json'), 'utf8')).toBe(RECORD)
-    expect(fs.existsSync(path.join(dir, 'apiable-logs-bucket/1.0.0/publish-check.json'))).toBe(true)
-    fs.rmSync(dir, { recursive: true })
+    try {
+      expect(fs.readFileSync(path.join(dir, 'apiable-lambda-authorizer/1.2.0/publish-check.json'), 'utf8')).toBe(RECORD)
+      expect(fs.readFileSync(path.join(dir, 'apiable-logs-bucket/1.0.0/publish-check.json'), 'utf8')).toBe(
+        `{"construct":"apiable-logs-bucket","version":"1.0.0","result":"passed","artifacts":[{"file":"template.yaml","kind":"template","sha256":"${sha('f')}"}]}\n`,
+      )
+    } finally {
+      fs.rmSync(dir, { recursive: true })
+    }
   })
 })
 

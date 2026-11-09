@@ -50,7 +50,7 @@ describe('the build list names exactly the constructs the publish app registers'
   it('a build list that cannot be read is refused', () => {
     const missing = path.join(os.tmpdir(), 'no-such-dir', 'synth-all-launchstack.sh')
 
-    expect(() => buildList(missing)).toThrow()
+    expect(() => buildList(missing)).toThrow('ENOENT')
   })
 
   it('reads the list the synth script builds from, skipping comments', () => {
