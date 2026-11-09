@@ -679,6 +679,44 @@ check_message "guard refuses on an unknown status (503) rather than treating it 
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 3))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
 kill "${THROTTLE_PID}" 2>/dev/null
 
+# The record probe for a version with a new artifact is its own request: a fault there must refuse too,
+# never read as "no record yet". Artifacts answer as the masking store does; every record key faults.
+cat > "${SCRATCH}/serve-record-fault.py" <<PYEOF
+import http.server, os
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.endswith('/publish-check.json'):
+            self.send_error(500, 'Internal Error')
+            return
+        super().do_GET()
+
+    def send_error(self, code, message=None, explain=None):
+        if code == 404:
+            code, message, explain = 403, 'Forbidden', 'Access Denied'
+        super().send_error(code, message, explain)
+
+    def log_message(self, *args):
+        pass
+
+os.chdir('${SCRATCH}/served')
+http.server.HTTPServer(('127.0.0.1', ${PORT} + 5), Handler).serve_forever()
+PYEOF
+python3 "${SCRATCH}/serve-record-fault.py" >/dev/null 2>&1 &
+RECORD_FAULT_PID=$!
+"${SCRATCH}/wait-status.sh" "http://127.0.0.1:$((PORT + 5))/${CONSTRUCT}/${VERSION}/publish-check.json" 500 \
+  || { echo "  FAIL: record-fault stand-in never came up — the check below would pass on a dead server"; fail_count=$((fail_count + 1)); }
+clear_records
+FAULTED_NEW_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/9.9.12"
+mkdir -p "${FAULTED_NEW_DIR}"
+cp "${ARTIFACT_DIR}/template.yaml" "${FAULTED_NEW_DIR}/template.yaml"
+# contract: 024-3-3 S10
+check_message "guard refuses a new artifact when its version's record probe answers neither present nor absent" 1 \
+  "${CONSTRUCT}/9.9.12/publish-check.json — unexpected status 500 probing the published store; refusing (cannot tell whether its check is recorded)" \
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 5))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+rm -rf "${FAULTED_NEW_DIR}"
+kill "${RECORD_FAULT_PID}" 2>/dev/null
+
 echo "=== 013-1-29 S2: overwrite guard refuses changed content at a published key — same byte size ==="
 cp "${ARTIFACT_DIR}/template.yaml" "${SCRATCH}/template.yaml.bak"
 python3 -c "

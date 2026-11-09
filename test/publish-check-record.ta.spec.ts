@@ -69,6 +69,21 @@ describe('the publish-check record', () => {
     expect(recordProblems(RECORD, 'apiable-lambda-authorizer', '1.2.0', VERIFIED.slice(1)).join('; ')).toContain('lists terraform.zip, which was not verified')
   })
 
+  // contract: 024-3-3 S9
+  it.each([
+    ['is a JSON array', '[]', 'not a JSON object'],
+    ['is JSON null', 'null', 'not a JSON object'],
+    ['lists an empty artifact set', RECORD.replace(/"artifacts":\[.*\]/, '"artifacts":[]'), 'lists no artifacts'],
+    ['has no artifact list', RECORD.replace(/,"artifacts":\[.*\]/, ''), 'lists no artifacts'],
+    [
+      'lists one file twice',
+      RECORD.replace('"artifacts":[', `"artifacts":[{"file":"authorizer.zip","kind":"zip","sha256":"${sha('a')}"},`),
+      'lists authorizer.zip twice',
+    ],
+  ])('a record that %s is refused, naming what it found', (_label, text, reason) => {
+    expect(recordProblems(text, 'apiable-lambda-authorizer', '1.2.0', VERIFIED)).toContain(reason)
+  })
+
   // contract: 024-3-3 S7
   it('writes one record per construct version verified', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'publish-check-'))
@@ -116,6 +131,11 @@ describe('the still-offered list', () => {
     ['names a version that climbs out of its key', JSON.stringify([{ ...entry, version: '..' }]), 'a still-offered entry needs a construct and version'],
     ['names a construct that climbs out of its key', JSON.stringify([{ ...entry, construct: '../apiable-gateway-role' }]), 'a still-offered entry needs a construct and version'],
     ['names a version with a path inside it', JSON.stringify([{ ...entry, version: '2.0..0' }]), 'a still-offered entry needs a construct and version'],
+    ['names a file with a path inside it', JSON.stringify([{ ...entry, artifacts: [{ file: 'lambda/authorizer.zip', kind: 'zip', sha256: sha('a') }] }]), 'apiable-gateway-role 2.0.0 names a file that is not a file name'],
+    ['names a file no consumer reads', JSON.stringify([{ ...entry, artifacts: [{ file: 'README.md', kind: 'template', sha256: sha('a') }] }]), 'apiable-gateway-role 2.0.0 README.md is not a published artifact'],
+    ['names one file twice', JSON.stringify([{ ...entry, artifacts: [...entry.artifacts, ...entry.artifacts] }]), 'apiable-gateway-role 2.0.0 template.yaml is listed twice'],
+    ['names a digest that is not 64 lowercase hex', JSON.stringify([{ ...entry, artifacts: [{ file: 'template.yaml', kind: 'template', sha256: sha('A') }] }]), 'template.yaml needs its sha256, 64 lowercase hex'],
+    ['holds an entry that is not an object', '[null]', 'a still-offered entry needs a construct and version'],
   ])('a list that %s is refused, naming it', (_label, text, reason) => {
     expect(() => parseStillOffered(text)).toThrow(reason)
   })
