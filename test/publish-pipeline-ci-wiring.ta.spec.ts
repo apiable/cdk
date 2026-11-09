@@ -56,6 +56,7 @@ describe('the job that publishes is held to what has to pass before the upload',
     return jobs[0]
   }
 
+  // contract: 024-3-3 S2
   it('the job that publishes needs the test job', () => {
     const { needs } = publishingJob()
 
