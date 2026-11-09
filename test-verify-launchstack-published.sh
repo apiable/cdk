@@ -225,6 +225,15 @@ with zipfile.ZipFile(sys.argv[1], 'w') as zf:
 check_message "the guard refuses a new artifact at a version whose check is already recorded, naming the construct and version" 1 \
   "${CONSTRUCT} ${VERSION} — its publish check is already recorded" guard_main
 rm -f "${ARTIFACT_DIR}/extra.zip"
+mv "${ARTIFACT_DIR}/authorizer.zip" "${SCRATCH}/authorizer.zip.recorded"
+rm -f "${RECORD}"
+# contract: 024-3-3 S10
+check "a version that loses a recorded file still verifies, and records the smaller set locally" 0 verify_main
+# contract: 024-3-3 S10
+check_message "the guard refuses the changed record of a version that lost a recorded file, naming the construct and version" 1 \
+  "${RECORD_KEY} — already published with DIFFERENT content" guard_main
+mv "${SCRATCH}/authorizer.zip.recorded" "${ARTIFACT_DIR}/authorizer.zip"
+cp "${SCRATCH}/expected-record.json" "${RECORD}"
 
 echo "=== a published record that does not match its address or its artifacts fails the run, the reason named ==="
 # Corrupts the record on both sides, so only the record arm can refuse it.
@@ -335,6 +344,10 @@ printf '[{"construct":"%s","version":"%s","artifacts":[]}]' "${CONSTRUCT}" "${LI
 # contract: 024-3-3 S22
 check_message "a listed version that names no artifact file fails, naming it" 1 \
   "${CONSTRUCT} ${LISTED_VERSION} names no artifact file" verify_listed "${SCRATCH}/list-no-files.json"
+printf '[{"construct":"%s","version":"..","artifacts":[{"file":"template.yaml","kind":"template","sha256":"%s"}]}]' "${CONSTRUCT}" "${TEMPLATE_SHA}" > "${SCRATCH}/list-climbing.json"
+# contract: 024-3-3 S22
+check_message "a listed version that is not a single key segment fails, naming it" 1 \
+  "a still-offered entry needs a construct and version" verify_listed "${SCRATCH}/list-climbing.json"
 # contract: 024-3-3 S22
 check_message "a still-offered list that cannot be read fails" 1 \
   "the still-offered list ${SCRATCH}/no-such-list.json is not well-formed" verify_listed "${SCRATCH}/no-such-list.json"

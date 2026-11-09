@@ -30,6 +30,8 @@ export const RECORD_FILE = 'publish-check.json'
 export const STILL_OFFERED_LIST = path.join(__dirname, '..', 'launchstack-still-offered.json')
 
 const SHA256 = /^[0-9a-f]{64}$/
+// A construct or version becomes one segment of a store key and of a path under dist/launchstack.
+const isSegment = (value: string): boolean => /^[0-9A-Za-z][0-9A-Za-z.-]*$/.test(value) && !value.includes('..')
 
 export const kindOf = (file: string): ArtifactKind => {
   if (file === 'template.yaml') return 'template'
@@ -109,7 +111,7 @@ export const parseStillOffered = (text: string): StillOffered[] => {
   const seen = new Set<string>()
   return list.map((raw: Record<string, unknown>) => {
     const { construct, version, artifacts } = raw ?? {}
-    if (typeof construct !== 'string' || typeof version !== 'string' || !construct || !version || /[/\s]/.test(construct + version)) {
+    if (typeof construct !== 'string' || typeof version !== 'string' || !isSegment(construct) || !isSegment(version)) {
       throw new Error(`a still-offered entry needs a construct and version: ${JSON.stringify(raw)}`)
     }
     const name = `${construct} ${version}`

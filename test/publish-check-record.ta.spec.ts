@@ -113,6 +113,9 @@ describe('the still-offered list', () => {
     ['names a file under a kind it is not', JSON.stringify([{ ...entry, artifacts: [{ file: 'template.yaml', kind: 'module', sha256: sha('a') }] }]), 'apiable-gateway-role 2.0.0 template.yaml'],
     ['names a version twice', JSON.stringify([entry, entry]), 'apiable-gateway-role 2.0.0 is listed twice'],
     ['names an entry with no version', JSON.stringify([{ ...entry, version: '' }]), 'construct and version'],
+    ['names a version that climbs out of its key', JSON.stringify([{ ...entry, version: '..' }]), 'a still-offered entry needs a construct and version'],
+    ['names a construct that climbs out of its key', JSON.stringify([{ ...entry, construct: '../apiable-gateway-role' }]), 'a still-offered entry needs a construct and version'],
+    ['names a version with a path inside it', JSON.stringify([{ ...entry, version: '2.0..0' }]), 'a still-offered entry needs a construct and version'],
   ])('a list that %s is refused, naming it', (_label, text, reason) => {
     expect(() => parseStillOffered(text)).toThrow(reason)
   })

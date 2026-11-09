@@ -25,9 +25,11 @@
 # Only when every artifact passed does this script write each verified construct version's
 # publish-check.json into dist/launchstack/, which the next publish-launchstack.sh uploads and the
 # next run of this script fetches back and checks against its address and its artifacts. The portal
-# serves an artifact only when that record covers it, so a run with any failure writes none. Fetches carry no credentials: the CloudFormation
-# console, `terraform init`, the portal and (for a code artifact) the Lambda service provisioning in
-# the customer's account all fetch unauthenticated, so anonymous read is the behaviour under test.
+# serves an artifact only when that record covers it, so a run with any failure writes none.
+#
+# Fetches carry no credentials: the CloudFormation console, `terraform init`, the portal and (for a
+# code artifact) the Lambda service provisioning in the customer's account all fetch
+# unauthenticated, so anonymous read is the behaviour under test.
 #
 # Redirects are followed because the console follows them. The region-neutral
 # `<bucket>.s3.amazonaws.com` host answers 307 to the region-specific host until a new bucket's
