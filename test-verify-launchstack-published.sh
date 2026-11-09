@@ -376,12 +376,14 @@ import zipfile
 with zipfile.ZipFile('${SCRATCH}/nested.zip', 'w') as zf:
     zf.writestr('${CONSTRUCT}/main.tf', 'resource \"null_resource\" \"this\" {}\n')
 "
+# contract: 024-3-3 S5
 refuses_artifact terraform.zip "a module archive with main.tf nested below the root fails closed" \
   "main.tf is not at the archive root" "${SCRATCH}/nested.zip"
 
 echo "=== a console instruction set the gate must refuse, each with the reason named ==="
 GOOD_SET="${ARTIFACT_DIR}/console-instructions.json"
 sed 's/"construct":"apiable-test-construct"/"construct":"other-construct"/' "${GOOD_SET}" > "${SCRATCH}/set-other-construct.json"
+# contract: 024-3-3 S5
 refuses_artifact console-instructions.json "an instruction set naming another construct than its key fails closed" \
   "names other-construct@9.9.9 but is published under apiable-test-construct/9.9.9" "${SCRATCH}/set-other-construct.json"
 sed 's/"version":"9.9.9"/"version":"9.9.8"/' "${GOOD_SET}" > "${SCRATCH}/set-other-version.json"
@@ -507,6 +509,7 @@ clear_records
 
 echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
 printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
+# contract: 024-3-3 S5
 refuses_artifact template.yaml "a template with no Resources fails closed" \
   "parsed but carries no Resources" "${SCRATCH}/template-no-resources.yaml"
 printf "AWSTemplateFormatVersion: '2010-09-09'\nResources: [unclosed\n" > "${SCRATCH}/template-not-yaml.yaml"
@@ -520,13 +523,17 @@ echo "=== S5: corrupted served zip (truncated) -> fails closed ==="
 cp "${SERVE_DIR}/authorizer.zip" "${SCRATCH}/authorizer.zip.bak"
 head -c 50 "${SERVE_DIR}/authorizer.zip" > "${SCRATCH}/truncated.zip"
 cp "${SCRATCH}/truncated.zip" "${SERVE_DIR}/authorizer.zip"
-check "corrupted served zip fails closed" 1 \
+# contract: 024-3-3 S5
+check_message "corrupted served zip fails closed, naming it" 1 \
+  "${CONSTRUCT}/${VERSION}/authorizer.zip — served body differs" \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
 cp "${SCRATCH}/authorizer.zip.bak" "${SERVE_DIR}/authorizer.zip"
 
 echo "=== S5: missing served artifact (404) -> fails closed ==="
 rm "${SERVE_DIR}/authorizer.zip"
-check "missing served artifact fails closed" 1 \
+# contract: 024-3-3 S5
+check_message "missing served artifact fails closed, naming it" 1 \
+  "${CONSTRUCT}/${VERSION}/authorizer.zip — anonymous fetch returned 404" \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
 cp "${SCRATCH}/authorizer.zip.bak" "${SERVE_DIR}/authorizer.zip"
 
