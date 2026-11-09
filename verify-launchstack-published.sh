@@ -17,7 +17,7 @@
 # what publish-launchstack.sh uploads — the template.json twin beside a template is a local
 # parity-spec input and is deliberately not in the store.
 #
-# Earlier versions the portal still offers but the pipeline no longer builds are listed in
+# Earlier versions the portal still offers but the pipeline does not build are listed in
 # launchstack-still-offered.json; their bytes cannot be rebuilt, so each is held to its committed
 # digest and never uploaded.
 #
