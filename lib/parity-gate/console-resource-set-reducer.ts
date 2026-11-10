@@ -8,8 +8,9 @@
  * The rebuild inverts exactly the generator's substitutions and nothing more. A value that equals a
  * resource's derived ARN or fixed name in this same set becomes a reference to that resource again,
  * and a token still in the set becomes a `Ref` to its input, declared with the template's default so it
- * reduces as the other channels reduce it. A set the portal has filled carries the values instead. Anything else stays the literal it
- * is, so a stream pointed at a bucket the set does not create is a grant on a foreign ARN and diverges.
+ * reduces as the other channels reduce it. A set the portal has filled carries the values instead.
+ * Anything else stays the literal it is, so a stream pointed at a bucket the set does not create is a
+ * grant on a foreign ARN and diverges.
  * Each primary's declared identity is read from its own document's tag, so a set that lost one shows
  * as the gate's missing-id sentinel.
  */

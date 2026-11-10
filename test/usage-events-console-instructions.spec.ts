@@ -158,6 +158,15 @@ describe('the usage-events set: what the template creates under its conditions',
     ;(t.Parameters as Record<string, Json>).LogSource.Default = 'cloudwatch_logs'
     expect(generate(t).resources.map((resource) => resource.identity)).toContain('CloudWatchOnlyGroup')
   })
+
+  // contract: 024-3-8 S5
+  it('refuses a listed resource that references, outside Fn::If, a resource its condition leaves out', () => {
+    const t = template()
+    resourcesOf(t).CloudWatchOnlyGroup = { Type: 'AWS::Logs::LogGroup', Properties: { LogGroupName: 'cloudwatch-only' }, Condition: 'iscloudwatchlogsourceusagelogs' } as never
+    resourcesOf(t)[logicalIdOfType(t, 'AWS::IAM::Role')].Properties.Description = { Ref: 'CloudWatchOnlyGroup' }
+
+    expect(() => generate(t)).toThrow(/Ref CloudWatchOnlyGroup names neither an input nor a resource/)
+  })
 })
 
 describe('the usage-events set: the direct log path, documented', () => {
