@@ -7,6 +7,7 @@ import {
   buildPublishedStack as buildUsageLogsStreamStack,
   buildPublishedTokensStack as buildUsageTokensStreamStack,
 } from '../lib/logs-stream'
+import { buildPublishedStack as buildUsageEventsStack } from '../lib/usage-events'
 
 /**
  * Registers every published launch-stack stack on `app`, each under its construct name, so
@@ -21,6 +22,7 @@ export const registerPublishedStacks = (app: cdk.App): void => {
   buildLambdaAuthorizerStack(app)
   buildUsageLogsStreamStack(app)
   buildUsageTokensStreamStack(app)
+  buildUsageEventsStack(app)
 }
 
 if (require.main === module) {

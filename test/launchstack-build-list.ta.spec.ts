@@ -25,6 +25,20 @@ describe('the build list names exactly the constructs the publish app registers'
     }
   })
 
+  // contract: 024-3-6 S6
+  it('lists and registers the usage-events construct', () => {
+    expect(buildList()).toContain('apiable-usage-events')
+    expect(registeredConstructs()).toContain('apiable-usage-events')
+  })
+
+  // contract: 024-3-6 S19
+  it('still lists and registers the logs bucket and the usage-log stream for tenants who run them', () => {
+    for (const construct of ['apiable-logs-bucket', 'apiable-usagelogs-stream']) {
+      expect(buildList()).toContain(construct)
+      expect(registeredConstructs()).toContain(construct)
+    }
+  })
+
   // contract: 024-3-3 S1
   it('a list missing a registered construct names it as missing', () => {
     const [dropped, ...trimmed] = buildList()

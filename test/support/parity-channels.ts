@@ -5,6 +5,7 @@ import { buildPublishedStack as buildLogsBucketStack } from '@apiable/cdk-logs-b
 import { buildPublishedStack as buildCognitoPoolStack } from '@apiable/cdk-cognito-pool'
 import { buildPublishedStack as buildLambdaAuthorizerStack } from '@apiable/cdk-lambda-authorizer'
 import { buildPublishedStack as buildUsageLogsStreamStack, buildPublishedTokensStack as buildUsageTokensStreamStack } from '@apiable/cdk-usagelogs-stream'
+import { buildPublishedStack as buildUsageEventsStack } from '@apiable/cdk-usage-events'
 import { publishedTemplatePath } from './published-template'
 
 const FIXTURES = path.join(__dirname, '..', 'fixtures', 'parity-gate')
@@ -77,6 +78,15 @@ export const USAGETOKENS_STREAM: ParityChannelRow = {
   tfDeployAccount: '111111111111',
 }
 
+export const USAGE_EVENTS: ParityChannelRow = {
+  construct: 'apiable-usage-events',
+  buildCdk: (app) => buildUsageEventsStack(app),
+  publishedCfn: publishedTemplatePath('apiable-usage-events'),
+  tfFixture: path.join(FIXTURES, 'terraform-usage-events-show.json'),
+  tfRegion: 'eu-central-1',
+  tfDeployAccount: '111111111111',
+}
+
 export const PARITY_CHANNELS: readonly ParityChannelRow[] = [
   GATEWAY_ROLE,
   LOGS_BUCKET,
@@ -84,4 +94,5 @@ export const PARITY_CHANNELS: readonly ParityChannelRow[] = [
   LAMBDA_AUTHORIZER,
   USAGELOGS_STREAM,
   USAGETOKENS_STREAM,
+  USAGE_EVENTS,
 ]

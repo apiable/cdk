@@ -729,6 +729,55 @@ check_message "guard refuses a new artifact when its version's record probe answ
 rm -rf "${FAULTED_NEW_DIR}"
 kill "${RECORD_FAULT_PID}" 2>/dev/null
 
+echo "=== apiable-usage-events: its template and module archive are verified and recorded like every construct ==="
+UE_CONSTRUCT="apiable-usage-events"
+UE_VERSION="$(node -p "require('./lib/usage-events/package.json').version")"
+bash synth-launchstack.sh "${UE_CONSTRUCT}" >/dev/null 2>&1 || { echo "  FAIL: could not synthesize ${UE_CONSTRUCT}"; fail_count=$((fail_count + 1)); }
+UE_SRC="${SCRATCH}/ue-dist/launchstack"
+UE_DIR="${UE_SRC}/${UE_CONSTRUCT}/${UE_VERSION}"
+UE_SERVED="${SCRATCH}/served/${UE_CONSTRUCT}/${UE_VERSION}"
+mkdir -p "${UE_DIR}" "${UE_SERVED}"
+for artifact in template.yaml terraform.zip; do
+  cp "dist/launchstack/${UE_CONSTRUCT}/${UE_VERSION}/${artifact}" "${UE_DIR}/${artifact}"
+  cp "${UE_DIR}/${artifact}" "${UE_SERVED}/${artifact}"
+done
+verify_usage_events() {
+  env SRC_DIR="${UE_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+# contract: 024-3-6 S6
+check_message "the usage-events template and module archive fetch anonymously and parse" 0 \
+  "${UE_CONSTRUCT}/${UE_VERSION}/terraform.zip" verify_usage_events
+expected_record "${UE_DIR}" "${UE_CONSTRUCT}" "${UE_VERSION}" > "${SCRATCH}/ue-expected-record.json"
+# contract: 024-3-6 S6
+check "one passing record for usage-events lists its template and module archive with their digests" 0 \
+  cmp "${UE_DIR}/publish-check.json" "${SCRATCH}/ue-expected-record.json"
+ue_record_names_both() {
+  python3 -c "
+import json, sys
+record = json.load(open(sys.argv[1]))
+assert [(a['file'], a['kind']) for a in record['artifacts']] == [('template.yaml', 'template'), ('terraform.zip', 'module')], record
+" "${UE_DIR}/publish-check.json"
+}
+# contract: 024-3-6 S6
+check "the usage-events record names the template and the module, and nothing else" 0 ue_record_names_both
+rm -f "${UE_DIR}/publish-check.json"
+python3 -c "
+import zipfile
+with zipfile.ZipFile('${SCRATCH}/ue-malformed.zip', 'w') as zf:
+    zf.writestr('${UE_CONSTRUCT}/main.tf', 'resource \"null_resource\" \"this\" {}\n')
+"
+cp "${SCRATCH}/ue-malformed.zip" "${UE_DIR}/terraform.zip"
+cp "${SCRATCH}/ue-malformed.zip" "${UE_SERVED}/terraform.zip"
+# contract: 024-3-6 S6
+check_message "a malformed usage-events module archive fails the run, naming it" 1 \
+  "main.tf is not at the archive root" verify_usage_events
+ue_no_record() {
+  [[ ! -e "${UE_DIR}/publish-check.json" ]]
+}
+# contract: 024-3-6 S6
+check "a malformed usage-events module archive records nothing for usage-events" 0 ue_no_record
+rm -rf "${UE_SRC}" "${SCRATCH}/served/${UE_CONSTRUCT}"
+
 echo "=== 013-1-29 S2: overwrite guard refuses changed content at a published key — same byte size ==="
 cp "${ARTIFACT_DIR}/template.yaml" "${SCRATCH}/template.yaml.bak"
 python3 -c "

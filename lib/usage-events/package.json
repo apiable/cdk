@@ -1,0 +1,14 @@
+{
+  "name": "@apiable/cdk-usage-events",
+  "version": "1.0.0",
+  "description": "Apiable CDK construct kit: the customer-side usage-log pipeline (logs bucket and usage-log delivery stream) in one stack with one-click CloudFormation provisioning.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "peerDependencies": {
+    "aws-cdk-lib": "2.137.0",
+    "constructs": "^10.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

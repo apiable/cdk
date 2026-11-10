@@ -260,6 +260,56 @@ jobs:
           rm -f ci_provider_override.tf tfplan.bin
           npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usagetokens-stream-show.json ${{ env.AWS_REGION }}
 
+      # contract: 024-3-6 S9
+      - name: terraform validate (usage-events module)
+        working-directory: terraform/apiable-usage-events
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      # The module is published as an archive of this one directory, so it must initialise and validate
+      # unpacked alone: a source reaching outside the directory resolves in the repository and fails here.
+      # contract: 024-3-6 S9
+      - name: the published usage-events module archive validates on its own
+        run: |
+          MODULE_ZIP="dist/launchstack/apiable-usage-events/$(node -p "require('./lib/usage-events/package.json').version")/terraform.zip"
+          UNPACKED="$(mktemp -d)"
+          python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "${MODULE_ZIP}" "${UNPACKED}"
+          terraform -chdir="${UNPACKED}" init -backend=false -input=false
+          terraform -chdir="${UNPACKED}" validate
+
+      # contract: 024-3-6 S4
+      # contract: 024-3-6 S9
+      - name: terraform rejects a write-principal-widening value (usage-events module)
+        working-directory: terraform/apiable-usage-events
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: |
+          if terraform plan -input=false -var name=ci -var partner_account='*' 2>plan-err.log; then
+            echo "expected the wildcard partner_account to be rejected, but the plan succeeded"
+            exit 1
+          fi
+          grep -q '12-digit' plan-err.log
+
+      # The bucket policy grants the deploying account (data.aws_caller_identity), which only a
+      # credentialed plan in the apiable-logging account resolves, as on the logs-bucket leg.
+      # contract: 024-3-6 S9
+      - name: terraform regen ground-truths the committed fixture (usage-events, credentialed)
+        if: ${{ env.HAS_LOGGING_CREDENTIALS != '' }}
+        working-directory: terraform/apiable-usage-events
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.APIABLE_LOGGING_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.APIABLE_LOGGING_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          terraform plan -input=false -refresh=false -var name=ci -var partner_account=034444869755 -out=tfplan.bin
+          terraform show -json tfplan.bin > tf-show.json
+          rm -f tfplan.bin
+          DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usage-events-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
+
       # Terraform channel well-formedness for the operator-owned firehose-destination guardrail (no cloud
       # account: validate needs only the provider plugin). The committed terraform-logs-guardrail-show.json
       # is the entire oracle for the deploy-time guardrail spec's six scenarios, so its regen ground-truth

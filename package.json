@@ -16,12 +16,14 @@
     "synth:launchstack:lambda-authorizer": "bash synth-launchstack.sh apiable-lambda-authorizer",
     "synth:launchstack:usagelogs-stream": "bash synth-launchstack.sh apiable-usagelogs-stream",
     "synth:launchstack:usagetokens-stream": "bash synth-launchstack.sh apiable-usagetokens-stream",
+    "synth:launchstack:usage-events": "bash synth-launchstack.sh apiable-usage-events",
     "publish:terraform": "bash publish-terraform.sh",
     "publish:terraform:logs-bucket": "bash publish-terraform.sh apiable-logs-bucket",
     "publish:terraform:cognito-pool": "bash publish-terraform.sh apiable-cognito-pool",
     "publish:terraform:lambda-authorizer": "bash publish-terraform.sh apiable-lambda-authorizer",
     "publish:terraform:usagelogs-stream": "bash publish-terraform.sh apiable-usagelogs-stream",
     "publish:terraform:usagetokens-stream": "bash publish-terraform.sh apiable-usagetokens-stream",
+    "publish:terraform:usage-events": "bash publish-terraform.sh apiable-usage-events",
     "cdk": "cdk"
   },
   "devDependencies": {
