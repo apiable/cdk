@@ -173,6 +173,14 @@ describe(`${USAGE_EVENTS.construct} parity — the console set as the fourth cha
   })
 
   // contract: 024-3-8 S9
+  it('the set as published, its tokens unfilled, reduces to the same model: each token goes back to its input', () => {
+    const result = gateWithConsole(JSON.parse(publishedSetText()) as ConsoleResourceSet)
+
+    expect(result.divergences).toEqual([])
+    expect(result.passed).toBe(true)
+  })
+
+  // contract: 024-3-8 S9
   it("reads each primary's declared identity from its own document, and none is missing on the console channel", () => {
     const refs = consoleModel(filledSet()).graph.nodes.map((node) => node.ref)
 

@@ -2,8 +2,9 @@
 #
 # Verify every synthesized launch-stack artifact — the CloudFormation template, a code artifact such
 # as the lambda-authorizer's zip, a Terraform module archive, and the hand-build console set the
-# gateway role and the usage-events construct publish — is anonymously fetchable at the address the portal (or the template itself)
-# composes for it, and that the served bytes are the bytes that were synthesized.
+# gateway role and the usage-events construct publish — is anonymously fetchable at the address the
+# portal (or the template itself) composes for it, and that the served bytes are the bytes that were
+# synthesized.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
 # PublishedArtifactAddress.kt — `<construct>/<version>/template.yaml`, `<construct>/<version>/
@@ -240,7 +241,7 @@ is_wellformed_instructions() {
         const reference = text.match(/\"(Ref|Fn::[A-Za-z]+)\":/);
         if (reference) throw new Error('still carries the deploy-time reference ' + reference[1]);
         const known = new Set(['{region}', '{tenant-name}', '{partner-account}', '{account}']);
-        const unknown = (text.match(/\{[A-Za-z0-9-]+\}/g) || []).find((token) => !known.has(token));
+        const unknown = (text.match(/\{[A-Za-z0-9_-]+\}/g) || []).find((token) => !known.has(token));
         if (unknown) throw new Error('carries the token ' + unknown + ', which the portal does not know');
         if (/(?<![0-9])[0-9]{12}(?![0-9])/.test(text)) throw new Error('carries a twelve-digit account number');
       } else {

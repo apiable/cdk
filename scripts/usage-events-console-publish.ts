@@ -2,22 +2,16 @@
  * Writes the hand-build set that publishes beside the usage-events template: every resource the
  * template creates, resolved, with the tenant name, the partner account and the region left as the
  * tokens the serving portal fills and the customer's own account left as `{account}`. Refuses to write
- * a set that lost a fill token or still carries a deploy-time reference, then reads back and parses the
- * file it wrote, because the store is write-once and nothing after this step can take a set back out.
+ * a set the portal could not serve, then reads back and parses the file it wrote, because the store is
+ * write-once and nothing after this step can take a set back out.
  *
  * Usage: ts-node scripts/usage-events-console-publish.ts <template.json> <version> <out.json>
  */
 import * as fs from 'fs'
-import { findDeployTimeReference, serializeConsoleResourceSet } from '../lib/console-explainer/resource-set'
-import { generateUsageEventsConsoleSet, USAGE_EVENTS_FILL_TOKENS } from '../lib/usage-events/console-instructions'
+import { serializeConsoleResourceSet } from '../lib/console-explainer/resource-set'
+import { generateUsageEventsConsoleSet, usageEventsSetRefusal } from '../lib/usage-events/console-instructions'
 
-/** Why `text` is not a set the portal can fill, or `undefined` when it is one. */
-const refusalOf = (text: string): string | undefined => {
-  const missing = USAGE_EVENTS_FILL_TOKENS.find((token) => !text.includes(token))
-  if (missing !== undefined) return `the generated set carries no ${missing} token`
-  const reference = findDeployTimeReference(JSON.parse(text))
-  return reference === undefined ? undefined : `the generated set still carries the deploy-time reference ${reference}`
-}
+const refusalOf = (text: string): string | undefined => usageEventsSetRefusal(JSON.parse(text))
 
 const main = (): void => {
   const [templatePath, version, outPath] = process.argv.slice(2)

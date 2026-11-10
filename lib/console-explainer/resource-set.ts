@@ -42,6 +42,8 @@ export interface ConsoleResourceSetOptions {
 interface TemplateResource {
   readonly type: string
   readonly properties: Record<string, unknown>
+  /** The template condition the resource is created under, when it has one. */
+  readonly condition?: string
 }
 
 const NO_VALUE = Symbol('AWS::NoValue')
@@ -50,7 +52,7 @@ type Resolved = unknown
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const isIntrinsicKey = (key: string): boolean => key === 'Ref' || key === 'Condition' || key.startsWith('Fn::')
+const isIntrinsicKey = (key: string): boolean => key === 'Ref' || key.startsWith('Fn::')
 
 /** The first deploy-time reference anywhere in `value`, as its key, or `undefined` when none remains. */
 export const findDeployTimeReference = (value: unknown): string | undefined => {
@@ -78,7 +80,12 @@ const readResources = (template: unknown): ReadonlyMap<string, TemplateResource>
   const byId = new Map<string, TemplateResource>()
   for (const [id, spec] of Object.entries(resources)) {
     if (!isRecord(spec) || typeof spec.Type !== 'string') throw new Error(`resource ${id} carries no Type`)
-    byId.set(id, { type: spec.Type, properties: isRecord(spec.Properties) ? spec.Properties : {} })
+    if (spec.Condition !== undefined && typeof spec.Condition !== 'string') throw new Error(`resource ${id} names a condition that is not a condition name`)
+    byId.set(id, {
+      type: spec.Type,
+      properties: isRecord(spec.Properties) ? spec.Properties : {},
+      ...(typeof spec.Condition === 'string' ? { condition: spec.Condition } : {}),
+    })
   }
   return byId
 }
@@ -283,7 +290,7 @@ const makeResolver = (template: unknown, resources: ReadonlyMap<string, Template
     return resolveIntrinsic(intrinsic, value[intrinsic])
   }
 
-  return { resolveObject, parameterDefault }
+  return { resolveObject, parameterDefault, conditionHolds }
 }
 
 /**
@@ -291,7 +298,10 @@ const makeResolver = (template: unknown, resources: ReadonlyMap<string, Template
  * any function, attribute or input outside the rules above, so a set is either whole or not produced.
  */
 export const generateConsoleResourceSet = (template: unknown, options: ConsoleResourceSetOptions): ConsoleResourceSet => {
-  const resources = readResources(template)
+  const declared = readResources(template)
+  const { conditionHolds } = makeResolver(template, declared, options)
+  // A resource created only under a condition the documented defaults do not meet is not on this path.
+  const resources = new Map([...declared].filter(([, resource]) => resource.condition === undefined || conditionHolds(resource.condition)))
   const { resolveObject, parameterDefault } = makeResolver(template, resources, options)
   const documents = Object.fromEntries(
     Object.entries(options.documentedParameters).map(([key, parameter]) => [key, parameterDefault(parameter)]),

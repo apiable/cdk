@@ -4,9 +4,14 @@
  * of its input without the `Apiable` prefix; the region and the deploying account keep the parity
  * model's `{region}` and `{account}`.
  */
-import { ConsoleResourceSet, generateConsoleResourceSet } from '../console-explainer/resource-set'
+import { ConsoleResourceSet, findDeployTimeReference, generateConsoleResourceSet } from '../console-explainer/resource-set'
 import type { ConsoleResourceSetReduction } from '../parity-gate/console-resource-set-reducer'
-import { LOGS_WRITE_ROLE_LOGICAL_ID, PARTNER_ACCOUNT_PARAMETER, TENANT_NAME_PARAMETER } from '@apiable/cdk-logs-bucket'
+import {
+  DEFAULT_APIABLE_PARTNER_ACCOUNT,
+  LOGS_WRITE_ROLE_LOGICAL_ID,
+  PARTNER_ACCOUNT_PARAMETER,
+  TENANT_NAME_PARAMETER,
+} from '@apiable/cdk-logs-bucket'
 import { LOG_SOURCE_PARAMETER } from '@apiable/cdk-usagelogs-stream'
 import { CONSTRUCT_NAME } from './launch-stack-url'
 
@@ -24,6 +29,26 @@ export const USAGE_EVENTS_PARAMETER_TOKENS: Readonly<Record<string, string>> = {
 /** The set documents the log source's default path, the one a hand-build follows. */
 export const USAGE_EVENTS_DOCUMENTED_PARAMETERS: Readonly<Record<string, string>> = { logSource: LOG_SOURCE_PARAMETER }
 
+const KNOWN_TOKENS: ReadonlySet<string> = new Set([...USAGE_EVENTS_FILL_TOKENS, '{account}'])
+
+/**
+ * Why a written set is not one the serving portal can use, or `undefined` when it is: the rule the
+ * post-publish check and the portal's reader apply, checked before the set reaches the write-once store.
+ */
+export const usageEventsSetRefusal = (set: unknown): string | undefined => {
+  const text = JSON.stringify(set)
+  const missing = USAGE_EVENTS_FILL_TOKENS.find((token) => !text.includes(token))
+  if (missing !== undefined) return `the set carries no ${missing} token`
+  const reference = findDeployTimeReference(set)
+  if (reference !== undefined) return `the set still carries the deploy-time reference ${reference}`
+  const unknown = (text.match(/\{[A-Za-z0-9_-]+\}/g) ?? []).find((token) => !KNOWN_TOKENS.has(token))
+  if (unknown !== undefined) return `the set carries the token ${unknown}, which the portal does not know`
+  if (/(?<![0-9])[0-9]{12}(?![0-9])/.test(text)) return 'the set carries a twelve-digit account number'
+  const documents = (set as { documents?: { logSource?: unknown } }).documents
+  if (typeof documents?.logSource !== 'string') return 'the set records no log-source path'
+  return undefined
+}
+
 export const generateUsageEventsConsoleSet = (template: unknown, version: string): ConsoleResourceSet =>
   generateConsoleResourceSet(template, {
     construct: CONSTRUCT_NAME,
@@ -37,7 +62,10 @@ export const generateUsageEventsConsoleSet = (template: unknown, version: string
  * other three channels export (the bucket's name and ARN, the write role's ARN, the stream's ARN).
  */
 export const USAGE_EVENTS_CONSOLE_REDUCTION: ConsoleResourceSetReduction = {
-  parameterTokens: USAGE_EVENTS_PARAMETER_TOKENS,
+  parameters: {
+    [TENANT_NAME_PARAMETER]: { token: TENANT_NAME_TOKEN },
+    [PARTNER_ACCOUNT_PARAMETER]: { token: PARTNER_ACCOUNT_TOKEN, default: DEFAULT_APIABLE_PARTNER_ACCOUNT },
+  },
   exports: [
     { cfnType: 'AWS::S3::Bucket', attribute: 'Ref' },
     { cfnType: 'AWS::S3::Bucket', attribute: 'Arn' },

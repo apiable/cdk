@@ -10,7 +10,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { generateConsoleInstructionTemplate } from '@apiable/cdk-gateway-role'
 import { ConsoleResourceSet, findDeployTimeReference, serializeConsoleResourceSet } from '@apiable/cdk-console-explainer'
-import { generateUsageEventsConsoleSet } from '../lib/usage-events/console-instructions'
+import { generateUsageEventsConsoleSet, usageEventsSetRefusal } from '../lib/usage-events/console-instructions'
 import { publishedTemplatePath, publishedVersion } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -137,6 +137,29 @@ describe('the usage-events set: references resolve to fixed names and derived AR
   })
 })
 
+describe('the usage-events set: what the template creates under its conditions', () => {
+  // contract: 024-3-8 S2
+  it('keeps an IAM statement that carries a Condition block, resolving the values inside it', () => {
+    const t = template()
+    const writeRole = resourcesOf(t)[logicalIdOfType(t, 'AWS::IAM::Role')]
+    const trust = writeRole.Properties.AssumeRolePolicyDocument as { Statement: Json[] }
+    trust.Statement[0].Condition = { StringEquals: { 'aws:SourceAccount': { Ref: 'ApiablePartnerAccount' } } }
+
+    const statement = (entry(generate(t), 'AWS::IAM::Role').document.AssumeRolePolicyDocument as { Statement: Json[] }).Statement[0]
+    expect(statement.Condition).toEqual({ StringEquals: { 'aws:SourceAccount': '{partner-account}' } })
+  })
+
+  // contract: 024-3-8 S3
+  it('lists a resource created under a condition only when the documented defaults meet it', () => {
+    const t = template()
+    resourcesOf(t).CloudWatchOnlyGroup = { Type: 'AWS::Logs::LogGroup', Properties: { LogGroupName: 'cloudwatch-only' }, Condition: 'iscloudwatchlogsourceusagelogs' } as never
+    expect(generate(t).resources.map((resource) => resource.identity)).not.toContain('CloudWatchOnlyGroup')
+
+    ;(t.Parameters as Record<string, Json>).LogSource.Default = 'cloudwatch_logs'
+    expect(generate(t).resources.map((resource) => resource.identity)).toContain('CloudWatchOnlyGroup')
+  })
+})
+
 describe('the usage-events set: the direct log path, documented', () => {
   // contract: 024-3-8 S3
   it('evaluates the log-source condition over the defaults: no processing block, and the set records the direct path', () => {
@@ -249,6 +272,23 @@ describe('the usage-events set: anything it cannot derive refuses the whole set'
     }, 60000)
 
     // contract: 024-3-8 S5
+    it('refuses, by the rule the portal serves by, a set with a leftover reference, an unknown token, an account number or no log-source path', () => {
+      const good = JSON.parse(serializeConsoleResourceSet(generate())) as Json
+      const variant = (change: (set: Json & { resources: { document: Json }[] }) => void): unknown => {
+        const set = JSON.parse(JSON.stringify(good)) as Json & { resources: { document: Json }[] }
+        change(set)
+        return set
+      }
+
+      expect(usageEventsSetRefusal(good)).toBeUndefined()
+      expect(usageEventsSetRefusal(variant((set) => { set.resources[1].document.Bucket = { Ref: 'Bucket' } }))).toContain('deploy-time reference Ref')
+      expect(usageEventsSetRefusal(variant((set) => { set.resources[0].document.Note = '{trust-account}' }))).toContain('{trust-account}')
+      expect(usageEventsSetRefusal(variant((set) => { set.resources[0].document.Note = '{tenant_name}' }))).toContain('{tenant_name}')
+      expect(usageEventsSetRefusal(variant((set) => { set.resources[0].document.Note = 'arn:aws:iam::034444869755:root' }))).toContain('twelve-digit')
+      expect(usageEventsSetRefusal(variant((set) => { delete set.documents }))).toContain('log-source path')
+    })
+
+    // contract: 024-3-8 S5
     it('writes the set it generated for the published template', () => {
       const run = runWriter(template())
 
@@ -271,8 +311,7 @@ describe('the usage-events set: the same template gives the same bytes', () => {
 })
 
 describe("the gateway role's set is untouched by the second generator", () => {
-  // Templates and sets captured from origin/master 49ed2f3 before this change; both sets equal the ones the
-  // store serves today.
+  // The gateway role's templates and sets at both versions the store serves; each set equals the published one.
   const GATEWAY_SETS: readonly (readonly [string, string, string])[] = [
     ['2.0.0', 'gateway-role-v2-template.json', 'gateway-role-v2-console-instructions.json'],
     ['3.0.0', 'gateway-role-v3-template.json', 'gateway-role-v3-console-instructions.json'],
