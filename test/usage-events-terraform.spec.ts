@@ -2,11 +2,13 @@
  * The apiable-usage-events Terraform module, read through the HCL reader: exactly the three inputs the
  * one-click template takes, bounded the same way, and a module that stands on its own.
  */
+import { spawnSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import { DEFAULT_APIABLE_PARTNER_ACCOUNT } from '@apiable/cdk-logs-bucket'
 import { LOG_SOURCE_APIGATEWAY_DIRECT, LOG_SOURCE_VALUES } from '@apiable/cdk-usagelogs-stream'
 import { HclBlock, HclCall, HclRef, parseHcl } from './support/hcl'
+import { publishedTemplatePath } from './support/published-template'
 
 const MODULE_DIR = path.resolve(__dirname, '../terraform/apiable-usage-events')
 const moduleText = (name: string): string => fs.readFileSync(path.join(MODULE_DIR, name), 'utf8')
@@ -93,6 +95,16 @@ describe('apiable-usage-events terraform module — it stands on its own', () =>
 
     expect(main).toMatch(/bucket_arn\s*=\s*aws_s3_bucket\.this\.arn/)
     expect(main.match(/Resource = \[aws_s3_bucket\.this\.arn, "\$\{aws_s3_bucket\.this\.arn\}\/\*"\]/g)).toHaveLength(3)
+  })
+
+  it('publishes an archive of exactly the tracked files of its own directory', () => {
+    const archive = path.join(path.dirname(publishedTemplatePath('apiable-usage-events')), 'terraform.zip')
+    const listing = spawnSync('unzip', ['-Z1', archive], { encoding: 'utf8' })
+    const tracked = spawnSync('git', ['ls-files', '--', '.'], { cwd: MODULE_DIR, encoding: 'utf8' })
+
+    expect(listing.status).toBe(0)
+    expect(listing.stdout.split('\n').filter((entry) => entry !== '').sort()).toEqual(tracked.stdout.split('\n').filter((entry) => entry !== '').sort())
+    expect(listing.stdout).not.toContain('/')
   })
 
   it('outputs the bucket, the write role and the stream an API Gateway stage attaches to', () => {
