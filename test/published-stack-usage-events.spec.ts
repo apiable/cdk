@@ -18,6 +18,7 @@ const accountLiteralsIn = (section: unknown): string[] => JSON.stringify(section
 
 describe('the published usage-events template declares exactly three bounded inputs', () => {
   // contract: 024-3-6 S2
+  // contract: 024-3-8 S19
   it('declares the tenant name, the partner account and the log source, and nothing else', () => {
     expect(Object.keys(parameters()).sort()).toEqual(['ApiablePartnerAccount', 'LogSource', 'TenantName'])
   })

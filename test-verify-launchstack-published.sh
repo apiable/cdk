@@ -28,7 +28,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-CONSTRUCT="apiable-test-construct"
+# The shared tree's instruction set is a gateway-role set, and a set is held to its own construct's shape.
+CONSTRUCT="apiable-gateway-role"
 VERSION="9.9.9"
 ARTIFACT_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/${VERSION}"
 SERVE_DIR="${SCRATCH}/served/${CONSTRUCT}/${VERSION}"
@@ -57,7 +58,7 @@ with zipfile.ZipFile('${ARTIFACT_DIR}/terraform.zip', 'w') as zf:
 # The shape the portal serves from: named construct + version, the three load-bearing fields, and the
 # three tokens the portal fills.
 cat > "${ARTIFACT_DIR}/console-instructions.json" <<'JSON'
-{"construct":"apiable-test-construct","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":"arn:aws:iam::{trust-account}:root"},"Condition":{"StringEquals":{"sts:ExternalId":"{external-id}"}}}]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
+{"construct":"apiable-gateway-role","version":"9.9.9","region":"{region}","roleName":"apiable-test-role-{region}","trustAccount":"{trust-account}","trustDocument":{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"AWS":"arn:aws:iam::{trust-account}:root"},"Condition":{"StringEquals":{"sts:ExternalId":"{external-id}"}}}]},"permissionDocument":{"Version":"2012-10-17","Statement":[]}}
 JSON
 for artifact in template.yaml authorizer.zip terraform.zip console-instructions.json; do
   cp "${ARTIFACT_DIR}/${artifact}" "${SERVE_DIR}/${artifact}"
@@ -247,7 +248,7 @@ refuses_record() {
 }
 # contract: 024-3-3 S9
 refuses_record "a record naming another construct fails the run" \
-  "names construct apiable-other-construct, published under ${CONSTRUCT}" '"construct":"apiable-test-construct"' '"construct":"apiable-other-construct"'
+  "names construct apiable-other-construct, published under ${CONSTRUCT}" '"construct":"apiable-gateway-role"' '"construct":"apiable-other-construct"'
 # contract: 024-3-3 S9
 refuses_record "a record naming another version fails the run" \
   "names version 9.9.8, published under ${VERSION}" '"version":"9.9.9"' '"version":"9.9.8"'
@@ -382,13 +383,13 @@ refuses_artifact terraform.zip "a module archive with main.tf nested below the r
 
 echo "=== a console instruction set the gate must refuse, each with the reason named ==="
 GOOD_SET="${ARTIFACT_DIR}/console-instructions.json"
-sed 's/"construct":"apiable-test-construct"/"construct":"other-construct"/' "${GOOD_SET}" > "${SCRATCH}/set-other-construct.json"
+sed 's/"construct":"apiable-gateway-role"/"construct":"other-construct"/' "${GOOD_SET}" > "${SCRATCH}/set-other-construct.json"
 # contract: 024-3-3 S5
 refuses_artifact console-instructions.json "an instruction set naming another construct than its key fails closed" \
-  "names other-construct@9.9.9 but is published under apiable-test-construct/9.9.9" "${SCRATCH}/set-other-construct.json"
+  "names other-construct@9.9.9 but is published under apiable-gateway-role/9.9.9" "${SCRATCH}/set-other-construct.json"
 sed 's/"version":"9.9.9"/"version":"9.9.8"/' "${GOOD_SET}" > "${SCRATCH}/set-other-version.json"
 refuses_artifact console-instructions.json "an instruction set naming a different version than its key fails closed" \
-  "names apiable-test-construct@9.9.8 but is published under apiable-test-construct/9.9.9" "${SCRATCH}/set-other-version.json"
+  "names apiable-gateway-role@9.9.8 but is published under apiable-gateway-role/9.9.9" "${SCRATCH}/set-other-version.json"
 python3 -c "
 import json, sys
 doc = json.load(open(sys.argv[1]))
@@ -403,7 +404,7 @@ refuses_artifact console-instructions.json "an instruction set with its tokens a
 sed 's/{external-id}/a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d/g' "${GOOD_SET}" > "${SCRATCH}/set-external-id-baked.json"
 refuses_artifact console-instructions.json "an instruction set with one portal's external ID baked in fails closed" \
   "carries no {external-id} token for the portal to fill" "${SCRATCH}/set-external-id-baked.json"
-printf '{"construct": "apiable-test-construct",' > "${SCRATCH}/set-malformed.json"
+printf '{"construct": "apiable-gateway-role",' > "${SCRATCH}/set-malformed.json"
 refuses_artifact console-instructions.json "an instruction set that is not JSON fails closed" \
   "not JSON" "${SCRATCH}/set-malformed.json"
 
@@ -777,6 +778,141 @@ ue_no_record() {
 # contract: 024-3-6 S6
 check "a malformed usage-events module archive records nothing for usage-events" 0 ue_no_record
 rm -rf "${UE_SRC}" "${SCRATCH}/served/${UE_CONSTRUCT}"
+
+echo "=== apiable-usage-events: its hand-build set is held to its own shape and recorded under instructions ==="
+# The set synth just wrote, beside the published 2.0.0 gateway-role set, in one run: each construct's
+# set is held to its own construct's shape.
+UE_SET_SRC="${SCRATCH}/ue-set-dist/launchstack"
+UE_SET_DIR="${UE_SET_SRC}/${UE_CONSTRUCT}/${UE_VERSION}"
+UE_SET_SERVED="${SCRATCH}/served/${UE_CONSTRUCT}/${UE_VERSION}"
+UE_SET_KEY="${UE_CONSTRUCT}/${UE_VERSION}/console-instructions.json"
+GOOD_UE_SET="${SCRATCH}/ue-set-good.json"
+cp "dist/launchstack/${UE_CONSTRUCT}/${UE_VERSION}/console-instructions.json" "${GOOD_UE_SET}"
+mkdir -p "${UE_SET_DIR}" "${UE_SET_SERVED}" "${UE_SET_SRC}/apiable-gateway-role/2.0.0" "${SCRATCH}/served/apiable-gateway-role/2.0.0"
+cp "${V2_SET}" "${UE_SET_SRC}/apiable-gateway-role/2.0.0/console-instructions.json"
+cp "${V2_SET}" "${SCRATCH}/served/apiable-gateway-role/2.0.0/console-instructions.json"
+publish_ue_set() {
+  cp "$1" "${UE_SET_DIR}/console-instructions.json"
+  cp "$1" "${UE_SET_SERVED}/console-instructions.json"
+}
+verify_ue_set() {
+  env SRC_DIR="${UE_SET_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+publish_ue_set "${GOOD_UE_SET}"
+# contract: 024-3-8 S7
+check_message "a good usage-events set fetches anonymously, matches its bytes and parses as a usage-events set" 0 \
+  "${UE_SET_KEY}" verify_ue_set
+expected_record "${UE_SET_DIR}" "${UE_CONSTRUCT}" "${UE_VERSION}" > "${SCRATCH}/ue-set-expected-record.json"
+# contract: 024-3-8 S7
+check "the passing record lists the usage-events set under instructions with its digest" 0 \
+  cmp "${UE_SET_DIR}/publish-check.json" "${SCRATCH}/ue-set-expected-record.json"
+gateway_set_recorded_beside() {
+  [[ -e "${UE_SET_SRC}/apiable-gateway-role/2.0.0/publish-check.json" ]]
+}
+# contract: 024-3-8 S7
+check "the gateway role's set in the same run is judged by its own rule and passes" 0 gateway_set_recorded_beside
+clear_records
+
+# Writes the good set with one change to $1: a python expression over `doc` (the parsed set) or, with
+# a `text:` prefix, a replacement over its serialised text.
+ue_set_variant() {
+  python3 -c "
+import json, sys
+out, change = sys.argv[1], sys.argv[2]
+text = open(sys.argv[3]).read()
+if change.startswith('text:'):
+    old, new = change[5:].split('=>')
+    open(out, 'w').write(text.replace(old, new))
+else:
+    doc = json.loads(text)
+    exec(change)
+    open(out, 'w').write(json.dumps(doc, indent=2) + '\n')
+" "$1" "$2" "${GOOD_UE_SET}"
+}
+ue_set_records_nothing() {
+  [[ ! -e "${UE_SET_DIR}/publish-check.json" ]]
+}
+# Publishes the variant on both sides (so only the shape arm can red), asserts the reason and that no
+# record is written, then restores the good set.
+refuses_ue_set() {
+  local desc="$1" reason="$2" change="$3"
+  ue_set_variant "${SCRATCH}/ue-set-variant.json" "${change}"
+  publish_ue_set "${SCRATCH}/ue-set-variant.json"
+  check_message "${desc}" 1 \
+    "${UE_SET_KEY} — local artifact is not a well-formed console instruction set: ${reason}" verify_ue_set
+  check "${desc}: no record is written for the version" 0 ue_set_records_nothing
+  clear_records
+  publish_ue_set "${GOOD_UE_SET}"
+}
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events set that is not JSON fails closed" "not JSON" "text:\"resources\"=>\"resources"
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events set naming another construct fails closed" \
+  "names apiable-other@${UE_VERSION} but is published under ${UE_CONSTRUCT}/${UE_VERSION}" "doc['construct'] = 'apiable-other'"
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events set naming another version fails closed" \
+  "names ${UE_CONSTRUCT}@9.0.0 but is published under ${UE_CONSTRUCT}/${UE_VERSION}" "doc['version'] = '9.0.0'"
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events set with an empty list fails closed" "carries no resources" "doc['resources'] = []"
+# contract: 024-3-8 S8
+for field in kind cfnType identity; do
+  refuses_ue_set "a usage-events entry with no ${field} fails closed" "resource 2 carries no ${field}" "del doc['resources'][2]['${field}']"
+done
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events entry whose document is not an object fails closed" \
+  "resource 0 carries no document object" "doc['resources'][0]['document'] = ['not', 'an', 'object']"
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events set that records no log-source path fails closed" "records no log-source path" "del doc['documents']"
+# contract: 024-3-8 S8
+for token in region tenant-name partner-account; do
+  refuses_ue_set "a usage-events set already filled in for {${token}} fails closed" \
+    "carries no {${token}} token for the portal to fill" "text:{${token}}=>filled-in"
+done
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events set still carrying a deploy-time reference fails closed" \
+  "still carries the deploy-time reference Fn::GetAtt" "doc['resources'][1]['document']['Bucket'] = {'Fn::GetAtt': ['Bucket', 'Arn']}"
+# contract: 024-3-8 S8
+for token in trust-account external-id; do
+  refuses_ue_set "a usage-events set carrying {${token}} fails closed" \
+    "carries the token {${token}}, which the portal does not know" "doc['resources'][0]['document']['Note'] = '{${token}}'"
+done
+# contract: 024-3-8 S8
+refuses_ue_set "a usage-events set carrying a twelve-digit account number fails closed" \
+  "carries a twelve-digit account number" "doc['resources'][2]['document']['Description'] = 'trusts arn:aws:iam::034444869755:root'"
+
+ue_set_tree() {
+  local construct="$1" version="$2" set_file="$3"
+  rm -rf "${SCRATCH}/ue-set-alt" "${SCRATCH}/served/${construct}/${version}"
+  mkdir -p "${SCRATCH}/ue-set-alt/launchstack/${construct}/${version}" "${SCRATCH}/served/${construct}/${version}"
+  cp "${set_file}" "${SCRATCH}/ue-set-alt/launchstack/${construct}/${version}/console-instructions.json"
+  cp "${set_file}" "${SCRATCH}/served/${construct}/${version}/console-instructions.json"
+}
+verify_ue_set_alt() {
+  env SRC_DIR="${SCRATCH}/ue-set-alt/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+alt_records_nothing() {
+  [[ -z "$(find "${SCRATCH}/ue-set-alt" -name publish-check.json)" ]]
+}
+ue_set_variant "${SCRATCH}/ue-set-mystery.json" "doc['construct'] = 'apiable-mystery'; doc['version'] = '1.0.0'"
+ue_set_tree apiable-mystery 1.0.0 "${SCRATCH}/ue-set-mystery.json"
+# contract: 024-3-8 S8
+check_message "a console set for a construct with no known shape fails, naming the construct" 1 \
+  "no console-set shape is known for apiable-mystery" verify_ue_set_alt
+ue_set_variant "${SCRATCH}/ue-set-at-gateway.json" "doc['version'] = '9.8.7'"
+ue_set_tree apiable-gateway-role 9.8.7 "${SCRATCH}/ue-set-at-gateway.json"
+# contract: 024-3-8 S8
+check_message "a well-formed usage-events set at the gateway role's address fails, naming the address and the set's construct" 1 \
+  "apiable-gateway-role/9.8.7/console-instructions.json — local artifact is not a well-formed console instruction set: names ${UE_CONSTRUCT}@9.8.7 but is published under apiable-gateway-role/9.8.7" \
+  verify_ue_set_alt
+# contract: 024-3-8 S8
+check "the usage-events set at the gateway role's address records nothing" 0 alt_records_nothing
+ue_set_variant "${SCRATCH}/ue-set-1.1.0.json" "doc['version'] = '1.1.0'"
+ue_set_tree "${UE_CONSTRUCT}" 1.1.0 "${SCRATCH}/ue-set-1.1.0.json"
+# contract: 024-3-8 S8
+check_message "a usage-events set at 1.1.0 passes with no {external-id} token" 0 \
+  "${UE_CONSTRUCT}/1.1.0/console-instructions.json" verify_ue_set_alt
+rm -rf "${SCRATCH}/ue-set-alt" "${SCRATCH}/served/${UE_CONSTRUCT}" "${SCRATCH}/served/apiable-mystery" "${SCRATCH}/served/apiable-gateway-role/9.8.7" "${UE_SET_SRC}"
+clear_records
 
 echo "=== 013-1-29 S2: overwrite guard refuses changed content at a published key — same byte size ==="
 cp "${ARTIFACT_DIR}/template.yaml" "${SCRATCH}/template.yaml.bak"

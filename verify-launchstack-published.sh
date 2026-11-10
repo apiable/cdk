@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Verify every synthesized launch-stack artifact — the CloudFormation template, a code artifact such
-# as the lambda-authorizer's zip, a Terraform module archive, and the gateway role's console
-# instruction set — is anonymously fetchable at the address the portal (or the template itself)
+# as the lambda-authorizer's zip, a Terraform module archive, and the hand-build console set the
+# gateway role and the usage-events construct publish — is anonymously fetchable at the address the portal (or the template itself)
 # composes for it, and that the served bytes are the bytes that were synthesized.
 #
 # Key grammar contract: portal/backend/src/main/kotlin/io/apiable/domain/onboarding/
@@ -85,8 +85,9 @@ if ! publish_check still-offered "${STILL_OFFERED}" "${LISTED}"; then
   exit 1
 fi
 
-# Which versions take the external ID is the generator's rule, so the generator is asked: once, for the
-# version of every instruction set in this run. No list of versions lives in this script.
+# Which gateway-role versions take the external ID is the generator's rule, so the generator is asked:
+# once, for the version of every gateway-role set in this run. No list of versions lives in this script.
+# Another construct's set has its own shape and never takes the external ID, so its version is not asked.
 # The question gets an environment of its own: the path, the home directory and the versions, and no
 # cloud credential, wherever this script runs. npm cannot tell there that it is in CI, so it is told
 # not to look for a newer version of itself.
@@ -94,7 +95,8 @@ SET_VERSIONS=""
 while IFS= read -r key; do
   if [[ "${key}" == */console-instructions.json ]]; then
     version_dir="${key%/console-instructions.json}"
-    SET_VERSIONS="${SET_VERSIONS} ${version_dir##*/}"
+    construct_dir="${version_dir%/*}"
+    [[ "${construct_dir##*/}" == "apiable-gateway-role" ]] && SET_VERSIONS="${SET_VERSIONS} ${version_dir##*/}"
   fi
 done < <(printf '%s\n' "${ARTIFACTS[@]}"; cut -f1 "${LISTED}")
 VERSIONS_TAKING_EXTERNAL_ID=""
@@ -175,13 +177,21 @@ is_wellformed_module_zip() {
 
 # The portal serves an instruction set only when its construct and version equal the key it fetched it
 # at and the tokens it fills are present; the same shape check runs here so a mislabelled or
-# already-resolved file never reaches the store. The region and the trust account are tokens in every
-# set. The external ID is a token in a set exactly when its version takes one. $2 is the artifact's key.
+# already-resolved file never reaches the store. The shape is the set's construct's own:
+# - the gateway role's set carries its role fields; the region and the trust account are tokens in
+#   every one, and the external ID is a token exactly when its version takes one;
+# - the usage-events set lists its resources, each with a kind, a type, an identity and a document, and
+#   records the log-source path it documents. It carries the three tokens the portal fills, no token the
+#   portal does not know, no deploy-time reference and no account number, which is what the portal's
+#   reader refuses to serve.
+# A set for any other construct has no known shape and fails. $2 is the artifact's key.
 is_wellformed_instructions() {
+  local construct="${2%%/*}"
   local version="${2#*/}"
   version="${version%%/*}"
   local takes_external_id="false"
-  grep -qxF -- "${version}" <<< "${VERSIONS_TAKING_EXTERNAL_ID}" && takes_external_id="true"
+  [[ "${construct}" == "apiable-gateway-role" ]] \
+    && grep -qxF -- "${version}" <<< "${VERSIONS_TAKING_EXTERNAL_ID}" && takes_external_id="true"
   if ! parse_error=$(node -e "
     const fs = require('fs');
     try {
@@ -195,19 +205,46 @@ is_wellformed_instructions() {
       if (!doc || typeof doc !== 'object' || doc.construct !== construct || doc.version !== version) {
         throw new Error('names ' + (doc && doc.construct) + '@' + (doc && doc.version) + ' but is published under ' + construct + '/' + version);
       }
-      for (const field of ['roleName', 'trustDocument', 'permissionDocument']) {
-        if (doc[field] === undefined) throw new Error('carries no ' + field);
-      }
       const text = JSON.stringify(doc);
-      for (const token of ['{region}', '{trust-account}']) {
-        if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
-      }
-      const takesExternalId = process.argv[3] === 'true';
-      if (takesExternalId && !text.includes('{external-id}')) {
-        throw new Error('carries no {external-id} token for the portal to fill');
-      }
-      if (!takesExternalId && text.includes('{external-id}')) {
-        throw new Error('carries an {external-id} token, and its version takes no external ID');
+      if (construct === 'apiable-gateway-role') {
+        for (const field of ['roleName', 'trustDocument', 'permissionDocument']) {
+          if (doc[field] === undefined) throw new Error('carries no ' + field);
+        }
+        for (const token of ['{region}', '{trust-account}']) {
+          if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
+        }
+        const takesExternalId = process.argv[3] === 'true';
+        if (takesExternalId && !text.includes('{external-id}')) {
+          throw new Error('carries no {external-id} token for the portal to fill');
+        }
+        if (!takesExternalId && text.includes('{external-id}')) {
+          throw new Error('carries an {external-id} token, and its version takes no external ID');
+        }
+      } else if (construct === 'apiable-usage-events') {
+        const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+        if (!Array.isArray(doc.resources) || doc.resources.length === 0) throw new Error('carries no resources');
+        doc.resources.forEach((entry, index) => {
+          for (const field of ['kind', 'cfnType', 'identity']) {
+            if (!isObject(entry) || typeof entry[field] !== 'string' || entry[field] === '') {
+              throw new Error('resource ' + index + ' carries no ' + field);
+            }
+          }
+          if (!isObject(entry.document)) throw new Error('resource ' + index + ' carries no document object');
+        });
+        if (!isObject(doc.documents) || typeof doc.documents.logSource !== 'string') {
+          throw new Error('records no log-source path');
+        }
+        for (const token of ['{region}', '{tenant-name}', '{partner-account}']) {
+          if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
+        }
+        const reference = text.match(/\"(Ref|Fn::[A-Za-z]+)\":/);
+        if (reference) throw new Error('still carries the deploy-time reference ' + reference[1]);
+        const known = new Set(['{region}', '{tenant-name}', '{partner-account}', '{account}']);
+        const unknown = (text.match(/\{[A-Za-z0-9-]+\}/g) || []).find((token) => !known.has(token));
+        if (unknown) throw new Error('carries the token ' + unknown + ', which the portal does not know');
+        if (/(?<![0-9])[0-9]{12}(?![0-9])/.test(text)) throw new Error('carries a twelve-digit account number');
+      } else {
+        throw new Error('no console-set shape is known for ' + construct);
       }
     } catch (e) {
       console.error(String(e.message).split('\n')[0]);

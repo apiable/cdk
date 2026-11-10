@@ -2,10 +2,10 @@
 #
 # Synthesize the versioned launch-stack artifacts for an Apiable construct and write them to the
 # per-version, immutable path: the CloudFormation template, the Terraform module archive for a
-# construct with a module under terraform/, and for the gateway role the hand-build console
-# instruction set. Pass the construct's component name (defaults to the gateway-role pilot); the
-# package dir is lib/<component-without-the-apiable-prefix>, overridden for the shared logs-stream
-# construct whose folder serves both usage-log and api-key-token distributions.
+# construct with a module under terraform/, and the hand-build console set for the gateway role and
+# the usage-events construct. Pass the construct's component name (defaults to the gateway-role
+# pilot); the package dir is lib/<component-without-the-apiable-prefix>, overridden for the shared
+# logs-stream construct whose folder serves both usage-log and api-key-token distributions.
 #
 # The S3 upload and npm publish are owned by DevOps and run elsewhere; this script proves the
 # pipeline locally by producing the exact artifacts those steps consume.
@@ -114,11 +114,19 @@ else
   echo "no ${MODULE_DIR} — ${CONSTRUCT_NAME} publishes no Terraform module archive"
 fi
 
-# The hand-build console channel publishes the generator's template-mode set beside the template, so
-# the portal serves the instruction set the release-time parity gate compared — never a copy of it.
-if [[ "${CONSTRUCT_NAME}" == "apiable-gateway-role" ]]; then
-  CONSOLE_FILE="${OUT_DIR}/console-instructions.json"
-  npx ts-node -r tsconfig-paths/register --prefer-ts-exts scripts/console-instructions-publish.ts \
-    "${OUT_DIR}/template.json" "${VERSION}" "${CONSOLE_FILE}"
-  publish_destination console-instructions.json
-fi
+# The hand-build console channel publishes a set generated from the template beside it, so the portal
+# serves the set the release-time parity gate compared — never a copy of it. Two constructs publish
+# one, each from its own generator: the gateway role's role-only set, and the usage-events resource list.
+CONSOLE_FILE="${OUT_DIR}/console-instructions.json"
+case "${CONSTRUCT_NAME}" in
+  apiable-gateway-role)
+    npx ts-node -r tsconfig-paths/register --prefer-ts-exts scripts/console-instructions-publish.ts \
+      "${OUT_DIR}/template.json" "${VERSION}" "${CONSOLE_FILE}"
+    publish_destination console-instructions.json
+    ;;
+  apiable-usage-events)
+    npx ts-node -r tsconfig-paths/register --prefer-ts-exts scripts/usage-events-console-publish.ts \
+      "${OUT_DIR}/template.json" "${VERSION}" "${CONSOLE_FILE}"
+    publish_destination console-instructions.json
+    ;;
+esac
