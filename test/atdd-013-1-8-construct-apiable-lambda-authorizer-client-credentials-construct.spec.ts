@@ -122,6 +122,7 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
   })
 
   // contract: S2 — derives the per-method permission from the token's granted-resources claim (preserved core)
+  // contract: 024-7-4 S8
   it('S2: derives the per-method IAM policy from the token apiable_plan_resources claim via the preserved getServiceArn core (multi-gateway preserved)', async () => {
     // The semicolon claim format is {apiId}/{stage}/{METHOD}/{path};… (Portal's buildResourcesString) —
     // each entry replaces the methodArn's trailing resource segment verbatim, so an entry carrying its
@@ -183,6 +184,7 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
   })
 
   // contract: S4 — DENY-BY-DEFAULT (forced): unset/unknown required scope or missing scope → deny
+  // contract: 024-7-4 S7
   it('S4: deny-by-default — unmapped method, empty required scope, or a token missing the scope all DENY (never allow-by-default)', async () => {
     const map = { 'GET /products': 'apiable/cicd', 'POST /orders': '' }
 
@@ -358,6 +360,7 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
   })
 
   // the Terraform-channel lambda is byte-identical to the CDK lambda asset (no silent drift)
+  // contract: 024-7-4 S10
   it('the Terraform-channel lambda is byte-identical to the CDK lambda asset', () => {
     const cdkAsset = fs.readFileSync(ASSET)
     const tfCopy = fs.readFileSync(path.join(TF_MODULE_DIR, 'lambda/index.mjs'))
@@ -401,11 +404,14 @@ describe('013-1-8 apiable-lambda-authorizer — synth + parity contract + handle
     ).toThrow(/lowercase/)
   })
 
-  // generateIAMPolicy always returns an Allow policy keyed to the resolved ARNs (the preserved core)
-  it('generateIAMPolicy builds an Allow policy for the resolved service ARNs', () => {
-    const policy = generateIAMPolicy('sub-1', 'GET/products', methodArn('GET', 'products'))
+  // generateIAMPolicy returns an Allow policy for exactly the allowed route ARNs, and refuses to build one for none
+  it('generateIAMPolicy builds an Allow policy for the allowed route ARNs', () => {
+    const allowed = [methodArn('GET', 'products'), methodArn('POST', 'orders')]
+    const policy = generateIAMPolicy('sub-1', allowed, methodArn('GET', 'products'))
     expect(policy.principalId).toBe('sub-1')
     expect(policy.policyDocument.Statement[0].Effect).toBe('Allow')
     expect(policy.policyDocument.Statement[0].Action).toBe('execute-api:Invoke')
+    expect(policy.policyDocument.Statement[0].Resource).toEqual(allowed)
+    expect(() => generateIAMPolicy('sub-1', [], methodArn('GET', 'products'))).toThrow()
   })
 })
