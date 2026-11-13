@@ -8,6 +8,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as ts from 'typescript'
 import type { AuthResponse } from '../lib/assets/lambdas/authorization-cc/index.mjs'
+import { allowedRouteArns, arnPatternMatches } from '../lib/assets/lambdas/authorization-cc/index.mjs'
 import { parseHcl } from './support/hcl'
 
 type HandlerModule = typeof import('../lib/assets/lambdas/authorization-cc/index.mjs')
@@ -489,6 +490,66 @@ describe("the snippet's parts of the handler, run alone, return the whole handle
     const whole = await load(map).call(token, route)
     const parts = await loadParts(map)(token, { methodArn: address(route) })
     expect(parts).toStrictEqual(whole)
+  })
+})
+
+describe('the plan fence matches patterns without backtracking', () => {
+  /** The anchored-regex reading of an IAM wildcard pattern, used here only as the reference to agree with. */
+  const regexReading = (pattern: string, arn: string): boolean => {
+    const source = pattern
+      .split('')
+      .map((ch) => (ch === '*' ? '[\\s\\S]*' : ch === '?' ? '[\\s\\S]' : ch.replace(/[\\^$.|+()[\]{}]/g, '\\$&')))
+      .join('')
+    return new RegExp(`^${source}$`).test(arn)
+  }
+
+  const PATTERNS = [
+    '', '*', '**', '?', '??', 'a', 'a*', '*a', '*a*', 'a**b', 'a*b*c', '?b', 'a?', 'a?c', '*?', '?*',
+    'abc/prod/*', 'abc/prod/GET/a', 'abc/prod/*/a', 'abc/prod/GET/*/items', 'abc/prod/GET/a.b', 'x(y)+[z]{1}$^|\\',
+    'abc/prod/GET/abcdef-longer-than-text',
+  ]
+  const TEXTS = [
+    '', 'a', 'b', 'ab', 'abc', 'aab', 'abbc', 'acb', 'aXc', 'abc/prod/GET/a', 'abc/prod/DELETE/b', 'abc/prod/GET/',
+    'abc/prod/GET/x/items', 'abc/prod/GET/x/y/items', 'abc/prod/GET/aXb', 'x(y)+[z]{1}$^|\\', 'abc/prod/GET/abc',
+  ]
+
+  // contract: 024-7-4 S3
+  it('agrees with the regex reading of * and ? on every pattern and text in the table', () => {
+    for (const pattern of PATTERNS) {
+      for (const text of TEXTS) {
+        expect([pattern, text, arnPatternMatches(pattern, text)]).toEqual([pattern, text, regexReading(pattern, text)])
+      }
+    }
+  })
+
+  // contract: 024-7-4 S3
+  it('reads ? as one code point, so a character outside the basic plane counts once', () => {
+    expect(arnPatternMatches('a?b', 'a\u{1F600}b')).toBe(true)
+    expect(arnPatternMatches('a??b', 'a\u{1F600}b')).toBe(false)
+  })
+
+  const longKey = `GET /${'a'.repeat(195)}`
+  const segmentKey = `GET /${Array.from({ length: 150 }, () => 'x').join('/')}`
+  const SLOW_FOR_A_REGEX: [string, string, string][] = [
+    ['five a* runs then b against 200 a', `${API}/${STAGE}/GET/${'a*'.repeat(5)}b`, longKey],
+    ['six a* runs then b against 200 a', `${API}/${STAGE}/GET/${'a*'.repeat(6)}b`, longKey],
+    ['seven templates then y against 150 segments', `${API}/${STAGE}/GET/{a}/{b}/{c}/{d}/{e}/{f}/{g}/y`, segmentKey],
+  ]
+
+  // contract: 024-7-4 S8
+  it.each(SLOW_FOR_A_REGEX)('answers a fresh call well inside the Lambda timeout: %s', (_name, plan, key) => {
+    const started = Date.now()
+    const allowed = allowedRouteArns('apiable/a', { [key]: 'apiable/a' }, plan, address('GET /a'))
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(allowed).toEqual([])
+  })
+
+  // contract: 024-7-4 S8
+  it('matches seven uncollapsed stars against a 150-segment address well inside the Lambda timeout', () => {
+    const pattern = `${STAGE_PREFIX}GET${'/*'.repeat(7)}/y`
+    const started = Date.now()
+    expect(arnPatternMatches(pattern, address(segmentKey))).toBe(false)
+    expect(Date.now() - started).toBeLessThan(1000)
   })
 })
 

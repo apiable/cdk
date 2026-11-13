@@ -32,6 +32,9 @@ export type RequiredScopeMap = Record<string, string> | null
 /** The static deny-all policy returned on a scope/structure denial (→ gateway 403). */
 export const defaultDenyAllPolicy: AuthResponse
 
+/** IAM wildcard match: `*` any run of characters, `?` one character, everything else literal. */
+export function arnPatternMatches(pattern: string, arn: string): boolean
+
 /**
  * The addresses on the called API and stage of every route the token's scopes satisfy, kept where a
  * plan-resource pattern reaches them.

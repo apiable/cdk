@@ -109,12 +109,33 @@ function routeArn(routeKey, methodArn) {
   }
 }
 
-function arnPatternMatches(pattern, arn) {
-  const source = pattern
-    .split('')
-    .map((ch) => (ch === '*' ? '.*' : ch === '?' ? '.' : ch.replace(/[\\^$.|+()[\]{}]/g, '\\$&')))
-    .join('')
-  return new RegExp(`^${source}$`, 's').test(arn)
+// IAM wildcard match without backtracking: on a mismatch only the most recent '*' takes one more
+// character, so a pattern with many '*' stays O(pattern x arn). '?' is one code point.
+export function arnPatternMatches(pattern, arn) {
+  const p = Array.from(pattern)
+  const s = Array.from(arn)
+  let pi = 0
+  let si = 0
+  let star = -1
+  let resume = 0
+  while (si < s.length) {
+    if (pi < p.length && p[pi] !== '*' && (p[pi] === '?' || p[pi] === s[si])) {
+      pi++
+      si++
+    } else if (pi < p.length && p[pi] === '*') {
+      star = pi++
+      resume = si
+    } else if (star !== -1) {
+      pi = star + 1
+      si = ++resume
+    } else {
+      return false
+    }
+  }
+  while (pi < p.length && p[pi] === '*') {
+    pi++
+  }
+  return pi === p.length
 }
 
 // Every route the token's scopes satisfy, as an address on the called API and stage, kept only where a
