@@ -308,7 +308,9 @@ jobs:
           terraform show -json tfplan.bin > tf-show.json
           rm -f tfplan.bin
           DEPLOY_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
-          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usage-events-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}"
+          # The fixture was written with the 111111111111 placeholder as its deploying account; each side
+          # tokenises its own, so the fixture's tenant root never reads as an external bucket writer.
+          npx ts-node ../../scripts/parity-tf-regen-check.ts tf-show.json ../../test/fixtures/parity-gate/terraform-usage-events-show.json ${{ env.AWS_REGION }} "${DEPLOY_ACCOUNT}" 111111111111
 
       # Terraform channel well-formedness for the operator-owned firehose-destination guardrail (no cloud
       # account: validate needs only the provider plugin). The committed terraform-logs-guardrail-show.json
