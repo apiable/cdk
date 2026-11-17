@@ -147,7 +147,9 @@ for key in ${new_artifacts[@]+"${new_artifacts[@]}"}; do
   version_dir="${key%/*}"
   case " ${recorded_probed} " in *" ${version_dir} "*) continue ;; esac
   recorded_probed="${recorded_probed} ${version_dir}"
-  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${version_dir}/publish-check.json")
+  # -L as on the artifact fetch above: a store redirect (S3's 307 to its regional endpoint) is judged by
+  # the final answer, never refused as an unknown status or read as "no record".
+  code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 20 "${TEMPLATE_STORE_SCHEME}://${TEMPLATE_STORE_HOST}/${version_dir}/publish-check.json")
   case "${code}" in
     404|403) ;;
     200)

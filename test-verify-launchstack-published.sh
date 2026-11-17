@@ -730,6 +730,45 @@ check_message "guard refuses a new artifact when its version's record probe answ
 rm -rf "${FAULTED_NEW_DIR}"
 kill "${RECORD_FAULT_PID}" 2>/dev/null
 
+echo "=== the guard follows a store redirect on the record probe, as it does on the artifact fetch ==="
+# S3's region-neutral endpoint can answer 307 to its regional one. The record probe must judge the final
+# answer, so a redirect never aborts a publish and never hides a record that is already there.
+cat > "${SCRATCH}/serve-redirect.py" <<PYEOF
+import http.server
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(307)
+        self.send_header('Location', 'http://127.0.0.1:${PORT}' + self.path)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+http.server.HTTPServer(('127.0.0.1', ${PORT} + 6), Handler).serve_forever()
+PYEOF
+python3 "${SCRATCH}/serve-redirect.py" >/dev/null 2>&1 &
+REDIRECT_PID=$!
+"${SCRATCH}/wait-status.sh" "http://127.0.0.1:$((PORT + 6))/${CONSTRUCT}/${VERSION}/template.yaml" 307 \
+  || { echo "  FAIL: redirecting stand-in never came up — the checks below would pass on a dead server"; fail_count=$((fail_count + 1)); }
+clear_records
+REDIRECT_NEW_DIR="${SCRATCH}/dist/launchstack/${CONSTRUCT}/9.9.13"
+REDIRECT_SERVED_RECORD="${SCRATCH}/served/${CONSTRUCT}/9.9.13/publish-check.json"
+mkdir -p "${REDIRECT_NEW_DIR}" "$(dirname "${REDIRECT_SERVED_RECORD}")"
+cp "${ARTIFACT_DIR}/template.yaml" "${REDIRECT_NEW_DIR}/template.yaml"
+redirect_guard() {
+  env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:$((PORT + 6))" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+}
+# contract: 024-3-3 S10
+check "guard passes a new version whose record probe is redirected to a store without the record" 0 redirect_guard
+expected_record "${REDIRECT_NEW_DIR}" "${CONSTRUCT}" 9.9.13 > "${REDIRECT_SERVED_RECORD}"
+# contract: 024-3-3 S10
+check_message "guard refuses a new artifact when the redirected record probe finds its version already recorded" 1 \
+  "${CONSTRUCT} 9.9.13 — its publish check is already recorded" redirect_guard
+rm -rf "${REDIRECT_NEW_DIR}" "$(dirname "${REDIRECT_SERVED_RECORD}")"
+kill "${REDIRECT_PID}" 2>/dev/null
+
 echo "=== apiable-usage-events: its template and module archive are verified and recorded like every construct ==="
 UE_CONSTRUCT="apiable-usage-events"
 UE_VERSION="$(node -p "require('./lib/usage-events/package.json').version")"
