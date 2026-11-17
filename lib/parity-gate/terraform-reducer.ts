@@ -587,10 +587,21 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     // while the CloudFormation channel canonicalises the same grant to the log-group node ref via its
     // Fn::GetAtt. Map this plan's log-group ARN (rebuilt from its name) to the same node ref so the
     // delivery role's logs:PutLogEvents grant reconciles cross-channel instead of comparing a resolved
-    // literal against a logical ref. The `:*` resource suffix maps with the bare ARN prefix.
+    // literal against a logical ref.
+    //
+    // CloudFormation's Arn attribute of a log group already ends in `:*` (every stream in the group);
+    // the provider's `aws_cloudwatch_log_group.arn` does not. So `<group arn>:*` is the exact Terraform
+    // spelling of the CloudFormation grant and maps to the same node. The bare group ARN also maps there
+    // (KNOWN GAP: it matches no log stream, so logs:PutLogEvents on it grants nothing, but the published
+    // stream modules carry it and their frozen parity rows assert parity; telling the two apart is a
+    // pending decision, see the 024-3-6 Copilot triage).
     if (kindByAddress.get(res.address) === 'logs-log-group') {
       const logGroupName = normaliseLogical(tfResolve(res.values.name), region)
-      if (logGroupName !== '') arnToNode.set(`arn:aws:logs:${REGION_TOKEN}:${ACCOUNT_TOKEN}:log-group:${logGroupName}`, refToNode.get(res.address) ?? res.address)
+      if (logGroupName !== '') {
+        const groupArn = `arn:aws:logs:${REGION_TOKEN}:${ACCOUNT_TOKEN}:log-group:${logGroupName}`
+        arnToNode.set(`${groupArn}:*`, refToNode.get(res.address) ?? res.address)
+        arnToNode.set(groupArn, refToNode.get(res.address) ?? res.address)
+      }
     }
   }
   // The concrete destination literal of each stream whose bucket_arn is bound to the conventional

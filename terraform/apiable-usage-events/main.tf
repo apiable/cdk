@@ -133,9 +133,12 @@ resource "aws_iam_role_policy" "firehose" {
         Resource = [aws_s3_bucket.this.arn, "${aws_s3_bucket.this.arn}/*"]
       },
       {
+        # PutLogEvents authorises against a log STREAM ARN. The provider's log-group `arn` drops the
+        # `:*` that CloudFormation's Arn carries, so the bare ARN matches no stream and Firehose could
+        # not write its delivery errors. `:*` names every stream in the group, as the CDK channel does.
         Effect   = "Allow"
         Action   = "logs:PutLogEvents"
-        Resource = aws_cloudwatch_log_group.firehose.arn
+        Resource = "${aws_cloudwatch_log_group.firehose.arn}:*"
       }
     ]
   })

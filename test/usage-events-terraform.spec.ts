@@ -97,6 +97,15 @@ describe('apiable-usage-events terraform module — it stands on its own', () =>
     expect(main.match(/Resource = \[aws_s3_bucket\.this\.arn, "\$\{aws_s3_bucket\.this\.arn\}\/\*"\]/g)).toHaveLength(3)
   })
 
+  it("grants the delivery role PutLogEvents on the log group's streams, not on the bare group ARN", () => {
+    const main = moduleText('main.tf')
+
+    // The provider's aws_cloudwatch_log_group.arn has no trailing `:*`, and PutLogEvents authorises
+    // against a log-stream ARN, so only the `:*` form lets Firehose write its delivery errors.
+    expect(main).toMatch(/Action\s*=\s*"logs:PutLogEvents"\s*\n\s*Resource\s*=\s*"\$\{aws_cloudwatch_log_group\.firehose\.arn\}:\*"/)
+    expect(main).not.toMatch(/Resource\s*=\s*aws_cloudwatch_log_group\.firehose\.arn\s*$/m)
+  })
+
   it('publishes an archive of exactly the tracked files of its own directory', () => {
     const archive = path.join(path.dirname(publishedTemplatePath('apiable-usage-events')), 'terraform.zip')
     const listing = spawnSync('unzip', ['-Z1', archive], { encoding: 'utf8' })
