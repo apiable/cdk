@@ -422,6 +422,11 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     // entry, which the CFN reducer models as no node/grant/value. So drop it here too — modelling it on
     // only the Terraform side would be a phantom graph divergence on equivalent infrastructure.
     .filter((entry) => asString(entry.type) !== 'aws_iam_role_policy_attachment')
+    // Terraform-only plumbing provisions nothing in AWS, so the CloudFormation channel has no counterpart:
+    // a data source (a read, e.g. data.aws_caller_identity) and a terraform_data helper (e.g. the
+    // log_source_mode replace trigger). A real plan lists both; modelling them would fail every fresh plan
+    // against a template that, correctly, has neither. What they feed into real resources is still compared.
+    .filter((entry) => asString(entry.mode) !== 'data' && asString(entry.type) !== 'terraform_data')
     .map((entry) => ({
       address: asString(entry.address) ?? '',
       type: asString(entry.type) ?? '',

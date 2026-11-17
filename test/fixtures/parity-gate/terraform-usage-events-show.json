@@ -1,10 +1,23 @@
 {
   "format_version": "1.2",
   "terraform_version": "1.8.5",
-  "_comment": "Reference `terraform show -json` for the apiable-usage-events module, assembled from terraform-logs-bucket-show.json and terraform-usagelogs-stream-show.json: the union of their resources, with the stream's destination and its delivery role's S3 grant bound to the module's own bucket (aws_s3_bucket.this.arn) instead of var.logs_bucket_arn, and the stream's names bound to its fixed token (local.stream_name = usagelogs). The deploying account here is a placeholder; CI regenerates this from a fresh credentialed plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts, passing the deploying account so the incidental tenant root tokenises on both sides. Plan vars: name=ci, partner_account=034444869755, log_source=apigateway_direct, region=eu-central-1.",
+  "_comment": "Reference `terraform show -json` for the apiable-usage-events module, assembled from terraform-logs-bucket-show.json and terraform-usagelogs-stream-show.json: the union of their resources, with the stream's destination and its delivery role's S3 grant bound to the module's own bucket (aws_s3_bucket.this.arn) instead of var.logs_bucket_arn, and the stream's names bound to its fixed token (local.stream_name = usagelogs). The deploying account here is a placeholder; CI regenerates this from a fresh credentialed plan and asserts it reduces to the SAME parity MODEL (never a byte diff) via scripts/parity-tf-regen-check.ts, passing the deploying account so the incidental tenant root tokenises on both sides. Plan vars: name=ci, partner_account=034444869755, log_source=apigateway_direct, region=eu-central-1. It carries the Terraform-only plumbing a real plan lists (data.aws_caller_identity.current and terraform_data.log_source_mode), which the reducer drops because they provision nothing in AWS.",
   "planned_values": {
     "root_module": {
       "resources": [
+        {
+          "address": "data.aws_caller_identity.current",
+          "mode": "data",
+          "type": "aws_caller_identity",
+          "name": "current",
+          "provider_name": "registry.terraform.io/hashicorp/aws",
+          "values": {
+            "account_id": "111111111111",
+            "arn": "arn:aws:iam::111111111111:user/ci",
+            "id": "111111111111",
+            "user_id": "AIDAEXAMPLEPLACEHOLDER"
+          }
+        },
         {
           "address": "aws_s3_bucket.this",
           "type": "aws_s3_bucket",
@@ -129,6 +142,17 @@
               }
             ]
           }
+        },
+        {
+          "address": "terraform_data.log_source_mode",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "log_source_mode",
+          "provider_name": "terraform.io/builtin/terraform",
+          "values": {
+            "input": "apigateway_direct",
+            "triggers_replace": null
+          }
         }
       ]
     }
@@ -136,6 +160,13 @@
   "configuration": {
     "root_module": {
       "resources": [
+        {
+          "address": "data.aws_caller_identity.current",
+          "mode": "data",
+          "type": "aws_caller_identity",
+          "name": "current",
+          "expressions": {}
+        },
         {
           "address": "aws_s3_bucket.this",
           "type": "aws_s3_bucket",
@@ -294,6 +325,19 @@
                 }
               }
             ]
+          }
+        },
+        {
+          "address": "terraform_data.log_source_mode",
+          "mode": "managed",
+          "type": "terraform_data",
+          "name": "log_source_mode",
+          "expressions": {
+            "input": {
+              "references": [
+                "var.log_source"
+              ]
+            }
           }
         }
       ],

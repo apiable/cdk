@@ -135,6 +135,17 @@ describe(`${USAGE_EVENTS.construct} parity — CDK, published one-click template
     expect(kinds.some((kind) => kind.startsWith('aws_'))).toBe(false)
   })
 
+  it("drops the plan's Terraform-only plumbing, which has no CloudFormation counterpart", () => {
+    const plan = tfPlan()
+    // A real plan lists both; the committed fixture carries them so this proves the reducer, not their absence.
+    expect(plan.planned_values.root_module.resources.map((resource) => resource.address)).toEqual(
+      expect.arrayContaining(['data.aws_caller_identity.current', 'terraform_data.log_source_mode']),
+    )
+    const refs = tfModel(plan).graph.nodes.map((node) => `${node.kind} ${node.ref}`)
+
+    expect(refs.filter((ref) => ref.includes('caller_identity') || ref.includes('terraform_data'))).toEqual([])
+  })
+
   describe.each(PLANTED)('%s', (_change, plant, marker) => {
     // contract: 024-3-6 S8
     it('fails the gate naming the terraform channel', () => {
