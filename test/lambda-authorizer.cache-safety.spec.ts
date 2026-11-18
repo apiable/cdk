@@ -349,6 +349,7 @@ describe('a policy over the size bound falls back to the called route alone', ()
     logs = []
     await h.call(token, BIG_ROUTES[7])
     expect(fallbackLines()).toHaveLength(1)
+    expect(fallbackLines()[0]).toContain('keep the authorizer result cache TTL at 0 or reduce the routes per token')
     for (const line of logs) {
       for (const secret of [TOKEN, 'apiable/big', plan, API_KEY, EXTRA]) {
         expect(line).not.toContain(secret)
