@@ -261,6 +261,8 @@ describe('over every scope set, plan and pair of calls, a cached result agrees w
         const cachedAllows = allows(policy, address(second))
         if (cachedAllows) expect(fresh.get(second)).toBe(true)
         if (fresh.get(first) && fresh.get(second)) expect(cachedAllows).toBe(true)
+        // The scope check passed and only the plan refused the first call: its policy still allows every route a fresh call allows.
+        if (scopePassed && !fresh.get(first) && fresh.get(second)) expect(cachedAllows).toBe(true)
       }
     }
     expectUntouchedDenyAll(h)
