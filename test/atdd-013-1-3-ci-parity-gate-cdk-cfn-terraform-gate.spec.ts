@@ -16,10 +16,8 @@
  * to compare the components that bite for the identity-pool and authorizer constructs.
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
-import { buildPublishedStack } from '@apiable/cdk-gateway-role'
 import {
   ChannelModel,
   Channel,
@@ -31,18 +29,17 @@ import {
   reduceCloudFormation,
   reduceTerraformShowJson,
 } from '@apiable/parity-gate'
-import { publishedTemplatePath } from './support/published-template'
+import { GATEWAY_ROLE } from './support/parity-channels'
 
-const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = publishedTemplatePath('apiable-gateway-role')
-const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-gateway-role-show.json')
-const TF_REGION = 'eu-central-1'
+const PUBLISHED_CFN = GATEWAY_ROLE.publishedCfn
+const TF_FIXTURE = GATEWAY_ROLE.tfFixture
+const TF_REGION = GATEWAY_ROLE.tfRegion
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 // ── The three real pilot channels reduced through the gate's own reducers ─────────────────────
 const cdkModel = (): ChannelModel =>
-  reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk')
+  reduceCloudFormation(Template.fromStack(GATEWAY_ROLE.buildCdk(new cdk.App())).toJSON(), 'cdk')
 
 const cfnModel = (): ChannelModel =>
   reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn')

@@ -10,6 +10,7 @@
       "@apiable/cdk-lambda-authorizer": ["lib/lambda-authorizer/index.ts"],
       "@apiable/cdk-usagelogs-stream": ["lib/logs-stream/index.ts"],
       "@apiable/cdk-usagetokens-stream": ["lib/logs-stream/index.ts"],
+      "@apiable/cdk-usage-events": ["lib/usage-events/index.ts"],
       "@apiable/parity-gate": ["lib/parity-gate/index.ts"],
       "@apiable/umbrella": ["lib/umbrella/index.ts"],
       "@apiable/cdk-ssm-composition": ["lib/ssm-composition/index.ts"],

@@ -422,6 +422,11 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     // entry, which the CFN reducer models as no node/grant/value. So drop it here too — modelling it on
     // only the Terraform side would be a phantom graph divergence on equivalent infrastructure.
     .filter((entry) => asString(entry.type) !== 'aws_iam_role_policy_attachment')
+    // Terraform-only plumbing provisions nothing in AWS, so the CloudFormation channel has no counterpart:
+    // a data source (a read, e.g. data.aws_caller_identity) and a terraform_data helper (e.g. the
+    // log_source_mode replace trigger). A real plan lists both; modelling them would fail every fresh plan
+    // against a template that, correctly, has neither. What they feed into real resources is still compared.
+    .filter((entry) => asString(entry.mode) !== 'data' && asString(entry.type) !== 'terraform_data')
     .map((entry) => ({
       address: asString(entry.address) ?? '',
       type: asString(entry.type) ?? '',
@@ -587,10 +592,21 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     // while the CloudFormation channel canonicalises the same grant to the log-group node ref via its
     // Fn::GetAtt. Map this plan's log-group ARN (rebuilt from its name) to the same node ref so the
     // delivery role's logs:PutLogEvents grant reconciles cross-channel instead of comparing a resolved
-    // literal against a logical ref. The `:*` resource suffix maps with the bare ARN prefix.
+    // literal against a logical ref.
+    //
+    // CloudFormation's Arn attribute of a log group already ends in `:*` (every stream in the group);
+    // the provider's `aws_cloudwatch_log_group.arn` does not. So `<group arn>:*` is the exact Terraform
+    // spelling of the CloudFormation grant and maps to the same node. The bare group ARN also maps there
+    // (KNOWN GAP: it matches no log stream, so logs:PutLogEvents on it grants nothing, but the published
+    // stream modules carry it and their frozen parity rows assert parity; telling the two apart is a
+    // pending decision, see the 024-3-6 Copilot triage).
     if (kindByAddress.get(res.address) === 'logs-log-group') {
       const logGroupName = normaliseLogical(tfResolve(res.values.name), region)
-      if (logGroupName !== '') arnToNode.set(`arn:aws:logs:${REGION_TOKEN}:${ACCOUNT_TOKEN}:log-group:${logGroupName}`, refToNode.get(res.address) ?? res.address)
+      if (logGroupName !== '') {
+        const groupArn = `arn:aws:logs:${REGION_TOKEN}:${ACCOUNT_TOKEN}:log-group:${logGroupName}`
+        arnToNode.set(`${groupArn}:*`, refToNode.get(res.address) ?? res.address)
+        arnToNode.set(groupArn, refToNode.get(res.address) ?? res.address)
+      }
     }
   }
   // The concrete destination literal of each stream whose bucket_arn is bound to the conventional

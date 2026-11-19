@@ -60,14 +60,16 @@ const arn = (method: string, resourcePath: string, apiId = REST_API_ID): string 
 beforeEach(() => __reset())
 
 describe('lambda-authorizer — additional automation coverage', () => {
+  // contract: 024-7-4 S11
   it('the published one-click template carries no account/region/tenant literal — each is a supplied input', () => {
     const json = Template.fromStack(buildPublishedStack(new cdk.App())).toJSON()
     const resources = JSON.stringify(json.Resources)
     expect(resources).not.toMatch(/(?<!\d)\d{12}(?!\d)/) // no 12-digit account literal
     expect(resources).not.toContain(REGION)
-    expect(json.Parameters?.[TENANT_NAME_PARAMETER]).toBeDefined()
-    expect(json.Parameters?.[USER_POOL_ID_PARAMETER]).toBeDefined()
-    expect(json.Parameters?.[REST_API_ID_PARAMETER]).toBeDefined()
+    const customerParameters = Object.keys(json.Parameters ?? {}).filter(
+      (name) => !name.startsWith('AssetParameters') && name !== 'BootstrapVersion',
+    )
+    expect(customerParameters.sort()).toEqual([TENANT_NAME_PARAMETER, USER_POOL_ID_PARAMETER, REST_API_ID_PARAMETER].sort())
     expect(resources).toMatch(/AWS::Region|AWS::AccountId/)
   })
 
@@ -95,6 +97,7 @@ describe('lambda-authorizer — additional automation coverage', () => {
     ).toThrow(/userPoolId/)
   })
 
+  // contract: 024-7-4 S11
   it('defaults the result-cache TTL to 0 and honours a non-zero opt-in', () => {
     expect((Object.values(concrete().findResources('AWS::ApiGateway::Authorizer'))[0].Properties as {
       AuthorizerResultTtlInSeconds?: number
@@ -159,17 +162,20 @@ describe('lambda-authorizer — additional automation coverage', () => {
   })
 
   describe('handler error paths', () => {
+    // contract: 024-7-4 S7
     it('rejects (401) a missing or empty bearer token before verification', async () => {
       await expect(handler({ methodArn: arn('GET', 'products') })).rejects.toThrow('Unauthorized')
       await expect(handler({ authorizationToken: '', methodArn: arn('GET', 'products') })).rejects.toThrow('Unauthorized')
     })
 
+    // contract: 024-7-4 S7
     it('denies (403, not 500) a verified token on a structurally bad method ARN', async () => {
       __setVerifyResult({ client_id: 'c', sub: 's', scope: 'apiable/cicd' })
       const denied = await handler({ authorizationToken: 'Bearer t', methodArn: 'bad-arn' })
       expect(denied.policyDocument.Statement[0].Effect).toBe('Deny')
     })
 
+    // contract: 024-7-4 S7
     it('rejects (401) when the verifier throws for any trust reason', async () => {
       __setVerifyError('jwt expired')
       await expect(handler({ authorizationToken: 'Bearer t', methodArn: arn('GET', 'products') })).rejects.toThrow(

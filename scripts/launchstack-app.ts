@@ -7,16 +7,24 @@ import {
   buildPublishedStack as buildUsageLogsStreamStack,
   buildPublishedTokensStack as buildUsageTokensStreamStack,
 } from '../lib/logs-stream'
+import { buildPublishedStack as buildUsageEventsStack } from '../lib/usage-events'
 
 /**
- * Synth entrypoint for the published launch-stack templates. Each construct's published stack is
- * registered under its component name, so `cdk synth <construct-name>` selects the one to emit. The
- * shared usage stream registers under both distribution identities (usage-log and api-key-token).
+ * Registers every published launch-stack stack on `app`, each under its construct name, so
+ * `cdk synth <construct-name>` selects the one to emit. The shared usage stream registers under both
+ * distribution identities (usage-log and api-key-token). The build list in synth-all-launchstack.sh
+ * is held to exactly these names by test/launchstack-build-list.ta.spec.ts.
  */
-const app = new cdk.App()
-buildGatewayRoleStack(app)
-buildLogsBucketStack(app)
-buildCognitoPoolStack(app)
-buildLambdaAuthorizerStack(app)
-buildUsageLogsStreamStack(app)
-buildUsageTokensStreamStack(app)
+export const registerPublishedStacks = (app: cdk.App): void => {
+  buildGatewayRoleStack(app)
+  buildLogsBucketStack(app)
+  buildCognitoPoolStack(app)
+  buildLambdaAuthorizerStack(app)
+  buildUsageLogsStreamStack(app)
+  buildUsageTokensStreamStack(app)
+  buildUsageEventsStack(app)
+}
+
+if (require.main === module) {
+  registerPublishedStacks(new cdk.App())
+}

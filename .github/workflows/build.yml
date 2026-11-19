@@ -134,7 +134,17 @@ jobs:
       - name: Publish launch-stack templates
         run: bash publish-launchstack.sh
 
+      # Writes each construct version's publish-check record, and only when every artifact passed.
       - name: Verify every published template is anonymously fetchable
+        run: bash verify-launchstack-published.sh
+
+      # Only the records are new by now; the guard skips every artifact the first upload sent.
+      - name: Publish the publish-check records
+        run: bash publish-launchstack.sh
+
+      # The portal serves an artifact only when its record covers it, so a record is held to its
+      # address and its artifacts, fetched back the way the portal fetches it, before the run passes.
+      - name: Verify every published record is anonymously fetchable and matches its artifacts
         run: bash verify-launchstack-published.sh
 
 
