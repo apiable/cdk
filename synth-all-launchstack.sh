@@ -13,6 +13,7 @@ cd "$(dirname "$0")"
 
 CONSTRUCTS=(
   apiable-gateway-role
+  apiable-cognito-pool-role
   apiable-logs-bucket
   apiable-cognito-pool
   apiable-lambda-authorizer

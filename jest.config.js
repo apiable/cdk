@@ -24,6 +24,7 @@ module.exports = {
     // unit tests so the deny/allow + token-trust paths run against the real handler without a live pool.
     '^aws-jwt-verify$': '<rootDir>/test/support/aws-jwt-verify-mock.ts',
     '^@apiable/cdk-gateway-role$': '<rootDir>/lib/gateway-role/index.ts',
+    '^@apiable/cdk-cognito-pool-role$': '<rootDir>/lib/cognito-pool-role/index.ts',
     '^@apiable/cdk-logs-bucket$': '<rootDir>/lib/logs-bucket/index.ts',
     '^@apiable/cdk-cognito-pool$': '<rootDir>/lib/cognito-pool/index.ts',
     '^@apiable/cdk-lambda-authorizer$': '<rootDir>/lib/lambda-authorizer/index.ts',

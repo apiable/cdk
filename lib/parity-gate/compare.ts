@@ -96,6 +96,7 @@ const grantSignature = (grant: ChannelModel['grants'][number]): string =>
   JSON.stringify({
     effect: grant.effect,
     actions: [...grant.actions].sort(),
+    notActions: grant.notActions === undefined ? null : [...grant.notActions].sort(),
     resources: [...grant.resources].sort(),
     principal: grant.principal ?? null,
     condition: grant.condition ?? null,

@@ -299,6 +299,40 @@ asks_the_generator_with_no_credential() {
 }
 check "the generator is asked in an environment of its own, with none of the credentials the verifier runs with" 0 asks_the_generator_with_no_credential
 
+echo "=== the rule is the construct's own: the user pool role takes the external ID from its first version ==="
+# 1.0.0 of the gateway role takes no external ID; 1.0.0 of the user pool role does. The set is the
+# current 2.0.0 gateway set renamed, which is enough for the shape the verifier checks.
+POOL_SRC="${SCRATCH}/pool-role/dist/launchstack"
+POOL_DIST="${POOL_SRC}/apiable-cognito-pool-role/1.0.0"
+POOL_SERVED="${SCRATCH}/served/apiable-cognito-pool-role/1.0.0"
+mkdir -p "${POOL_DIST}" "${POOL_SERVED}"
+pool_set() {
+  python3 -c "
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc['construct'] = 'apiable-cognito-pool-role'
+doc['version'] = '1.0.0'
+if len(sys.argv) > 3:
+    doc['trustDocument']['Statement'][0]['Condition'] = {'StringEquals': {'sts:ExternalId': '{external-id}'}}
+json.dump(doc, open(sys.argv[2], 'w'))
+" "${V2_SET}" "$@"
+}
+publish_pool() {
+  cp "$1" "${POOL_DIST}/console-instructions.json"
+  cp "$1" "${POOL_SERVED}/console-instructions.json"
+}
+verify_pool() {
+  env SRC_DIR="${POOL_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+pool_set "${SCRATCH}/pool-with-token.json" with-token
+publish_pool "${SCRATCH}/pool-with-token.json"
+check "a user pool role 1.0.0 set that carries the external-ID token verifies clean" 0 verify_pool
+pool_set "${SCRATCH}/pool-without-token.json"
+publish_pool "${SCRATCH}/pool-without-token.json"
+check_message "a user pool role 1.0.0 set without the external-ID token fails closed" 1 \
+  "apiable-cognito-pool-role/1.0.0/console-instructions.json — local artifact is not a well-formed console instruction set: carries no {external-id} token for the portal to fill" \
+  verify_pool
+
 echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
 printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
 refuses_artifact template.yaml "a template with no Resources fails closed" \

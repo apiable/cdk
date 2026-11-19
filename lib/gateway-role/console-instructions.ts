@@ -7,8 +7,8 @@
  * which reduces this module's output back into the gate's comparable model — the fourth channel).
  */
 import { EGRESS_CIDR_PARAMETER, EXTERNAL_ID_PARAMETER, TRUST_ACCOUNT_PARAMETER } from './gateway-role'
-import { EXTERNAL_ID_TOKEN } from '../parity-gate/canonical'
-import { REGION_TOKEN } from '../parity-gate/model'
+import { EXTERNAL_ID_TOKEN, USER_POOL_ID_PARAMETER } from '../parity-gate/canonical'
+import { ACCOUNT_TOKEN, REGION_TOKEN } from '../parity-gate/model'
 
 /** Trust-account placeholder in a template-mode set; the portal fills it from the account it also pre-fills into the Launch Stack URL. */
 export const TRUST_ACCOUNT_TOKEN = '{trust-account}'
@@ -46,7 +46,7 @@ export interface ResolvedPolicyDocument {
  * each portal's own and has no default, so only the serving portal can fill it.
  */
 export interface ConsoleInstructionSet {
-  readonly construct: 'apiable-gateway-role'
+  readonly construct: ConsoleConstructName
   readonly version: string
   readonly region: string
   readonly roleName: string
@@ -54,7 +54,23 @@ export interface ConsoleInstructionSet {
   readonly trustDocument: ResolvedPolicyDocument
   readonly permissionDocument: ResolvedPolicyDocument
   readonly egressCidr?: string
+  /** The user pool a pool role is for, as the token the serving portal fills. Present only for that construct. */
+  readonly userPoolId?: string
   readonly parameterDefaults?: Readonly<Record<string, string>>
+}
+
+/** The constructs that publish a hand-build instruction set. */
+export type ConsoleConstructName = 'apiable-gateway-role' | 'apiable-cognito-pool-role'
+
+/** What the generator needs to know of a construct that publishes a hand-build instruction set. */
+export interface ConsoleConstruct {
+  readonly name: ConsoleConstructName
+  /** The published versions whose trust takes no external ID. Any other version requires it. */
+  readonly versionsWithoutExternalId: ReadonlySet<string>
+  /** Published versions this repository's source no longer reproduces, which stay generatable. */
+  readonly historicalVersions: ReadonlySet<string>
+  /** Parameters with no default that the serving portal fills, each with the token it leaves for them. */
+  readonly deployInputs: Readonly<Record<string, string>>
 }
 
 /**
@@ -67,8 +83,20 @@ export interface ConsoleInstructionSet {
  */
 const HISTORICAL_PUBLISHED_VERSIONS: ReadonlySet<string> = new Set(['1.0.0', '2.0.0'])
 
+/** The gateway role as the generator knows it. */
+export const GATEWAY_ROLE_CONSOLE_CONSTRUCT: ConsoleConstruct = {
+  name: 'apiable-gateway-role',
+  versionsWithoutExternalId: HISTORICAL_PUBLISHED_VERSIONS,
+  historicalVersions: HISTORICAL_PUBLISHED_VERSIONS,
+  deployInputs: {},
+}
+
 /** Whether `version`'s trust requires the external ID. Neither historical version takes one. */
 export const requiresExternalId = (version: string): boolean => !HISTORICAL_PUBLISHED_VERSIONS.has(version)
+
+/** Whether a version of `construct` requires the external ID. */
+export const constructRequiresExternalId = (construct: ConsoleConstruct, version: string): boolean =>
+  !construct.versionsWithoutExternalId.has(version)
 
 /**
  * Whether `version` is a version of `apiable-gateway-role` known to be published. `currentVersion` is
@@ -77,7 +105,11 @@ export const requiresExternalId = (version: string): boolean => !HISTORICAL_PUBL
  * this file needing a change on every version bump; only a SUPERSEDED version needs enumerating above.
  */
 export const isPublishedVersion = (version: string, currentVersion: string): boolean =>
-  version === currentVersion || HISTORICAL_PUBLISHED_VERSIONS.has(version)
+  isPublishedVersionOf(GATEWAY_ROLE_CONSOLE_CONSTRUCT, version, currentVersion)
+
+/** Whether `version` is a version of `construct` known to be published; see {@link isPublishedVersion}. */
+export const isPublishedVersionOf = (construct: ConsoleConstruct, version: string, currentVersion: string): boolean =>
+  version === currentVersion || construct.historicalVersions.has(version)
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -138,6 +170,8 @@ const resolveValue = (value: unknown, parameterValues: Readonly<Record<string, s
     const ref = value.Ref
     if (ref === 'AWS::Region') return region
     if (ref === 'AWS::Partition') return 'aws'
+    // The account the role is deployed in is the Provider's own, which only they know: it stays a token.
+    if (ref === 'AWS::AccountId') return ACCOUNT_TOKEN
     if (typeof ref === 'string' && Object.prototype.hasOwnProperty.call(parameterValues, ref)) return parameterValues[ref]
     throw new Error(`unresolvable Ref "${String(ref)}" — no parameter default on the artifact and not a supported pseudo-parameter`)
   }
@@ -198,14 +232,19 @@ const isExternalIdCondition = (condition: unknown): boolean => {
  * requires the ID must declare the parameter with no default and carry exactly that condition on
  * every trust statement; a historical version must carry no condition and no such parameter.
  */
-const assertExternalIdMatchesVersion = (template: CfnLikeTemplate, trustDocument: ResolvedPolicyDocument, version: string): void => {
+const assertExternalIdMatchesVersion = (
+  construct: ConsoleConstruct,
+  template: CfnLikeTemplate,
+  trustDocument: ResolvedPolicyDocument,
+  version: string,
+): void => {
   const declared = declaresExternalId(template)
   const statements = trustDocument.Statement
 
-  if (!requiresExternalId(version)) {
+  if (!constructRequiresExternalId(construct, version)) {
     if (declared || statements.some((statement) => statement.Condition !== undefined)) {
       throw new Error(
-        `apiable-gateway-role@${version} takes no external ID — refusing an artifact that declares ${EXTERNAL_ID_PARAMETER} or carries a Condition on its trust; a portal that offers this version could not assume the role`,
+        `${construct.name}@${version} takes no external ID — refusing an artifact that declares ${EXTERNAL_ID_PARAMETER} or carries a Condition on its trust; a portal that offers this version could not assume the role`,
       )
     }
     return
@@ -214,12 +253,12 @@ const assertExternalIdMatchesVersion = (template: CfnLikeTemplate, trustDocument
   const parameter: unknown = declared ? template.Parameters?.[EXTERNAL_ID_PARAMETER] : undefined
   if (!isRecord(parameter) || parameter.Default !== undefined) {
     throw new Error(
-      `apiable-gateway-role@${version} requires the external ID — refusing an artifact that does not declare ${EXTERNAL_ID_PARAMETER}, or gives it a default`,
+      `${construct.name}@${version} requires the external ID — refusing an artifact that does not declare ${EXTERNAL_ID_PARAMETER}, or gives it a default`,
     )
   }
   if (statements.length === 0 || !statements.every((statement) => isExternalIdCondition(statement.Condition))) {
     throw new Error(
-      `apiable-gateway-role@${version} requires the external ID — refusing a trust in which any statement carries anything but the one sts:ExternalId condition on ${EXTERNAL_ID_PARAMETER}`,
+      `${construct.name}@${version} requires the external ID — refusing a trust in which any statement carries anything but the one sts:ExternalId condition on ${EXTERNAL_ID_PARAMETER}`,
     )
   }
 }
@@ -237,14 +276,15 @@ interface Rendering {
 }
 
 const generate = (
+  construct: ConsoleConstruct,
   template: unknown,
   version: string,
   currentVersion: string,
   rendering: Rendering,
 ): ConsoleInstructionSet => {
-  if (!isPublishedVersion(version, currentVersion)) {
+  if (!isPublishedVersionOf(construct, version, currentVersion)) {
     throw new Error(
-      `apiable-gateway-role@${version} is not a published version (known: ${currentVersion}, ${[...HISTORICAL_PUBLISHED_VERSIONS].join(', ')}) — refusing to generate console instructions from an unpublished artifact`,
+      `${construct.name}@${version} is not a published version (known: ${[currentVersion, ...construct.historicalVersions].join(', ')}) — refusing to generate console instructions from an unpublished artifact`,
     )
   }
   if (!isRecord(template)) throw new Error('the artifact is not a well-formed CloudFormation template')
@@ -253,9 +293,11 @@ const generate = (
   const parameterDefaults = parameterDefaultsOf(cfn)
   // The external ID is each portal's own and has no default, so neither rendering has a literal for
   // it: where the artifact declares it, it resolves to the token the serving portal fills.
+  const deployInputs = declaredDeployInputs(construct, cfn)
   const parameterValues: Record<string, string> = {
     ...parameterDefaults,
     ...rendering.parameterOverrides,
+    ...deployInputs,
     ...(declaresExternalId(cfn) ? { [EXTERNAL_ID_PARAMETER]: EXTERNAL_ID_TOKEN } : {}),
   }
   const { region } = rendering
@@ -267,7 +309,7 @@ const generate = (
   const trustDocument = resolveValue(roleProperties.AssumeRolePolicyDocument, parameterValues, region) as ResolvedPolicyDocument
   const permissionDocument = resolveValue(policyProperties.PolicyDocument, parameterValues, region) as ResolvedPolicyDocument
 
-  assertExternalIdMatchesVersion(cfn, trustDocument, version)
+  assertExternalIdMatchesVersion(construct, cfn, trustDocument, version)
 
   if (!Object.prototype.hasOwnProperty.call(parameterDefaults, TRUST_ACCOUNT_PARAMETER)) {
     throw new Error(`the artifact declares no ${TRUST_ACCOUNT_PARAMETER} parameter default`)
@@ -278,8 +320,10 @@ const generate = (
     ? parameterValues[EGRESS_CIDR_PARAMETER]
     : undefined
 
+  const userPoolId = deployInputs[USER_POOL_ID_PARAMETER]
+
   return {
-    construct: 'apiable-gateway-role',
+    construct: construct.name,
     version,
     region,
     roleName,
@@ -287,8 +331,25 @@ const generate = (
     trustDocument,
     permissionDocument,
     ...(egressCidr !== undefined ? { egressCidr } : {}),
+    ...(userPoolId !== undefined ? { userPoolId } : {}),
     ...(rendering.emitParameterDefaults ? { parameterDefaults } : {}),
   }
+}
+
+/**
+ * The tokens for the construct's deploy inputs, each of which the artifact must declare with no default:
+ * an input with a default would bake one Provider's value into every set.
+ */
+const declaredDeployInputs = (construct: ConsoleConstruct, template: CfnLikeTemplate): Record<string, string> => {
+  const inputs: Record<string, string> = {}
+  for (const [parameter, token] of Object.entries(construct.deployInputs)) {
+    const spec: unknown = template.Parameters?.[parameter]
+    if (!isRecord(spec) || spec.Default !== undefined) {
+      throw new Error(`${construct.name} requires ${parameter} as a parameter with no default: refusing an artifact that does not declare it so`)
+    }
+    inputs[parameter] = token
+  }
+  return inputs
 }
 
 /**
@@ -305,7 +366,16 @@ export const generateConsoleInstructions = (
   version: string,
   currentVersion: string,
   region: string,
-): ConsoleInstructionSet => generate(template, version, currentVersion, { region, parameterOverrides: {}, emitParameterDefaults: false })
+): ConsoleInstructionSet => generateConsoleInstructionsFor(GATEWAY_ROLE_CONSOLE_CONSTRUCT, template, version, currentVersion, region)
+
+/** {@link generateConsoleInstructions} for any construct that publishes a hand-build instruction set. */
+export const generateConsoleInstructionsFor = (
+  construct: ConsoleConstruct,
+  template: unknown,
+  version: string,
+  currentVersion: string,
+  region: string,
+): ConsoleInstructionSet => generate(construct, template, version, currentVersion, { region, parameterOverrides: {}, emitParameterDefaults: false })
 
 /**
  * Generate the set that publishes beside the template as `console-instructions.json`: the values the
@@ -318,8 +388,16 @@ export const generateConsoleInstructionTemplate = (
   template: unknown,
   version: string,
   currentVersion: string,
+): ConsoleInstructionSet => generateConsoleInstructionTemplateFor(GATEWAY_ROLE_CONSOLE_CONSTRUCT, template, version, currentVersion)
+
+/** {@link generateConsoleInstructionTemplate} for any construct that publishes a hand-build instruction set. */
+export const generateConsoleInstructionTemplateFor = (
+  construct: ConsoleConstruct,
+  template: unknown,
+  version: string,
+  currentVersion: string,
 ): ConsoleInstructionSet =>
-  generate(template, version, currentVersion, {
+  generate(construct, template, version, currentVersion, {
     region: REGION_TOKEN,
     parameterOverrides: { [TRUST_ACCOUNT_PARAMETER]: TRUST_ACCOUNT_TOKEN },
     emitParameterDefaults: true,

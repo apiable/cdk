@@ -5,6 +5,7 @@
     "baseUrl": ".",
     "paths": {
       "@apiable/cdk-gateway-role": ["lib/gateway-role/index.ts"],
+      "@apiable/cdk-cognito-pool-role": ["lib/cognito-pool-role/index.ts"],
       "@apiable/cdk-logs-bucket": ["lib/logs-bucket/index.ts"],
       "@apiable/cdk-cognito-pool": ["lib/cognito-pool/index.ts"],
       "@apiable/cdk-lambda-authorizer": ["lib/lambda-authorizer/index.ts"],

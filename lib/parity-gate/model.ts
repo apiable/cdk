@@ -67,6 +67,8 @@ export interface PermissionGrant {
   readonly ref: string
   readonly effect: string
   readonly actions: readonly string[]
+  /** A statement's `NotAction`: every action except these. Absent when the statement names its actions. */
+  readonly notActions?: readonly string[]
   readonly resources: readonly string[]
   readonly principal?: string
   /**

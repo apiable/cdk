@@ -54,7 +54,7 @@ if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
 fi
 
 # Which versions take the external ID is the generator's rule, so the generator is asked: once, for the
-# version of every instruction set in this run. No list of versions lives in this script.
+# construct and version of every instruction set in this run. No list of versions lives in this script.
 # The question gets an environment of its own: the path, the home directory and the versions, and no
 # cloud credential, wherever this script runs. npm cannot tell there that it is in CI, so it is told
 # not to look for a newer version of itself.
@@ -62,16 +62,18 @@ SET_VERSIONS=""
 for src in "${ARTIFACTS[@]}"; do
   if [[ "${src}" == */console-instructions.json ]]; then
     version_dir="${src%/console-instructions.json}"
-    SET_VERSIONS="${SET_VERSIONS} ${version_dir##*/}"
+    construct_dir="${version_dir%/*}"
+    SET_VERSIONS="${SET_VERSIONS} ${construct_dir##*/}/${version_dir##*/}"
   fi
 done
 VERSIONS_TAKING_EXTERNAL_ID=""
 if [[ -n "${SET_VERSIONS}" ]]; then
   if ! VERSIONS_TAKING_EXTERNAL_ID=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
     npx ts-node --transpile-only -r tsconfig-paths/register --prefer-ts-exts -e "
-      import { requiresExternalId } from './lib/gateway-role/console-instructions'
-      for (const version of (process.env.SET_VERSIONS ?? '').split(' ').filter(Boolean)) {
-        if (requiresExternalId(version)) console.log(version)
+      import { requiresExternalIdFor } from './lib/console-instruction-constructs'
+      for (const key of (process.env.SET_VERSIONS ?? '').split(' ').filter(Boolean)) {
+        const [construct, version] = key.split('/')
+        if (requiresExternalIdFor(construct, version)) console.log(key)
       }
     "); then
     echo "could not ask the generator which versions take the external ID — the instruction sets cannot be verified" >&2
@@ -146,10 +148,9 @@ is_wellformed_module_zip() {
 # already-resolved file never reaches the store. The region and the trust account are tokens in every
 # set. The external ID is a token in a set exactly when its version takes one. $2 is the artifact's key.
 is_wellformed_instructions() {
-  local version="${2#*/}"
-  version="${version%%/*}"
+  local construct_and_version="${2%/*}"
   local takes_external_id="false"
-  grep -qxF -- "${version}" <<< "${VERSIONS_TAKING_EXTERNAL_ID}" && takes_external_id="true"
+  grep -qxF -- "${construct_and_version}" <<< "${VERSIONS_TAKING_EXTERNAL_ID}" && takes_external_id="true"
   if ! parse_error=$(node -e "
     const fs = require('fs');
     try {

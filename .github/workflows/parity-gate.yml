@@ -19,6 +19,7 @@ on:
       - 'test/**'
       - 'jest.config.js'
       - 'check-gateway-role-module.sh'
+      - 'check-cognito-pool-role-module.sh'
       - 'test-check-gateway-role-module.sh'
       - '.github/workflows/parity-gate.yml'
   push:
@@ -101,6 +102,20 @@ jobs:
 
       # That script is worth what it refuses: it has to pass on the module as committed and fail on
       # each changed copy of it the test makes, at the check that is there for that change.
+      - name: terraform validate (user pool role module)
+        working-directory: terraform/apiable-cognito-pool-role
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check
+          terraform validate
+
+      # A wildcard trust target, an external ID that is missing, blank, a wildcard or a list, and a pool
+      # id that is missing, malformed or from another region are each refused by the module itself, and
+      # the committed fixture still reduces to a fresh plan. The script sets placeholder keys and answers
+      # the account lookup from a local stand-in, so no cloud account is called.
+      - name: terraform engine checks (user pool role module)
+        run: bash check-cognito-pool-role-module.sh terraform/apiable-cognito-pool-role
+
       - name: the engine checks fail on a changed gateway-role module
         env:
           AWS_ACCESS_KEY_ID: testing

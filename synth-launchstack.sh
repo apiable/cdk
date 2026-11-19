@@ -116,9 +116,9 @@ fi
 
 # The hand-build console channel publishes the generator's template-mode set beside the template, so
 # the portal serves the instruction set the release-time parity gate compared — never a copy of it.
-if [[ "${CONSTRUCT_NAME}" == "apiable-gateway-role" ]]; then
+if [[ "${CONSTRUCT_NAME}" == "apiable-gateway-role" || "${CONSTRUCT_NAME}" == "apiable-cognito-pool-role" ]]; then
   CONSOLE_FILE="${OUT_DIR}/console-instructions.json"
   npx ts-node -r tsconfig-paths/register --prefer-ts-exts scripts/console-instructions-publish.ts \
-    "${OUT_DIR}/template.json" "${VERSION}" "${CONSOLE_FILE}"
+    "${OUT_DIR}/template.json" "${VERSION}" "${CONSOLE_FILE}" "${CONSTRUCT_NAME}"
   publish_destination console-instructions.json
 fi

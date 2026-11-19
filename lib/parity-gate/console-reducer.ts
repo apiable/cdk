@@ -13,8 +13,15 @@
 import { ChannelModel } from './model'
 import { reduceCloudFormation } from './cfn-reducer'
 import { DECLARED_ID_TAG } from './canonical'
-import { ConsoleInstructionSet } from '../gateway-role/console-instructions'
+import { ConsoleConstructName, ConsoleInstructionSet } from '../gateway-role/console-instructions'
 import { GATEWAY_ROLE_LOGICAL_ID } from '../gateway-role/gateway-role'
+import { COGNITO_POOL_ROLE_LOGICAL_ID } from '../cognito-pool-role/cognito-pool-role'
+
+/** The declared identity of each construct's role, which its other channels tag the role with. */
+const LOGICAL_ID_BY_CONSTRUCT: Readonly<Record<ConsoleConstructName, string>> = {
+  'apiable-gateway-role': GATEWAY_ROLE_LOGICAL_ID,
+  'apiable-cognito-pool-role': COGNITO_POOL_ROLE_LOGICAL_ID,
+}
 
 export const reduceConsoleInstructions = (instructions: ConsoleInstructionSet, region: string): ChannelModel => {
   const syntheticArtifact = {
@@ -23,7 +30,7 @@ export const reduceConsoleInstructions = (instructions: ConsoleInstructionSet, r
         Type: 'AWS::IAM::Role',
         Properties: {
           RoleName: instructions.roleName,
-          Tags: [{ Key: DECLARED_ID_TAG, Value: GATEWAY_ROLE_LOGICAL_ID }],
+          Tags: [{ Key: DECLARED_ID_TAG, Value: LOGICAL_ID_BY_CONSTRUCT[instructions.construct] }],
           AssumeRolePolicyDocument: instructions.trustDocument,
         },
       },
