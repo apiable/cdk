@@ -5,7 +5,7 @@
 #   - a trust_account that is a wildcard, a list, an ARN or not 12 digits is refused,
 #   - an external_id that is missing, blank, a wildcard, a list, uppercase, a UUID of another version or
 #     not shaped like an ID at all is refused,
-#   - a user_pool_id that is missing or malformed is refused, and one from another region than the
+#   - a user_pool_id that is missing, malformed or longer than 38 characters is refused, and one from another region than the
 #     role's is refused before any role is planned,
 #   - the committed plan fixture the parity specs read still reduces to a fresh plan of the module.
 #
@@ -139,6 +139,8 @@ refused "a plan with no user_pool_id" "No value for required variable" \
   -var "region=${REGION}" -var "external_id=${EXTERNAL_ID}"
 refused "a malformed user_pool_id" "must be one user pool id" \
   -var "region=${REGION}" -var "external_id=${EXTERNAL_ID}" -var 'user_pool_id=*'
+refused "a user_pool_id of 39 characters" "must be one user pool id" \
+  -var "region=${REGION}" -var "external_id=${EXTERNAL_ID}" -var "user_pool_id=${REGION}_AbCdEfGhIjKlMnOpQrStUvWxYz"
 refused "a user_pool_id from another region" "user pool in the region the role is for" \
   -var "region=${REGION}" -var "external_id=${EXTERNAL_ID}" -var 'user_pool_id=us-west-2_AbCdEfGhI'
 

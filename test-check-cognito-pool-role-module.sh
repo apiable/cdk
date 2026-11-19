@@ -10,7 +10,9 @@
 #     input: the external_id check made to pass whatever it is given, a wildcard, a list, an uppercase
 #     UUID, a UUID of another version or a value not shaped like an ID; the variable given a default, an
 #     ID or a blank; the trust_account check made to pass a wildcard, a list, an ARN or 11 digits; the
-#     user_pool_id check made to pass a wildcard; the check that the pool is in the role's region removed.
+#     user_pool_id variable given a default; the user_pool_id check made to pass a wildcard, or made to
+#     drop its 38-character limit (the role name would then pass 64, so the provider refuses it, for a
+#     reason other than the one the check requires); the check that the pool is in the role's region removed.
 # So a script that stops making one of its checks fails this test: each refusal, the reason it requires of
 # a refusal, and the regen check all have a copy here that has to fail at that check.
 #
@@ -60,6 +62,7 @@ EXTERNAL_ID_VARIABLE = 'variable "external_id" {\n'
 EXTERNAL_ID_CHECK = 'var.external_id))\n'
 TRUST_ACCOUNT_CHECK = 'var.trust_account))\n'
 USER_POOL_ID_CHECK = 'var.user_pool_id)) && length(var.user_pool_id) <= 38\n'
+USER_POOL_ID_VARIABLE = 'variable "user_pool_id" {\n'
 SAME_REGION_CHECK = 'condition     = split("_", var.user_pool_id)[0] == var.region\n'
 CHANGES = {
     'condition-commented-out': ('main.tf', CONDITION, '        # ' + CONDITION.lstrip()),
@@ -86,6 +89,8 @@ CHANGES = {
     'trust-account-check-passes-an-arn': ('variables.tf', TRUST_ACCOUNT_CHECK, 'var.trust_account)) || startswith(var.trust_account, "arn:")\n'),
     'trust-account-check-passes-11-digits': ('variables.tf', TRUST_ACCOUNT_CHECK, 'var.trust_account)) || can(regex("^[0-9]{11}$", var.trust_account))\n'),
     'user-pool-id-check-passes-a-wildcard': ('variables.tf', USER_POOL_ID_CHECK, 'var.user_pool_id)) && length(var.user_pool_id) <= 38 || var.user_pool_id == "*"\n'),
+    'user-pool-id-default-is-an-id': ('variables.tf', USER_POOL_ID_VARIABLE, USER_POOL_ID_VARIABLE + '  default = "eu-central-1_AbCdEfGhI"\n'),
+    'user-pool-id-length-limit-removed': ('variables.tf', USER_POOL_ID_CHECK, 'var.user_pool_id))\n'),
     'same-region-check-removed': ('main.tf', SAME_REGION_CHECK, 'condition     = length(var.user_pool_id) > 0\n'),
 }
 
@@ -127,6 +132,8 @@ fails_at trust-account-check-passes-a-list "expected a list of two trust account
 fails_at trust-account-check-passes-an-arn "expected a trust_account given as an ARN to be refused, but the plan succeeded"
 fails_at trust-account-check-passes-11-digits "expected an 11-digit trust_account to be refused, but the plan succeeded"
 fails_at user-pool-id-check-passes-a-wildcard "a malformed user_pool_id was refused, but not for the reason expected"
+fails_at user-pool-id-default-is-an-id "expected a plan with no user_pool_id to be refused, but the plan succeeded"
+fails_at user-pool-id-length-limit-removed "a user_pool_id of 39 characters was refused, but not for the reason expected"
 fails_at same-region-check-removed "expected a user_pool_id from another region to be refused, but the plan succeeded"
 
 if [[ "${fail_count}" -gt 0 ]]; then
