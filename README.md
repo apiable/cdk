@@ -11,6 +11,9 @@ Create the role from the setup instructions your API Portal shows. This reposito
 ### Get the Role Arn
 The role's ARN is an output of the stack or Terraform module that created it. For a role created by hand, copy it from the role's page in IAM.
 
+## Cognito User Pool Role installation
+Create the role for one user pool from the setup instructions your API Portal shows. This repository has no script that creates it.
+
 ## AuthZ Gateway Authorizer installation
 ### Export the paramaters
 ```bash

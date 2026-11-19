@@ -2,7 +2,7 @@
 #
 # Publish the synthesized launch-stack artifacts — the templates, each construct's Terraform module
 # archive, any code artifact such as the lambda-authorizer's zip (too large for CloudFormation's
-# inline ZipFile), and the gateway role's console instruction set — to the store the portal
+# inline ZipFile), and each hand-build console instruction set — to the store the portal
 # addresses. Run synth-launchstack.sh for every construct first; this script only uploads what is on
 # disk.
 #

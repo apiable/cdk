@@ -2,8 +2,9 @@
 #
 # The engine checks on the user pool role Terraform module, run with the real engine on the directory
 # it is given, which must already be initialised:
-#   - a wildcard trust_account is refused,
-#   - an external_id that is missing, blank, a wildcard or a list is refused,
+#   - a trust_account that is a wildcard, a list, an ARN or not 12 digits is refused,
+#   - an external_id that is missing, blank, a wildcard, a list, uppercase, a UUID of another version or
+#     not shaped like an ID at all is refused,
 #   - a user_pool_id that is missing or malformed is refused, and one from another region than the
 #     role's is refused before any role is planned,
 #   - the committed plan fixture the parity specs read still reduces to a fresh plan of the module.
@@ -11,7 +12,7 @@
 # No cloud account is called. The module reads the deploying account, so the provider's STS endpoint
 # is pointed at a local stand-in that answers that one question with a placeholder account; every plan
 # runs without a refresh, and the provider still wants keys to be present, so placeholder ones are set
-# for this script alone.
+# for this script alone, after every other AWS_ variable of the caller's environment is unset.
 #
 # Usage: bash check-cognito-pool-role-module.sh <module-dir>
 set -euo pipefail
@@ -29,10 +30,13 @@ EXTERNAL_ID="a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 OTHER_EXTERNAL_ID="f6e5d4c3-b2a1-4c8d-9e0f-5d4c3b2a1f0e"
 USER_POOL_ID="${REGION}_AbCdEfGhI"
 PLACEHOLDER_ACCOUNT="111122223333"
-# Placeholder keys always, whatever the caller's environment holds, so no real credential is ever used.
+# Placeholder keys always, whatever the caller's environment holds, so no real credential, profile, role or
+# endpoint of the caller's is ever used.
+while IFS= read -r name; do
+  unset "${name}"
+done < <(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/\1/p')
 export AWS_ACCESS_KEY_ID=testing
 export AWS_SECRET_ACCESS_KEY=testing
-unset AWS_SESSION_TOKEN AWS_PROFILE
 
 WORK="$(mktemp -d)"
 OVERRIDE="${MODULE_DIR}/ci_provider_override.tf"
@@ -111,6 +115,12 @@ refused() {
 POOL=(-var "region=${REGION}" -var "user_pool_id=${USER_POOL_ID}")
 refused "a wildcard trust_account" "12-digit AWS account id" \
   "${POOL[@]}" -var "external_id=${EXTERNAL_ID}" -var 'trust_account=*'
+refused "a list of two trust accounts" "12-digit AWS account id" \
+  "${POOL[@]}" -var "external_id=${EXTERNAL_ID}" -var 'trust_account=034444869755,111122223333'
+refused "a trust_account given as an ARN" "12-digit AWS account id" \
+  "${POOL[@]}" -var "external_id=${EXTERNAL_ID}" -var 'trust_account=arn:aws:iam::034444869755:root'
+refused "an 11-digit trust_account" "12-digit AWS account id" \
+  "${POOL[@]}" -var "external_id=${EXTERNAL_ID}" -var 'trust_account=12345678901'
 refused "a plan with no external_id" "No value for required variable" \
   "${POOL[@]}"
 refused "a blank external_id" "lowercase version 4 UUID" \
@@ -119,6 +129,12 @@ refused "a wildcard external_id" "lowercase version 4 UUID" \
   "${POOL[@]}" -var 'external_id=*'
 refused "a list of two external IDs" "lowercase version 4 UUID" \
   "${POOL[@]}" -var "external_id=${EXTERNAL_ID},${OTHER_EXTERNAL_ID}"
+refused "an uppercase external_id" "lowercase version 4 UUID" \
+  "${POOL[@]}" -var "external_id=$(tr '[:lower:]' '[:upper:]' <<< "${EXTERNAL_ID}")"
+refused "an external_id that is not a version 4 UUID" "lowercase version 4 UUID" \
+  "${POOL[@]}" -var 'external_id=a1b2c3d4-e5f6-1a7b-8c9d-0e1f2a3b4c5d'
+refused "an external_id not shaped like an ID" "lowercase version 4 UUID" \
+  "${POOL[@]}" -var 'external_id=my-portal'
 refused "a plan with no user_pool_id" "No value for required variable" \
   -var "region=${REGION}" -var "external_id=${EXTERNAL_ID}"
 refused "a malformed user_pool_id" "must be one user pool id" \

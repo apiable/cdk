@@ -2,8 +2,8 @@
 #
 # Synthesize the versioned launch-stack artifacts for an Apiable construct and write them to the
 # per-version, immutable path: the CloudFormation template, the Terraform module archive for a
-# construct with a module under terraform/, and for the gateway role the hand-build console
-# instruction set. Pass the construct's component name (defaults to the gateway-role pilot); the
+# construct with a module under terraform/, and the hand-build console instruction set for each
+# construct that publishes one (lib/console-instruction-constructs.ts). Pass the construct's component name (defaults to the gateway-role pilot); the
 # package dir is lib/<component-without-the-apiable-prefix>, overridden for the shared logs-stream
 # construct whose folder serves both usage-log and api-key-token distributions.
 #

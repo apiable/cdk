@@ -2,8 +2,8 @@ name: parity-gate
 
 # Release-time gate that proves the distribution channels (CDK construct, published CloudFormation
 # template, hand-rolled Terraform module — three for every construct, plus a fourth generated
-# hand-build console channel for apiable-gateway-role, the one construct that publishes a customer
-# hand-build path) would provision the same component. The static tiers run here with zero live
+# hand-build console channel for each construct that publishes a customer hand-build path: the
+# gateway role and the user pool role) would provision the same component. The static tiers run here with zero live
 # AWS; the live-deploy half (S9) runs only against the isolated apiable-logging account and is
 # never wired to this default gate, so a per-PR run can never reach a production-containing account.
 
@@ -21,6 +21,7 @@ on:
       - 'check-gateway-role-module.sh'
       - 'check-cognito-pool-role-module.sh'
       - 'test-check-gateway-role-module.sh'
+      - 'test-check-cognito-pool-role-module.sh'
       - '.github/workflows/parity-gate.yml'
   push:
     branches:
@@ -102,6 +103,12 @@ jobs:
 
       # That script is worth what it refuses: it has to pass on the module as committed and fail on
       # each changed copy of it the test makes, at the check that is there for that change.
+      - name: the engine checks fail on a changed gateway-role module
+        env:
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+        run: bash test-check-gateway-role-module.sh
+
       - name: terraform validate (user pool role module)
         working-directory: terraform/apiable-cognito-pool-role
         run: |
@@ -109,18 +116,18 @@ jobs:
           terraform fmt -check
           terraform validate
 
-      # A wildcard trust target, an external ID that is missing, blank, a wildcard or a list, and a pool
-      # id that is missing, malformed or from another region are each refused by the module itself, and
-      # the committed fixture still reduces to a fresh plan. The script sets placeholder keys and answers
-      # the account lookup from a local stand-in, so no cloud account is called.
+      # A trusted account that is not exactly one account, an external ID that is missing, blank, a
+      # wildcard, a list or not a lowercase version 4 UUID, and a pool id that is missing, malformed or
+      # from another region are each refused by the module itself, and the committed fixture still
+      # reduces to a fresh plan. The script sets placeholder keys and answers the account lookup from a
+      # local stand-in, so no cloud account is called.
       - name: terraform engine checks (user pool role module)
         run: bash check-cognito-pool-role-module.sh terraform/apiable-cognito-pool-role
 
-      - name: the engine checks fail on a changed gateway-role module
-        env:
-          AWS_ACCESS_KEY_ID: testing
-          AWS_SECRET_ACCESS_KEY: testing
-        run: bash test-check-gateway-role-module.sh
+      # As for the gateway role: the script has to pass on the module as committed and fail on each
+      # changed copy of it, at the check that is there for that change.
+      - name: the engine checks fail on a changed user pool role module
+        run: bash test-check-cognito-pool-role-module.sh
 
       - name: terraform validate (logs-bucket module)
         working-directory: terraform/apiable-logs-bucket
