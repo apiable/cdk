@@ -1,8 +1,8 @@
 /**
  * The hand-build instruction set for the user pool role, from the same generator as the gateway role's,
  * so it is derived from the published template and never authored here. Every version requires the
- * External ID. The set leaves the pool id as a token for the serving portal to fill, and the account the
- * role is deployed in as the gate's account token, since only the Provider knows it.
+ * External ID. The set leaves the pool id as a token for the serving portal to fill, and names the pool's
+ * account by the IAM policy variable that AWS resolves to the account the role is in.
  */
 import {
   ConsoleConstruct,
@@ -28,7 +28,7 @@ export { USER_POOL_ID_TOKEN }
 export const isPublishedPoolRoleVersion = (version: string, currentVersion: string): boolean =>
   isPublishedVersionOf(COGNITO_POOL_ROLE_CONSOLE_CONSTRUCT, version, currentVersion)
 
-/** The set for `region`, with the External ID, the pool id and the account left as tokens. */
+/** The set for `region`, with the External ID and the pool id left as tokens. */
 export const generatePoolRoleConsoleInstructions = (
   template: unknown,
   version: string,

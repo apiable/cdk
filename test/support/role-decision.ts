@@ -5,10 +5,12 @@
  *
  * It models the slice of IAM policy evaluation these roles use: an explicit Deny overrides any Allow,
  * nothing is allowed by default, `Action` and `NotAction`, `Resource` and `NotResource` with `*` globs,
- * an AWS principal named by account root or account id, and the condition operators `StringEquals` and
- * `StringNotEquals` (on `sts:ExternalId`) and `IpAddress` and `NotIpAddress` (on `aws:SourceIp`). Any
- * other operator or key is drift: it bites on a Deny and never grants on an Allow, so a policy the
- * stand-in cannot read is judged closed both ways.
+ * an AWS principal named by account root or account id, the condition operators `StringEquals` and
+ * `StringNotEquals` (on `sts:ExternalId`) and `IpAddress` and `NotIpAddress` (on `aws:SourceIp`), and the
+ * policy variable `${aws:PrincipalAccount}` in a resource, which resolves to the account the role is in.
+ * A negated operator whose key the request does not carry is satisfied, as in AWS. Any other operator,
+ * key or variable is drift: it bites on a Deny and never grants on an Allow, so a policy the stand-in
+ * cannot read is judged closed both ways.
  */
 import { asArray, asRecord, asString } from '../../lib/parity-gate/narrow'
 
@@ -24,11 +26,15 @@ export interface AssumeRequest {
 export interface CallRequest {
   readonly action: string
   readonly resource: string
-  readonly sourceIp: string
+  /** The account the role is in, which a call made with it is made from. */
+  readonly principalAccount: string
+  /** Absent for a call that carries no source address. */
+  readonly sourceIp?: string
 }
 
 type Statement = Record<string, unknown>
 type ConditionResult = 'satisfied' | 'unsatisfied' | 'unknown'
+type Context = Readonly<Record<string, string | undefined>>
 
 const toList = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : value === undefined ? [] : [value])
 const strings = (value: unknown): string[] => toList(value).filter((entry): entry is string => typeof entry === 'string')
@@ -56,7 +62,7 @@ export const cidrContains = (cidr: string, ip: string): boolean => {
   return Math.floor(baseNumber / size) === Math.floor(ipNumber / size)
 }
 
-const conditionResult = (statement: Statement, context: Readonly<Record<string, string | undefined>>): ConditionResult => {
+const conditionResult = (statement: Statement, context: Context): ConditionResult => {
   if (statement.Condition === undefined) return 'satisfied'
   for (const [operator, operands] of Object.entries(asRecord(statement.Condition))) {
     for (const [key, expectedValue] of Object.entries(asRecord(operands))) {
@@ -75,7 +81,7 @@ const conditionResult = (statement: Statement, context: Readonly<Record<string, 
           if (actual === undefined || !expected.some((cidr) => cidrContains(cidr, actual))) return 'unsatisfied'
           break
         case 'NotIpAddress':
-          if (actual === undefined || expected.some((cidr) => cidrContains(cidr, actual))) return 'unsatisfied'
+          if (actual !== undefined && expected.some((cidr) => cidrContains(cidr, actual))) return 'unsatisfied'
           break
         default:
           return 'unknown'
@@ -85,25 +91,47 @@ const conditionResult = (statement: Statement, context: Readonly<Record<string, 
   return 'satisfied'
 }
 
-const coversAction = (statement: Statement, action: string): boolean => {
-  if (statement.NotAction !== undefined) return !strings(statement.NotAction).some((pattern) => globMatch(pattern, action))
-  return strings(statement.Action).some((pattern) => globMatch(pattern, action))
+/** Whether a statement applies to a request: 'unknown' when it names something the stand-in cannot resolve. */
+type Scope = 'yes' | 'no' | 'unknown'
+
+const coversAction = (statement: Statement, action: string): Scope => {
+  if (statement.NotAction !== undefined) return strings(statement.NotAction).some((pattern) => globMatch(pattern, action)) ? 'no' : 'yes'
+  return strings(statement.Action).some((pattern) => globMatch(pattern, action)) ? 'yes' : 'no'
 }
 
-const coversResource = (statement: Statement, resource: string): boolean => {
-  if (statement.NotResource !== undefined) return !strings(statement.NotResource).some((pattern) => globMatch(pattern, resource))
-  return strings(statement.Resource).some((pattern) => globMatch(pattern, resource))
+const POLICY_VARIABLE = /\$\{([^}]*)\}/g
+
+/** `pattern` with each policy variable replaced by its value, or undefined when one has no value. */
+const substituted = (pattern: string, context: Context): string | undefined => {
+  let resolved = true
+  const value = pattern.replace(POLICY_VARIABLE, (_match, key: string) => {
+    const replacement = context[key]
+    if (replacement === undefined) resolved = false
+    return replacement ?? ''
+  })
+  return resolved ? value : undefined
 }
 
-/** Deny overrides; an Allow grants only when its condition is fully satisfied; nothing else is allowed. */
-const decide = (statements: readonly Statement[], applies: (statement: Statement) => boolean, context: Readonly<Record<string, string | undefined>>): boolean => {
+const coversResource = (statement: Statement, resource: string, context: Context): Scope => {
+  const negated = statement.NotResource !== undefined
+  const patterns = strings(negated ? statement.NotResource : statement.Resource).map((pattern) => substituted(pattern, context))
+  if (patterns.some((pattern) => pattern !== undefined && globMatch(pattern, resource))) return negated ? 'no' : 'yes'
+  if (patterns.some((pattern) => pattern === undefined)) return 'unknown'
+  return negated ? 'yes' : 'no'
+}
+
+const both = (first: Scope, second: Scope): Scope => (first === 'no' || second === 'no' ? 'no' : first === 'unknown' || second === 'unknown' ? 'unknown' : 'yes')
+
+/** Deny overrides, and bites on anything it may cover; an Allow grants only what it fully covers; nothing else is allowed. */
+const decide = (statements: readonly Statement[], applies: (statement: Statement) => Scope, context: Context): boolean => {
   let allowed = false
   for (const statement of statements) {
-    if (!applies(statement)) continue
+    const scope = applies(statement)
+    if (scope === 'no') continue
     const condition = conditionResult(statement, context)
     if (condition === 'unsatisfied') continue
     if (asString(statement.Effect) === 'Deny') return false
-    if (asString(statement.Effect) === 'Allow' && condition === 'satisfied') allowed = true
+    if (asString(statement.Effect) === 'Allow' && condition === 'satisfied' && scope === 'yes') allowed = true
   }
   return allowed
 }
@@ -120,17 +148,19 @@ const principalNamesAccount = (statement: Statement, account: string): boolean =
 export const mayAssume = (trustDocument: unknown, request: AssumeRequest): boolean =>
   decide(
     statementsOf(trustDocument),
-    (statement) => coversAction(statement, 'sts:AssumeRole') && principalNamesAccount(statement, request.account),
+    (statement) => (principalNamesAccount(statement, request.account) ? coversAction(statement, 'sts:AssumeRole') : 'no'),
     { 'sts:ExternalId': request.externalId },
   )
 
 /** Whether the permission policy allows `request` made with the role's credentials. */
-export const mayCall = (permissionDocument: unknown, request: CallRequest): boolean =>
-  decide(
+export const mayCall = (permissionDocument: unknown, request: CallRequest): boolean => {
+  const context: Context = { 'aws:SourceIp': request.sourceIp, 'aws:PrincipalAccount': request.principalAccount }
+  return decide(
     statementsOf(permissionDocument),
-    (statement) => coversAction(statement, request.action) && coversResource(statement, request.resource),
-    { 'aws:SourceIp': request.sourceIp },
+    (statement) => both(coversAction(statement, request.action), coversResource(statement, request.resource, context)),
+    context,
   )
+}
 
 /** A role's two documents, fully resolved: every value a plain string. */
 export interface ResolvedRole {

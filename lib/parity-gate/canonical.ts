@@ -233,6 +233,12 @@ export const USER_POOL_ID_VAR_KEY = 'user_pool_id'
 export const USER_POOL_ID_TOKEN = '{user-pool-id}'
 
 /**
+ * The IAM policy variable for the account of the principal making a request. In a role's own permission
+ * policy that is the account the role is in, so the hand-build set names the pool's account with it.
+ */
+export const PRINCIPAL_ACCOUNT_VARIABLE = '${aws:PrincipalAccount}'
+
+/**
  * The Terraform reference to the deploy-time tenant-name variable — the channel-twin of the published
  * CloudFormation `TenantName` parameter. The published cognito module names the variable `name`, so a
  * hosted-UI domain whose `domain` expression references `var.name` is rendered through the conventional

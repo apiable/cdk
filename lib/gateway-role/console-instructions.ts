@@ -7,8 +7,8 @@
  * which reduces this module's output back into the gate's comparable model — the fourth channel).
  */
 import { EGRESS_CIDR_PARAMETER, EXTERNAL_ID_PARAMETER, TRUST_ACCOUNT_PARAMETER } from './gateway-role'
-import { EXTERNAL_ID_TOKEN, USER_POOL_ID_PARAMETER } from '../parity-gate/canonical'
-import { ACCOUNT_TOKEN, REGION_TOKEN } from '../parity-gate/model'
+import { EXTERNAL_ID_TOKEN, PRINCIPAL_ACCOUNT_VARIABLE, USER_POOL_ID_PARAMETER } from '../parity-gate/canonical'
+import { REGION_TOKEN } from '../parity-gate/model'
 
 /** Trust-account placeholder in a template-mode set; the portal fills it from the account it also pre-fills into the Launch Stack URL. */
 export const TRUST_ACCOUNT_TOKEN = '{trust-account}'
@@ -67,7 +67,7 @@ export interface ConsoleConstruct {
   readonly name: ConsoleConstructName
   /** The published versions whose trust takes no external ID. Any other version requires it. */
   readonly versionsWithoutExternalId: ReadonlySet<string>
-  /** Published versions this repository's source no longer reproduces, which stay generatable. */
+  /** Published versions that a synth of the current source does not reproduce, and that stay generatable. */
   readonly historicalVersions: ReadonlySet<string>
   /** Parameters with no default that the serving portal fills, each with the token it leaves for them. */
   readonly deployInputs: Readonly<Record<string, string>>
@@ -142,9 +142,14 @@ const INTRINSIC_KEYS: ReadonlySet<string> = new Set([
  * caller, so a resource-to-resource `Ref` (e.g. the policy's `Roles` list) is never handed to this
  * function at all.
  */
-const resolveValue = (value: unknown, parameterValues: Readonly<Record<string, string>>, region: string): unknown => {
+const resolveValue = (
+  value: unknown,
+  parameterValues: Readonly<Record<string, string>>,
+  region: string,
+  account?: string,
+): unknown => {
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
-  if (Array.isArray(value)) return value.map((entry) => resolveValue(entry, parameterValues, region))
+  if (Array.isArray(value)) return value.map((entry) => resolveValue(entry, parameterValues, region, account))
   if (!isRecord(value)) {
     throw new Error(`cannot resolve a console-instruction value of type ${typeof value}: ${JSON.stringify(value)}`)
   }
@@ -155,7 +160,7 @@ const resolveValue = (value: unknown, parameterValues: Readonly<Record<string, s
   if (intrinsicKeysPresent.length === 0) {
     // Plain data (Version, Effect, Sid, Action, Resource, Principal, Condition, an operator name like
     // "aws:SourceIp", …) — recurse into its own keys rather than treat it as an intrinsic.
-    return Object.fromEntries(keys.map((key) => [key, resolveValue(value[key], parameterValues, region)]))
+    return Object.fromEntries(keys.map((key) => [key, resolveValue(value[key], parameterValues, region, account)]))
   }
 
   // A genuine CloudFormation intrinsic is always exactly one key on its own; anything else sharing an
@@ -170,8 +175,7 @@ const resolveValue = (value: unknown, parameterValues: Readonly<Record<string, s
     const ref = value.Ref
     if (ref === 'AWS::Region') return region
     if (ref === 'AWS::Partition') return 'aws'
-    // The account the role is deployed in is the Provider's own, which only they know: it stays a token.
-    if (ref === 'AWS::AccountId') return ACCOUNT_TOKEN
+    if (ref === 'AWS::AccountId' && account !== undefined) return account
     if (typeof ref === 'string' && Object.prototype.hasOwnProperty.call(parameterValues, ref)) return parameterValues[ref]
     throw new Error(`unresolvable Ref "${String(ref)}" — no parameter default on the artifact and not a supported pseudo-parameter`)
   }
@@ -183,12 +187,38 @@ const resolveValue = (value: unknown, parameterValues: Readonly<Record<string, s
     }
     const delimiter = join[0]
     const parts = join[1] as unknown[]
-    return parts.map((part) => resolveValue(part, parameterValues, region)).join(delimiter)
+    return parts.map((part) => resolveValue(part, parameterValues, region, account)).join(delimiter)
   }
 
   // Recognised but unsupported here (Fn::GetAtt, Fn::Sub, Fn::ImportValue, …) — fails loudly rather
   // than emitting a half-resolved value a customer would paste verbatim into their own account.
   throw new Error(`unsupported intrinsic "${soleKey}" in a hand-build instruction value — only Ref and Fn::Join are resolved`)
+}
+
+/**
+ * The permission document, resolved as {@link resolveValue} does, except that the account the role is
+ * deployed in may appear in a statement's `Resource`, where it becomes {@link PRINCIPAL_ACCOUNT_VARIABLE}:
+ * AWS resolves that to the account the role is in, so the set needs no account typed in. Anywhere else
+ * the account is refused.
+ */
+const resolvePermissionDocument = (document: unknown, parameterValues: Readonly<Record<string, string>>, region: string): unknown => {
+  if (!isRecord(document) || !Array.isArray(document.Statement)) return resolveValue(document, parameterValues, region)
+  return Object.fromEntries(
+    Object.entries(document).map(([key, entry]) => {
+      if (key !== 'Statement') return [key, resolveValue(entry, parameterValues, region)]
+      const statements = (entry as unknown[]).map((statement) =>
+        isRecord(statement)
+          ? Object.fromEntries(
+              Object.entries(statement).map(([field, fieldValue]) => [
+                field,
+                resolveValue(fieldValue, parameterValues, region, field === 'Resource' ? PRINCIPAL_ACCOUNT_VARIABLE : undefined),
+              ]),
+            )
+          : resolveValue(statement, parameterValues, region),
+      )
+      return [key, statements]
+    }),
+  )
 }
 
 interface CfnLikeTemplate {
@@ -307,7 +337,7 @@ const generate = (
 
   const roleName = resolveValue(roleProperties.RoleName, parameterValues, region) as string
   const trustDocument = resolveValue(roleProperties.AssumeRolePolicyDocument, parameterValues, region) as ResolvedPolicyDocument
-  const permissionDocument = resolveValue(policyProperties.PolicyDocument, parameterValues, region) as ResolvedPolicyDocument
+  const permissionDocument = resolvePermissionDocument(policyProperties.PolicyDocument, parameterValues, region) as ResolvedPolicyDocument
 
   assertExternalIdMatchesVersion(construct, cfn, trustDocument, version)
 

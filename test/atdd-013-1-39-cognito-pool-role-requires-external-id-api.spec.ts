@@ -32,9 +32,10 @@ import { CognitoPool } from '@apiable/cdk-cognito-pool'
 import type { ConsoleInstructionSet } from '@apiable/cdk-gateway-role'
 import { Channel, ChannelModel, gate, reduceCloudFormation, reduceConsoleInstructions, reduceTerraformShowJson, REGION_TOKEN } from '@apiable/parity-gate'
 import { ACCOUNT_TOKEN } from '../lib/parity-gate/model'
+import { PRINCIPAL_ACCOUNT_VARIABLE } from '../lib/parity-gate/canonical'
 import { requiresExternalIdFor } from '../lib/console-instruction-constructs'
 import { asArray, asRecord, asString } from '../lib/parity-gate/narrow'
-import { launchedRole, mayAssume, mayCall, refusedParameters, ResolvedRole } from './support/role-decision'
+import { CallRequest, launchedRole, mayAssume, mayCall, refusedParameters, ResolvedRole } from './support/role-decision'
 import { publishedTemplatePath, publishedVersion } from './support/published-template'
 
 const REPO_ROOT = path.resolve(__dirname, '..')
@@ -76,20 +77,19 @@ const directTemplate = (props: { userPoolId?: string; region?: string } = {}): u
   return Template.fromStack(stack).toJSON()
 }
 
-/** The published set with every token filled as an API Portal fills it, and the Provider's own account typed in. */
+/** The published set with every token filled as an API Portal fills it: nothing is left for the Provider to type. */
 const servedSet = (values: { externalId?: string; poolId?: string } = {}): ConsoleInstructionSet =>
   JSON.parse(
     publishedSetText()
       .split(REGION_TOKEN).join(REGION)
       .split(TRUST_ACCOUNT_TOKEN).join(DEFAULT_APIABLE_TRUST_ACCOUNT)
       .split(EXTERNAL_ID_TOKEN).join(values.externalId ?? ISSUED_ID)
-      .split(USER_POOL_ID_TOKEN).join(values.poolId ?? POOL_ID)
-      .split(ACCOUNT_TOKEN).join(PROVIDER_ACCOUNT),
+      .split(USER_POOL_ID_TOKEN).join(values.poolId ?? POOL_ID),
   ) as ConsoleInstructionSet
 
 /**
  * The published set as the parity gate compares it: Region and trusted account filled, as for any deployment,
- * and the deploy-time values (the ID, the pool and the Provider's account) left as their named places.
+ * and the deploy-time values (the ID and the pool) left as their named places.
  */
 const gateSet = (): ConsoleInstructionSet =>
   JSON.parse(publishedSetText().split(REGION_TOKEN).join(REGION).split(TRUST_ACCOUNT_TOKEN).join(DEFAULT_APIABLE_TRUST_ACCOUNT)) as ConsoleInstructionSet
@@ -128,7 +128,14 @@ const roleFrom = (channel: RoleChannel): ResolvedRole => {
   return role
 }
 
-const fromApiable = (action: string, resource: string) => ({ action, resource, sourceIp: APIABLE_ADDRESS })
+/** A call made with a role deployed in the Provider's account, from `sourceIp` (absent: the call carries no address). */
+const call = (action: string, resource: string, sourceIp?: string, principalAccount = PROVIDER_ACCOUNT): CallRequest => ({
+  action,
+  resource,
+  principalAccount,
+  ...(sourceIp === undefined ? {} : { sourceIp }),
+})
+const fromApiable = (action: string, resource: string): CallRequest => call(action, resource, APIABLE_ADDRESS)
 
 /** Requests the role must refuse even from Apiable's address. */
 const REFUSED_REQUESTS: readonly (readonly [string, string, string])[] = [
@@ -146,6 +153,7 @@ const REFUSED_REQUESTS: readonly (readonly [string, string, string])[] = [
   ['list every pool in the account', 'cognito-idp:ListUserPools', '*'],
   ...APP_CLIENT_ACTIONS.map((action) => [`${action} on a second pool in the same account`, action, poolArn(SECOND_POOL_ID)] as const),
   ...APP_CLIENT_ACTIONS.map((action) => [`${action} on the same pool id in another Region`, action, poolArn(POOL_ID, 'us-east-1')] as const),
+  ...APP_CLIENT_ACTIONS.map((action) => [`${action} on the same pool id in another account`, action, poolArn(POOL_ID, REGION, ANOTHER_ACCOUNT)] as const),
   ['read an S3 object', 's3:GetObject', 'arn:aws:s3:::any-bucket/any-key'],
   ['create an IAM role', 'iam:CreateRole', `arn:aws:iam::${PROVIDER_ACCOUNT}:role/any`],
   ['assume another role', 'sts:AssumeRole', `arn:aws:iam::${PROVIDER_ACCOUNT}:role/any`],
@@ -174,7 +182,37 @@ describe('S2: the role can do the five operations on the one pool and nothing el
       .filter((statement) => statement.Effect === 'Allow')
     expect(allowed).toHaveLength(1)
     expect([...asArray(allowed[0].Action)].sort()).toEqual([...APP_CLIENT_ACTIONS].sort())
-    expect(allowed[0].Resource).toBe(poolArn(POOL_ID))
+    // The hand-build set names the account by the policy variable, which AWS resolves to the account the role is in.
+    expect(allowed[0].Resource).toBe(channel === 'hand-build instructions' ? poolArn(POOL_ID, REGION, PRINCIPAL_ACCOUNT_VARIABLE) : poolArn(POOL_ID))
+  })
+
+  // contract: S2
+  it('the hand-build instructions name the pool’s account by the policy variable, there and nowhere else, so the API Portal fills every other place', () => {
+    const published = JSON.parse(publishedSetText()) as ConsoleInstructionSet
+    const allow = allowStatement(asRecord(published.permissionDocument))
+
+    expect(allow.Resource).toBe(poolArn(USER_POOL_ID_TOKEN, REGION_TOKEN, PRINCIPAL_ACCOUNT_VARIABLE))
+    expect(publishedSetText().split(PRINCIPAL_ACCOUNT_VARIABLE)).toHaveLength(2)
+    expect(publishedSetText()).not.toContain(ACCOUNT_TOKEN)
+  })
+
+  // contract: S2
+  it('the one-click stack, the module and the construct name the pool’s account as the account they deploy in, never by the variable', () => {
+    for (const artifact of [JSON.stringify(publishedTemplate()), JSON.stringify(directTemplate()), JSON.stringify(terraformPlan())]) {
+      expect(artifact).not.toContain(PRINCIPAL_ACCOUNT_VARIABLE)
+    }
+    for (const channel of ['one-click stack', 'Terraform module', 'construct used directly'] as const) {
+      expect([channel, allowStatement(asRecord(roleFrom(channel).permissions)).Resource]).toEqual([channel, poolArn(POOL_ID)])
+    }
+  })
+
+  // contract: S2
+  it('a role built by hand in another account reaches that account’s pool only, never the same pool id in the account the set was read for', () => {
+    const { permissions } = roleFrom('hand-build instructions')
+    for (const action of APP_CLIENT_ACTIONS) {
+      expect(mayCall(permissions, call(action, poolArn(POOL_ID, REGION, ANOTHER_ACCOUNT), APIABLE_ADDRESS, ANOTHER_ACCOUNT))).toBe(true)
+      expect(mayCall(permissions, call(action, poolArn(POOL_ID), APIABLE_ADDRESS, ANOTHER_ACCOUNT))).toBe(false)
+    }
   })
 
   // contract: S2
@@ -260,10 +298,16 @@ describe('S4: the ID cannot be left out, widened or defaulted', () => {
     const script = fs.readFileSync(path.join(REPO_ROOT, 'check-cognito-pool-role-module.sh'), 'utf8')
     for (const kind of [
       'a wildcard trust_account',
+      'a list of two trust accounts',
+      'a trust_account given as an ARN',
+      'an 11-digit trust_account',
       'a plan with no external_id',
       'a blank external_id',
       'a wildcard external_id',
       'a list of two external IDs',
+      'an uppercase external_id',
+      'an external_id that is not a version 4 UUID',
+      'an external_id not shaped like an ID',
       'a plan with no user_pool_id',
       'a malformed user_pool_id',
     ]) {
@@ -276,6 +320,8 @@ describe('S4: the ID cannot be left out, widened or defaulted', () => {
     for (const workflow of ['build.yml', 'parity-gate.yml']) {
       expect(fs.readFileSync(path.join(REPO_ROOT, '.github/workflows', workflow), 'utf8')).toContain(`bash check-cognito-pool-role-module.sh terraform/${CONSTRUCT}`)
     }
+    // The script is held to each refusal by changed copies of the module, which the parity workflow runs.
+    expect(fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/parity-gate.yml'), 'utf8')).toContain('bash test-check-cognito-pool-role-module.sh')
   })
 
   // contract: S4
@@ -323,8 +369,37 @@ describe('S6: requests from outside Apiable’s address are refused', () => {
   it.each(ROLE_CHANNELS)('the role from the %s, at its default address, refuses each of the five operations from another address', (channel) => {
     const { permissions } = roleFrom(channel)
     for (const action of APP_CLIENT_ACTIONS) {
-      expect([action, mayCall(permissions, { action, resource: poolArn(POOL_ID), sourceIp: ANOTHER_ADDRESS })]).toEqual([action, false])
+      expect([action, mayCall(permissions, call(action, poolArn(POOL_ID), ANOTHER_ADDRESS))]).toEqual([action, false])
     }
+  })
+
+  // contract: S6
+  it.each(ROLE_CHANNELS)('the role from the %s refuses each of the five operations on a call that carries no source address', (channel) => {
+    const { permissions } = roleFrom(channel)
+    for (const action of APP_CLIENT_ACTIONS) {
+      expect([action, mayCall(permissions, call(action, poolArn(POOL_ID)))]).toEqual([action, false])
+    }
+  })
+
+  // contract: S6
+  it('the stand-in applies a Deny whose negated condition names a key the request does not carry, as AWS does', () => {
+    const permissions = {
+      Statement: [
+        { Effect: 'Allow', Action: '*', Resource: '*' },
+        { Effect: 'Deny', Action: '*', Resource: '*', Condition: { NotIpAddress: { 'aws:SourceIp': `${APIABLE_ADDRESS}/32` } } },
+      ],
+    }
+    const trust = {
+      Statement: [
+        { Effect: 'Allow', Action: 'sts:AssumeRole', Principal: { AWS: DEFAULT_APIABLE_TRUST_ACCOUNT } },
+        { Effect: 'Deny', Action: 'sts:AssumeRole', Principal: { AWS: DEFAULT_APIABLE_TRUST_ACCOUNT }, Condition: { StringNotEquals: { 'sts:ExternalId': ISSUED_ID } } },
+      ],
+    }
+
+    expect(mayCall(permissions, fromApiable('s3:GetObject', '*'))).toBe(true)
+    expect(mayCall(permissions, call('s3:GetObject', '*'))).toBe(false)
+    expect(mayAssume(trust, { account: DEFAULT_APIABLE_TRUST_ACCOUNT, externalId: ISSUED_ID })).toBe(true)
+    expect(mayAssume(trust, { account: DEFAULT_APIABLE_TRUST_ACCOUNT })).toBe(false)
   })
 
   // contract: S6
@@ -342,7 +417,7 @@ describe('S6: requests from outside Apiable’s address are refused', () => {
     const role = launch(template(), { ...others, [EXTERNAL_ID_PARAMETER]: ISSUED_ID, ApiableEgressCidr: `${ANOTHER_ADDRESS}/32` })
     if (role === undefined) throw new Error('no role was created')
     for (const action of APP_CLIENT_ACTIONS) {
-      expect(mayCall(role.permissions, { action, resource: poolArn(POOL_ID), sourceIp: ANOTHER_ADDRESS })).toBe(true)
+      expect(mayCall(role.permissions, call(action, poolArn(POOL_ID), ANOTHER_ADDRESS))).toBe(true)
       expect(mayCall(role.permissions, fromApiable(action, poolArn(POOL_ID)))).toBe(false)
     }
   })
@@ -461,6 +536,19 @@ describe('S7: the release fails when the channels disagree', () => {
   )
 
   // contract: S7
+  it.each<readonly [string, Edits]>([
+    ['names the trusted account by the policy variable', { trust: (document) => statementsIn(document).forEach((statement) => void (statement.Principal = { AWS: `arn:aws:iam::${PRINCIPAL_ACCOUNT_VARIABLE}:root` })) }],
+    ['names the pool’s Region by the policy variable', { permissions: (document) => void (allowStatement(document).Resource = poolArn(USER_POOL_ID_TOKEN, PRINCIPAL_ACCOUNT_VARIABLE, PRINCIPAL_ACCOUNT_VARIABLE)) }],
+    ['names the pool itself by the policy variable', { permissions: (document) => void (allowStatement(document).Resource = poolArn(PRINCIPAL_ACCOUNT_VARIABLE, REGION, PRINCIPAL_ACCOUNT_VARIABLE)) }],
+    ['scopes the address rule by the policy variable', { permissions: (document) => void (statementWithSid(document, 'DenyOutsideApiableEgress').Resource = `arn:aws:cognito-idp:*:${PRINCIPAL_ACCOUNT_VARIABLE}:*`) }],
+  ])('fails when the hand-build set %s: the variable stands for the deploying account in the pool’s account part only', (_label, edits) => {
+    const result = gate(withEditIn('console', edits))
+
+    expect(result.passed).toBe(false)
+    expect([...new Set(result.divergences.flatMap((divergence) => divergence.channels))]).toEqual(['console'])
+  })
+
+  // contract: S7
   it('the module trusts Apiable’s account by default, the same account the one-click stack and the construct default to', () => {
     const variables = fs.readFileSync(path.join(REPO_ROOT, `terraform/${CONSTRUCT}/variables.tf`), 'utf8')
     const block = /variable "trust_account" \{[\s\S]*?\n\}/.exec(variables)?.[0] ?? ''
@@ -517,15 +605,9 @@ describe('S8: the comparison is the same whatever the role is named', () => {
   })
 })
 
+// The fetch without credentials, the stopped release and the write-once store are shown on this construct's
+// synthesized artifacts by test-verify-launchstack-published.sh, against the real verifier and publish guard.
 describe('S12: the published version is reachable by anyone and never overwritten', () => {
-  // contract: S12
-  it('the construct is in the one list the synth, the publish and the verifier read', () => {
-    const script = fs.readFileSync(path.join(REPO_ROOT, 'synth-all-launchstack.sh'), 'utf8')
-    const constructs = /CONSTRUCTS=\(([^)]*)\)/.exec(script)?.[1].split(/\s+/).filter(Boolean)
-
-    expect(constructs).toContain(CONSTRUCT)
-  })
-
   // contract: S12
   it('the synth writes the template, the module archive and the hand-build set at the current version', () => {
     for (const file of ['template.yaml', 'terraform.zip', 'console-instructions.json']) {
@@ -543,17 +625,6 @@ describe('S12: the published version is reachable by anyone and never overwritte
     expect([published.construct, published.version]).toEqual([CONSTRUCT, currentVersion()])
     for (const token of [REGION_TOKEN, TRUST_ACCOUNT_TOKEN, EXTERNAL_ID_TOKEN, USER_POOL_ID_TOKEN]) expect(publishedSetText()).toContain(token)
     expect(published.userPoolId).toBe(USER_POOL_ID_TOKEN)
-  })
-
-  // contract: S12
-  it('the publish refuses to replace a published version and checks each artifact is fetchable without credentials after the upload', () => {
-    const publish = fs.readFileSync(path.join(REPO_ROOT, 'publish-launchstack.sh'), 'utf8')
-    const guard = fs.readFileSync(path.join(REPO_ROOT, 'launchstack-overwrite-guard.sh'), 'utf8')
-    const workflow = fs.readFileSync(path.join(REPO_ROOT, '.github/workflows/build.yml'), 'utf8')
-
-    expect(publish).toContain('bash launchstack-overwrite-guard.sh')
-    expect(guard).toContain('SRC_DIR="${SRC_DIR:-dist/launchstack}"')
-    expect(workflow.indexOf('run: bash verify-launchstack-published.sh')).toBeGreaterThan(workflow.indexOf('run: bash publish-launchstack.sh'))
   })
 
   // contract: S12
