@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Verify every synthesized launch-stack artifact — the CloudFormation template, a code artifact such
-# as the lambda-authorizer's zip, a Terraform module archive, and the gateway role's console
+# as the lambda-authorizer's zip, a Terraform module archive, and each hand-build console
 # instruction set — is anonymously fetchable at the address the portal (or the template itself)
 # composes for it, and that the served bytes are the bytes that were synthesized.
 #
@@ -53,8 +53,9 @@ if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# Which versions take the external ID is the generator's rule, so the generator is asked: once, for the
-# construct and version of every instruction set in this run. No list of versions lives in this script.
+# Which versions take the external ID, and which other tokens a construct's set leaves for the portal,
+# are the generator's rules, so the generator is asked: once, for the construct and version of every
+# instruction set in this run. No list of versions or tokens lives in this script.
 # The question gets an environment of its own: the path, the home directory and the versions, and no
 # cloud credential, wherever this script runs. npm cannot tell there that it is in CI, so it is told
 # not to look for a newer version of itself.
@@ -66,14 +67,16 @@ for src in "${ARTIFACTS[@]}"; do
     SET_VERSIONS="${SET_VERSIONS} ${construct_dir##*/}/${version_dir##*/}"
   fi
 done
-VERSIONS_TAKING_EXTERNAL_ID=""
+# One line per set: its construct/version, whether it takes the external ID, then the construct's own tokens.
+SET_RULES=""
 if [[ -n "${SET_VERSIONS}" ]]; then
-  if ! VERSIONS_TAKING_EXTERNAL_ID=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
+  if ! SET_RULES=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
     npx ts-node --transpile-only -r tsconfig-paths/register --prefer-ts-exts -e "
-      import { requiresExternalIdFor } from './lib/console-instruction-constructs'
+      import { CONSOLE_CONSTRUCTS, requiresExternalIdFor } from './lib/console-instruction-constructs'
       for (const key of (process.env.SET_VERSIONS ?? '').split(' ').filter(Boolean)) {
         const [construct, version] = key.split('/')
-        if (requiresExternalIdFor(construct, version)) console.log(key)
+        const tokens = Object.values(CONSOLE_CONSTRUCTS[construct]?.deployInputs ?? {})
+        console.log([key, requiresExternalIdFor(construct, version), ...tokens].join(' '))
       }
     "); then
     echo "could not ask the generator which versions take the external ID — the instruction sets cannot be verified" >&2
@@ -146,11 +149,18 @@ is_wellformed_module_zip() {
 # The portal serves an instruction set only when its construct and version equal the key it fetched it
 # at and the tokens it fills are present; the same shape check runs here so a mislabelled or
 # already-resolved file never reaches the store. The region and the trust account are tokens in every
-# set. The external ID is a token in a set exactly when its version takes one. $2 is the artifact's key.
+# set, and so is each token the construct itself leaves for the portal. The external ID is a token in a
+# set exactly when its version takes one. $2 is the artifact's key.
 is_wellformed_instructions() {
   local construct_and_version="${2%/*}"
-  local takes_external_id="false"
-  grep -qxF -- "${construct_and_version}" <<< "${VERSIONS_TAKING_EXTERNAL_ID}" && takes_external_id="true"
+  local rule takes_external_id construct_tokens
+  rule="$(awk -v key="${construct_and_version}" '$1 == key' <<< "${SET_RULES}")"
+  takes_external_id="$(awk '{ print $2 }' <<< "${rule}")"
+  construct_tokens="$(cut -s -d ' ' -f 3- <<< "${rule}")"
+  if [[ "${takes_external_id}" != "true" && "${takes_external_id}" != "false" ]]; then
+    parse_error="the generator gave no rule for ${construct_and_version}"
+    return 1
+  fi
   if ! parse_error=$(node -e "
     const fs = require('fs');
     try {
@@ -168,7 +178,7 @@ is_wellformed_instructions() {
         if (doc[field] === undefined) throw new Error('carries no ' + field);
       }
       const text = JSON.stringify(doc);
-      for (const token of ['{region}', '{trust-account}']) {
+      for (const token of ['{region}', '{trust-account}', ...process.argv[4].split(' ').filter(Boolean)]) {
         if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
       }
       const takesExternalId = process.argv[3] === 'true';
@@ -182,7 +192,7 @@ is_wellformed_instructions() {
       console.error(String(e.message).split('\n')[0]);
       process.exit(1);
     }
-  " "$1" "$2" "${takes_external_id}" 2>&1); then
+  " "$1" "$2" "${takes_external_id}" "${construct_tokens}" 2>&1); then
     return 1
   fi
 }
