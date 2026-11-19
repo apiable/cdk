@@ -461,6 +461,17 @@ describe('S7: the release fails when the channels disagree', () => {
   )
 
   // contract: S7
+  it('the module trusts Apiable’s account by default, the same account the one-click stack and the construct default to', () => {
+    const variables = fs.readFileSync(path.join(REPO_ROOT, `terraform/${CONSTRUCT}/variables.tf`), 'utf8')
+    const block = /variable "trust_account" \{[\s\S]*?\n\}/.exec(variables)?.[0] ?? ''
+    const moduleDefault = /\bdefault\s*=\s*"([^"]*)"/.exec(block)?.[1]
+
+    expect(moduleDefault).toBe(DEFAULT_APIABLE_TRUST_ACCOUNT)
+    expect(asRecord(asRecord(asRecord(publishedYaml()).Parameters).ApiableTrustAccount).Default).toBe(DEFAULT_APIABLE_TRUST_ACCOUNT)
+    expect(asRecord(asRecord(asRecord(directTemplate()).Parameters).ApiableTrustAccount).Default).toBe(DEFAULT_APIABLE_TRUST_ACCOUNT)
+  })
+
+  // contract: S7
   it('the explicit Deny reaches the gate as everything but the five operations, never as the five', () => {
     const denies = cfnModel().grants.filter((grant) => grant.effect === 'Deny' && grant.notActions !== undefined)
 
@@ -574,6 +585,23 @@ describe('S14: a kit pool and an existing pool alike, and the pool is left untou
     expect(Object.keys(published).sort()).toEqual(
       ['construct', 'version', 'region', 'roleName', 'trustAccount', 'trustDocument', 'permissionDocument', 'egressCidr', 'userPoolId', 'parameterDefaults'].sort(),
     )
+  })
+
+  // contract: S14
+  it('no channel attaches any other policy to the role, so the one Allow is the only grant', () => {
+    for (const template of [publishedYaml(), directTemplate()]) {
+      for (const resource of Object.values(asRecord(asRecord(template).Resources)).map(asRecord)) {
+        if (resource.Type !== 'AWS::IAM::Role') continue
+        expect(asRecord(resource.Properties)).not.toHaveProperty('ManagedPolicyArns')
+        expect(asRecord(resource.Properties)).not.toHaveProperty('Policies')
+      }
+    }
+    const role = tfResourceValues(terraformPlan(), 'aws_iam_role')
+    for (const key of ['managed_policy_arns', 'inline_policy']) {
+      expect([key, asArray(role[key] ?? []).length]).toEqual([key, 0])
+    }
+    const set = JSON.parse(publishedSetText()) as Record<string, unknown>
+    expect(Object.keys(set).filter((key) => /managed|attach/i.test(key))).toEqual([])
   })
 
   // contract: S14

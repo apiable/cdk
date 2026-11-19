@@ -177,8 +177,8 @@ export class CognitoPoolRole extends Construct {
         resources: [`arn:aws:cognito-idp:${region}:${stack.account}:userpool/${userPoolId}`],
       }),
     )
-    // Everything but the five operations is refused outright, so a wider Allow added later reaches
-    // nothing more without a new version of this role.
+    // Every operation but the five is refused outright, so a wider Allow added later reaches no other
+    // operation without a new version of this role. Which pool the five reach is the Allow's alone.
     this.role.addToPolicy(
       new iam.PolicyStatement({
         sid: 'DenyAllButAppClientOperations',
