@@ -8,15 +8,21 @@
  *
  * Manual hand-off: an operator with a sandbox account and a user pool in it runs
  *   APIABLE_EXTERNAL_ID=<the sandbox API Portal's ID> USER_POOL_ID=<the pool id> AWS_REGION=<the pool's Region> npm run test:live
- * then follows the printed link and checks, in this order:
+ * (APIABLE_TRUST_ACCOUNT names the account the sandbox portal runs in, when that is not Apiable's)
+ * in a sandbox account that is not production, against a scratch pool, then follows the printed link and
+ * checks, in this order:
  *   1. the stack asks for the External ID and the user pool id, and refuses an ID that is not one lowercase
  *      version 4 UUID and a pool id that is not one user pool id;
  *   2. creation succeeds and the role is named apiable-cognito-pool-role-<pool id>;
- *   3. from Apiable's account and address, taking up the role with no ID and with another portal's ID is
- *      refused, and with the sandbox portal's ID it is admitted;
- *   4. with the role taken up, the five operations on that pool succeed, and listing the pool's app clients
- *      or reading the pool itself is refused;
- *   5. the stack is deleted afterwards.
+ *   3. taking up the role with no ID and with another portal's ID is refused, and with the sandbox portal's
+ *      ID it is admitted;
+ *   4. with the address left at its default, every operation from the operator's own address is refused;
+ *   5. with the address set to the operator's own, the five operations on that pool succeed, and listing the
+ *      pool's app clients, reading the pool, any client secret operation and any operation on a second pool
+ *      are refused;
+ *   6. a role built by hand from the published console instructions, with the same values, answers 3 to 5
+ *      the same way;
+ *   7. both are deleted afterwards.
  * Without both values this spec is a documented no-op; it asserts nothing about AWS and never stands in for
  * the operator's check.
  */
@@ -40,7 +46,7 @@ describe('user pool role: live deploy', () => {
     const params = new URLSearchParams({
       templateURL: `https://${DEFAULT_LAUNCHSTACK_BUCKET}.s3.amazonaws.com/${CONSTRUCT_NAME}/${version}/template.yaml`,
       stackName: `${CONSTRUCT_NAME}-${userPoolId.replace('_', '-')}`,
-      param_ApiableTrustAccount: DEFAULT_APIABLE_TRUST_ACCOUNT,
+      param_ApiableTrustAccount: process.env.APIABLE_TRUST_ACCOUNT ?? DEFAULT_APIABLE_TRUST_ACCOUNT,
       param_ApiableExternalId: externalId,
       param_UserPoolId: userPoolId,
       param_ApiableEgressCidr: DEFAULT_APIABLE_EGRESS_CIDR,
