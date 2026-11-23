@@ -21,6 +21,7 @@ case "${CONSTRUCT_NAME}" in
   apiable-cognito-pool) VERSION="$(node -p "require('./lib/cognito-pool/package.json').version")" ;;
   apiable-lambda-authorizer) VERSION="$(node -p "require('./lib/lambda-authorizer/package.json').version")" ;;
   apiable-usagelogs-stream | apiable-usagetokens-stream) VERSION="$(node -p "require('./lib/logs-stream/package.json').version")" ;;
+  apiable-usage-events) VERSION="$(node -p "require('./lib/usage-events/package.json').version")" ;;
   *) echo "unknown construct: ${CONSTRUCT_NAME}" >&2; exit 1 ;;
 esac
 MODULE_DIR="terraform/${CONSTRUCT_NAME}"

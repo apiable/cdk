@@ -13,41 +13,21 @@
  * they stay distinct resources that reconcile independently.
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
-import { buildPublishedStack, buildPublishedTokensStack } from '@apiable/cdk-usagelogs-stream'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
-import { publishedTemplatePath } from './support/published-template'
+import { ParityChannelRow, USAGELOGS_STREAM, USAGETOKENS_STREAM } from './support/parity-channels'
 
-const REPO_ROOT = path.resolve(__dirname, '..')
-const TF_REGION = 'eu-central-1'
-// The committed fixtures' deploying account (CI regenerates them credentialed); supplied so the
-// incidental tenant root tokenises exactly as the published channel's AWS::AccountId pseudo-parameter.
-const TF_DEPLOY_ACCOUNT = '111111111111'
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
-interface Distribution {
+interface Distribution extends ParityChannelRow {
   readonly name: string
-  readonly publishedCfn: string
-  readonly tfFixture: string
-  readonly buildCdk: (app: cdk.App) => cdk.Stack
 }
 
 const DISTRIBUTIONS: readonly Distribution[] = [
-  {
-    name: 'usage-log',
-    publishedCfn: publishedTemplatePath('apiable-usagelogs-stream'),
-    tfFixture: path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagelogs-stream-show.json'),
-    buildCdk: (app) => buildPublishedStack(app),
-  },
-  {
-    name: 'api-key-token',
-    publishedCfn: publishedTemplatePath('apiable-usagetokens-stream'),
-    tfFixture: path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-usagetokens-stream-show.json'),
-    buildCdk: (app) => buildPublishedTokensStack(app),
-  },
+  { name: 'usage-log', ...USAGELOGS_STREAM },
+  { name: 'api-key-token', ...USAGETOKENS_STREAM },
 ]
 
 const cdkModel = (distribution: Distribution): ChannelModel =>
@@ -56,7 +36,7 @@ const cfnModel = (distribution: Distribution): ChannelModel =>
   reduceCloudFormation(JSON.parse(fs.readFileSync(distribution.publishedCfn, 'utf8')), 'cfn')
 const tfPlan = (distribution: Distribution): unknown => JSON.parse(fs.readFileSync(distribution.tfFixture, 'utf8'))
 const tfModel = (distribution: Distribution, plan: unknown = tfPlan(distribution)): ChannelModel =>
-  reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
+  reduceTerraformShowJson(plan, 'terraform', distribution.tfRegion, distribution.tfDeployAccount)
 
 interface TfPlan {
   planned_values: { root_module: { resources: { type: string; values: Record<string, unknown> }[] } }

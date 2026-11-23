@@ -19,6 +19,7 @@ CONSTRUCTS=(
   apiable-lambda-authorizer
   apiable-usagelogs-stream
   apiable-usagetokens-stream
+  apiable-usage-events
 )
 
 for construct in "${CONSTRUCTS[@]}"; do

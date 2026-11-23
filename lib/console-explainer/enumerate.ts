@@ -99,7 +99,11 @@ const deriveConsoleDeepLink = (
   return { service, resourcePath: identity }
 }
 
-const describeResource = (
+/**
+ * Describe one resource from its type and properties: the per-resource rule {@link describeResources}
+ * applies to a synthesized stack, also applied by the hand-build set generator to resolved properties.
+ */
+export const describeResource = (
   component: string,
   logicalId: string,
   cfnType: string,

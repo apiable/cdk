@@ -1,0 +1,11 @@
+[
+  {
+    "construct": "apiable-gateway-role",
+    "version": "2.0.0",
+    "artifacts": [
+      { "file": "console-instructions.json", "kind": "instructions", "sha256": "c7cd710121ab6681e9829d3965af727404f85e057d1b05db584afa05fdfa9f73" },
+      { "file": "template.yaml", "kind": "template", "sha256": "bbb781cdcc7678e5b6283d0a16f938f7b0794ede782288dd50e6a41654291a10" },
+      { "file": "terraform.zip", "kind": "module", "sha256": "53dc8e3c3e236ff0ab0307bc126f0f34952282cc3b5ab5527b1c97eb7bb6fbdd" }
+    ]
+  }
+]

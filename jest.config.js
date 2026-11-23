@@ -30,6 +30,7 @@ module.exports = {
     '^@apiable/cdk-lambda-authorizer$': '<rootDir>/lib/lambda-authorizer/index.ts',
     '^@apiable/cdk-usagelogs-stream$': '<rootDir>/lib/logs-stream/index.ts',
     '^@apiable/cdk-usagetokens-stream$': '<rootDir>/lib/logs-stream/index.ts',
+    '^@apiable/cdk-usage-events$': '<rootDir>/lib/usage-events/index.ts',
     '^@apiable/parity-gate$': '<rootDir>/lib/parity-gate/index.ts',
     '^@apiable/umbrella$': '<rootDir>/lib/umbrella/index.ts',
     '^@apiable/cdk-ssm-composition$': '<rootDir>/lib/ssm-composition/index.ts',

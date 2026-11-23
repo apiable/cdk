@@ -9,26 +9,21 @@
  * Terraform-only drift that must fail the gate so the TF leg is proven genuinely engine-compared.
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
-import { buildPublishedStack } from '@apiable/cdk-logs-bucket'
 import { ChannelModel, gate, reduceCloudFormation, reduceTerraformShowJson } from '@apiable/parity-gate'
-import { publishedTemplatePath } from './support/published-template'
+import { LOGS_BUCKET } from './support/parity-channels'
 
-const REPO_ROOT = path.resolve(__dirname, '..')
-const PUBLISHED_CFN = publishedTemplatePath('apiable-logs-bucket')
-const TF_FIXTURE = path.join(REPO_ROOT, 'test/fixtures/parity-gate/terraform-logs-bucket-show.json')
-const TF_REGION = 'eu-central-1'
-// The committed fixture's deploying account (CI regenerates it credentialed); supplied so the incidental
-// tenant root drops out of the by-value write-grant exactly as the published channel's AWS::AccountId token.
-const TF_DEPLOY_ACCOUNT = '111111111111'
+const PUBLISHED_CFN = LOGS_BUCKET.publishedCfn
+const TF_FIXTURE = LOGS_BUCKET.tfFixture
+const TF_REGION = LOGS_BUCKET.tfRegion
+const TF_DEPLOY_ACCOUNT = LOGS_BUCKET.tfDeployAccount
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 // The published one-click stack reduced from a live synth (the CDK channel) and the committed published
 // template (the one-click channel); the hand-rolled module reduced from its committed `terraform show -json`.
-const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(buildPublishedStack(new cdk.App())).toJSON(), 'cdk')
+const cdkModel = (): ChannelModel => reduceCloudFormation(Template.fromStack(LOGS_BUCKET.buildCdk(new cdk.App())).toJSON(), 'cdk')
 const cfnModel = (): ChannelModel => reduceCloudFormation(JSON.parse(fs.readFileSync(PUBLISHED_CFN, 'utf8')), 'cfn')
 const tfPlan = (): unknown => JSON.parse(fs.readFileSync(TF_FIXTURE, 'utf8'))
 const tfModel = (plan: unknown = tfPlan()): ChannelModel => reduceTerraformShowJson(plan, 'terraform', TF_REGION, TF_DEPLOY_ACCOUNT)
