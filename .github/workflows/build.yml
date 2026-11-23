@@ -121,6 +121,11 @@ jobs:
           AWS_SECRET_ACCESS_KEY: testing
         run: bash check-gateway-role-module.sh terraform/apiable-gateway-role
 
+      # The same for the user pool role's module. It reads the deploying account, so the script answers
+      # that one question from a local stand-in; it calls no cloud account either.
+      - name: terraform engine checks (user pool role module)
+        run: bash check-cognito-pool-role-module.sh terraform/apiable-cognito-pool-role
+
       - name: Synthesize published launch-stack templates
         run: bash synth-all-launchstack.sh
 

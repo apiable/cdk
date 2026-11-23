@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib'
 import { buildPublishedStack as buildGatewayRoleStack } from '../lib/gateway-role'
+import { buildPublishedStack as buildCognitoPoolRoleStack } from '../lib/cognito-pool-role'
 import { buildPublishedStack as buildLogsBucketStack } from '../lib/logs-bucket'
 import { buildPublishedStack as buildCognitoPoolStack } from '../lib/cognito-pool'
 import { buildPublishedStack as buildLambdaAuthorizerStack } from '../lib/lambda-authorizer'
@@ -17,6 +18,7 @@ import { buildPublishedStack as buildUsageEventsStack } from '../lib/usage-event
  */
 export const registerPublishedStacks = (app: cdk.App): void => {
   buildGatewayRoleStack(app)
+  buildCognitoPoolRoleStack(app)
   buildLogsBucketStack(app)
   buildCognitoPoolStack(app)
   buildLambdaAuthorizerStack(app)

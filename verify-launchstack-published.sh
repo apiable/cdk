@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Verify every synthesized launch-stack artifact — the CloudFormation template, a code artifact such
-# as the lambda-authorizer's zip, a Terraform module archive, and the hand-build console set the
-# gateway role and the usage-events construct publish — is anonymously fetchable at the address the
+# as the lambda-authorizer's zip, a Terraform module archive, and each hand-build console set (the
+# role constructs' and the usage-events construct's) — is anonymously fetchable at the address the
 # portal (or the template itself) composes for it, and that the served bytes are the bytes that were
 # synthesized.
 #
@@ -86,9 +86,11 @@ if ! publish_check still-offered "${STILL_OFFERED}" "${LISTED}"; then
   exit 1
 fi
 
-# Which gateway-role versions take the external ID is the generator's rule, so the generator is asked:
-# once, for the version of every gateway-role set in this run. No list of versions lives in this script.
-# Another construct's set has its own shape and never takes the external ID, so its version is not asked.
+# Which versions take the external ID, and which other tokens a role construct's set leaves for the
+# portal, are the generator's rules, so the generator is asked: once, for the construct and version of
+# every role construct's set in this run, built or still offered. No list of versions or tokens lives in
+# this script. The usage-events set has its own shape and never takes the external ID, so it is not asked.
+# A construct the generator has no rule for gets no line, and its set then fails by name below.
 # The question gets an environment of its own: the path, the home directory and the versions, and no
 # cloud credential, wherever this script runs. npm cannot tell there that it is in CI, so it is told
 # not to look for a newer version of itself.
@@ -97,16 +99,21 @@ while IFS= read -r key; do
   if [[ "${key}" == */console-instructions.json ]]; then
     version_dir="${key%/console-instructions.json}"
     construct_dir="${version_dir%/*}"
-    [[ "${construct_dir##*/}" == "apiable-gateway-role" ]] && SET_VERSIONS="${SET_VERSIONS} ${version_dir##*/}"
+    [[ "${construct_dir##*/}" != "apiable-usage-events" ]] \
+      && SET_VERSIONS="${SET_VERSIONS} ${construct_dir##*/}/${version_dir##*/}"
   fi
 done < <(printf '%s\n' "${ARTIFACTS[@]}"; cut -f1 "${LISTED}")
-VERSIONS_TAKING_EXTERNAL_ID=""
+# One line per set: its construct/version, whether it takes the external ID, then the construct's own tokens.
+SET_RULES=""
 if [[ -n "${SET_VERSIONS}" ]]; then
-  if ! VERSIONS_TAKING_EXTERNAL_ID=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
+  if ! SET_RULES=$(env -i PATH="${PATH}" HOME="${HOME}" SET_VERSIONS="${SET_VERSIONS}" npm_config_update_notifier=false \
     npx ts-node --transpile-only -r tsconfig-paths/register --prefer-ts-exts -e "
-      import { requiresExternalId } from './lib/gateway-role/console-instructions'
-      for (const version of (process.env.SET_VERSIONS ?? '').split(' ').filter(Boolean)) {
-        if (requiresExternalId(version)) console.log(version)
+      import { CONSOLE_CONSTRUCTS, requiresExternalIdFor } from './lib/console-instruction-constructs'
+      for (const key of (process.env.SET_VERSIONS ?? '').split(' ').filter(Boolean)) {
+        const [construct, version] = key.split('/')
+        if (!CONSOLE_CONSTRUCTS[construct]) continue
+        const tokens = Object.values(CONSOLE_CONSTRUCTS[construct]?.deployInputs ?? {})
+        console.log([key, requiresExternalIdFor(construct, version), ...tokens].join(' '))
       }
     "); then
     echo "could not ask the generator which versions take the external ID — the instruction sets cannot be verified" >&2
@@ -179,20 +186,28 @@ is_wellformed_module_zip() {
 # The portal serves an instruction set only when its construct and version equal the key it fetched it
 # at and the tokens it fills are present; the same shape check runs here so a mislabelled or
 # already-resolved file never reaches the store. The shape is the set's construct's own:
-# - the gateway role's set carries its role fields; the region and the trust account are tokens in
-#   every one, and the external ID is a token exactly when its version takes one;
+# - a role construct's set (the gateway role's, the user pool role's) carries its role fields; the region
+#   and the trust account are tokens in every one, and so is each token the construct itself leaves for
+#   the portal; the external ID is a token exactly when its version takes one;
 # - the usage-events set lists its resources, each with a kind, a type, an identity and a document, and
 #   records the log-source path it documents. It carries the three tokens the portal fills, no token the
 #   portal does not know, no deploy-time reference and no account number, which is what the portal's
 #   reader refuses to serve.
-# A set for any other construct has no known shape and fails. $2 is the artifact's key.
+# A set for any other construct has no known shape and fails: the generator gave it no rule. $2 is the
+# artifact's key.
 is_wellformed_instructions() {
   local construct="${2%%/*}"
-  local version="${2#*/}"
-  version="${version%%/*}"
-  local takes_external_id="false"
-  [[ "${construct}" == "apiable-gateway-role" ]] \
-    && grep -qxF -- "${version}" <<< "${VERSIONS_TAKING_EXTERNAL_ID}" && takes_external_id="true"
+  local construct_and_version="${2%/*}"
+  local rule="" takes_external_id="false" construct_tokens=""
+  if [[ "${construct}" != "apiable-usage-events" ]]; then
+    rule="$(awk -v key="${construct_and_version}" '$1 == key' <<< "${SET_RULES}")"
+    takes_external_id="$(awk '{ print $2 }' <<< "${rule}")"
+    construct_tokens="$(cut -s -d ' ' -f 3- <<< "${rule}")"
+    if [[ "${takes_external_id}" != "true" && "${takes_external_id}" != "false" ]]; then
+      parse_error="no console-set shape is known for ${construct_and_version}: the generator gave it no rule"
+      return 1
+    fi
+  fi
   if ! parse_error=$(node -e "
     const fs = require('fs');
     try {
@@ -207,11 +222,11 @@ is_wellformed_instructions() {
         throw new Error('names ' + (doc && doc.construct) + '@' + (doc && doc.version) + ' but is published under ' + construct + '/' + version);
       }
       const text = JSON.stringify(doc);
-      if (construct === 'apiable-gateway-role') {
+      if (construct !== 'apiable-usage-events') {
         for (const field of ['roleName', 'trustDocument', 'permissionDocument']) {
           if (doc[field] === undefined) throw new Error('carries no ' + field);
         }
-        for (const token of ['{region}', '{trust-account}']) {
+        for (const token of ['{region}', '{trust-account}', ...process.argv[4].split(' ').filter(Boolean)]) {
           if (!text.includes(token)) throw new Error('carries no ' + token + ' token for the portal to fill');
         }
         const takesExternalId = process.argv[3] === 'true';
@@ -221,7 +236,7 @@ is_wellformed_instructions() {
         if (!takesExternalId && text.includes('{external-id}')) {
           throw new Error('carries an {external-id} token, and its version takes no external ID');
         }
-      } else if (construct === 'apiable-usage-events') {
+      } else {
         const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
         if (!Array.isArray(doc.resources) || doc.resources.length === 0) throw new Error('carries no resources');
         doc.resources.forEach((entry, index) => {
@@ -244,14 +259,12 @@ is_wellformed_instructions() {
         const unknown = (text.match(/\{[A-Za-z0-9_-]+\}/g) || []).find((token) => !known.has(token));
         if (unknown) throw new Error('carries the token ' + unknown + ', which the portal does not know');
         if (/(?<![0-9])[0-9]{12}(?![0-9])/.test(text)) throw new Error('carries a twelve-digit account number');
-      } else {
-        throw new Error('no console-set shape is known for ' + construct);
       }
     } catch (e) {
       console.error(String(e.message).split('\n')[0]);
       process.exit(1);
     }
-  " "$1" "$2" "${takes_external_id}" 2>&1); then
+  " "$1" "$2" "${takes_external_id}" "${construct_tokens}" 2>&1); then
     return 1
   fi
 }

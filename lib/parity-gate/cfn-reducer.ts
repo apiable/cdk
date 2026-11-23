@@ -39,6 +39,8 @@ import {
   ENFORCED_DECLARED_ID_KINDS,
   EXTERNAL_ID_PARAMETER,
   EXTERNAL_ID_TOKEN,
+  USER_POOL_ID_PARAMETER,
+  USER_POOL_ID_TOKEN,
   LOGS_BUCKET_ARN_PARAMETER,
   missingDeclaredId,
   nodeRef,
@@ -381,6 +383,10 @@ export const reduceCloudFormation = (template: unknown, channel: Channel, region
     const def = asString(asRecord(spec).Default)
     if (def !== undefined) parameters[name] = def
   }
+  // The declared pool id is a deploy-time input with no default; it reduces to the shared token, as the
+  // Terraform module's planned `var.user_pool_id` does. A defaulted one resolves to its default instead.
+  const userPoolIdParameter = asRecord(root.Parameters)[USER_POOL_ID_PARAMETER]
+  if (isRecord(userPoolIdParameter) && userPoolIdParameter.Default === undefined) parameters[USER_POOL_ID_PARAMETER] = USER_POOL_ID_TOKEN
   const resolve = makeResolver(parameters)
 
   // A trust condition operand that is the declared external-ID parameter reduces to the shared token.

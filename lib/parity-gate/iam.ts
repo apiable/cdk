@@ -91,12 +91,15 @@ export const grantsFromPolicyDocument = (
   asArray(asRecord(doc).Statement).map((stmtUnknown) => {
     const statement = asRecord(stmtUnknown)
     const actions = [...new Set(toList(statement.Action).map(resolve))].sort()
+    // A `NotAction` names the actions a statement does NOT cover; kept apart from `actions` so a Deny on
+    // everything but five actions never reads as a Deny on those five, and compared by value like them.
+    const notActions = [...new Set(toList(statement.NotAction).map(resolve))].sort()
     const resources = [...new Set(toList(statement.Resource).map((r) => canonicaliseResource(normaliseLogical(resolve(r), region))))].sort()
     const effect = asString(statement.Effect) ?? 'Allow'
     const principal = principalOf(statement.Principal, resolve, region)
     const condition = conditionOf(statement.Condition, resolveConditionOperand)
-    const ref = kind === 'trust' ? 'grant:assume-role' : `grant:${policyServices(actions)}`
-    return { ref, effect, actions, resources, principal, condition }
+    const ref = kind === 'trust' ? 'grant:assume-role' : `grant:${policyServices([...actions, ...notActions])}`
+    return { ref, effect, actions, resources, principal, condition, ...(notActions.length > 0 ? { notActions } : {}) }
   })
 
 /**

@@ -16,6 +16,7 @@ cd "$(dirname "$0")"
 CONSTRUCT_NAME="${1:-apiable-gateway-role}"
 case "${CONSTRUCT_NAME}" in
   apiable-gateway-role) VERSION="$(node -p "require('./lib/gateway-role/package.json').version")" ;;
+  apiable-cognito-pool-role) VERSION="$(node -p "require('./lib/cognito-pool-role/package.json').version")" ;;
   apiable-logs-bucket) VERSION="$(node -p "require('./lib/logs-bucket/package.json').version")" ;;
   apiable-cognito-pool) VERSION="$(node -p "require('./lib/cognito-pool/package.json').version")" ;;
   apiable-lambda-authorizer) VERSION="$(node -p "require('./lib/lambda-authorizer/package.json').version")" ;;

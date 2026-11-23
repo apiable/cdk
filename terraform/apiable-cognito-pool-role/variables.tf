@@ -1,0 +1,55 @@
+variable "region" {
+  description = "AWS region of the user pool the role is for"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]$", var.region))
+    error_message = "region must be one AWS region, for example eu-central-1."
+  }
+}
+
+variable "user_pool_id" {
+  description = "Id of the Amazon Cognito user pool, in this account and region, whose app clients your API Portal manages"
+  type        = string
+
+  # One pool id only, short enough for the role name it completes.
+  validation {
+    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]_[0-9a-zA-Z]+$", var.user_pool_id)) && length(var.user_pool_id) <= 38
+    error_message = "user_pool_id must be one user pool id, for example eu-central-1_AbCdEfGhI."
+  }
+}
+
+variable "trust_account" {
+  description = "AWS account authorised to assume the Apiable user pool role"
+  type        = string
+  default     = "034444869755"
+
+  # Bound to exactly one account: a wildcard, a comma-list, or an extra principal all fail this check.
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.trust_account))
+    error_message = "trust_account must be exactly one 12-digit AWS account id."
+  }
+}
+
+variable "egress_cidr" {
+  description = "CIDR Apiable calls from; the role refuses every request originating outside it"
+  type        = string
+  default     = "63.180.116.108/32"
+
+  validation {
+    condition     = can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$", var.egress_cidr))
+    error_message = "egress_cidr must be one IPv4 CIDR block, for example 203.0.113.4/32."
+  }
+}
+
+variable "external_id" {
+  description = "External ID your API Portal shows; the role refuses every request to assume it that does not carry this ID"
+  type        = string
+
+  # No default: the ID is each API Portal's own, so there is no value to default to.
+  # One UUID only, so a wildcard or a list cannot widen it.
+  validation {
+    condition     = can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", var.external_id))
+    error_message = "external_id must be the External ID your API Portal shows, a lowercase version 4 UUID."
+  }
+}

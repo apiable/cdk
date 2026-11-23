@@ -43,6 +43,9 @@ import {
   EXTERNAL_ID_TOKEN,
   EXTERNAL_ID_VAR_KEY,
   EXTERNAL_ID_VAR_REFERENCE,
+  USER_POOL_ID_TOKEN,
+  USER_POOL_ID_VAR_KEY,
+  USER_POOL_ID_VAR_REFERENCE,
   LOGS_BUCKET_VAR_REFERENCE,
   missingDeclaredId,
   nodeRef,
@@ -413,6 +416,16 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const externalIdDeclaration = asRecord(asRecord(asRecord(asRecord(root.configuration).root_module).variables)[EXTERNAL_ID_VAR_KEY])
   const requiredExternalId =
     externalIdInput !== undefined && externalIdInput !== '' && !('default' in externalIdDeclaration) ? externalIdInput : undefined
+  // The planned `var.user_pool_id`, on the same terms: a required, non-blank input. Where a policy or a
+  // name takes it from the variable, its normalised value reduces to the shared token.
+  const userPoolIdInput = asString(asRecord(asRecord(root.variables)[USER_POOL_ID_VAR_KEY]).value)
+  const userPoolIdDeclaration = asRecord(asRecord(asRecord(asRecord(root.configuration).root_module).variables)[USER_POOL_ID_VAR_KEY])
+  const requiredUserPoolId =
+    userPoolIdInput !== undefined && userPoolIdInput !== '' && !('default' in userPoolIdDeclaration)
+      ? normaliseLogical(userPoolIdInput, region)
+      : undefined
+  const tokeniseUserPoolId = (value: string): string =>
+    requiredUserPoolId === undefined ? value : value.split(requiredUserPoolId).join(USER_POOL_ID_TOKEN)
 
   const resources: TfResource[] = plannedResources
     .map((entry) => asRecord(entry))
@@ -464,6 +477,8 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
   const streamDestinationBoundToParam = new Set<string>()
   // Roles whose trust references var.external_id: the witness that the planned ID IS that input.
   const trustBoundToExternalIdVar = new Set<string>()
+  // Policies and roles whose policy or name references var.user_pool_id: the witness that the planned pool id IS that input.
+  const boundToUserPoolIdVar = new Set<string>()
   for (const entry of configResources) {
     const record = asRecord(entry)
     const address = asString(record.address)
@@ -472,6 +487,10 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     const expressions = asRecord(record.expressions)
     if (kind === 'iam-role' && asStringArray(asRecord(expressions.assume_role_policy).references).includes(EXTERNAL_ID_VAR_REFERENCE)) {
       trustBoundToExternalIdVar.add(address)
+    }
+    const userPoolIdBinding = kind === 'iam-inline-policy' ? expressions.policy : kind === 'iam-role' ? expressions.name : undefined
+    if (asStringArray(asRecord(userPoolIdBinding).references).includes(USER_POOL_ID_VAR_REFERENCE)) {
+      boundToUserPoolIdVar.add(address)
     }
     if (kind === 'cognito-user-pool-client') {
       const poolTarget = referencesOf(expressions.user_pool_id, addresses)[0]
@@ -648,7 +667,8 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
     // keyed per node so two resources never collapse onto one name and a tenant/region difference warns.
     const nameAttribute = PRIMARY_NAME_ATTRIBUTE[kind]
     if (nameAttribute !== undefined) {
-      const name = normaliseLogical(tfResolve(res.values[nameAttribute]), region)
+      const resolvedName = normaliseLogical(tfResolve(res.values[nameAttribute]), region)
+      const name = boundToUserPoolIdVar.has(res.address) ? tokeniseUserPoolId(resolvedName) : resolvedName
       if (name !== '') cosmetics[`name:${ref}`] = name
     }
     values = { ...values, ...namespaceByRef(collectValues(kind, res.values), ref) }
@@ -677,8 +697,11 @@ export const reduceTerraformShowJson = (plan: unknown, channel: Channel = 'terra
       // File each inline-policy grant under the policy's own node ref, mirroring the CloudFormation side,
       // so two roles' policies covering one service set never pool into a shared multiset where a
       // cross-owner loosen/tighten swap nets out. The policy node ref embeds its owning role.
+      const canonicalisePolicyResource = boundToUserPoolIdVar.has(res.address)
+        ? (resource: string): string => canonicaliseResource(tokeniseUserPoolId(resource))
+        : canonicaliseResource
       grants.push(
-        ...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline', canonicaliseResource).map(
+        ...grantsFromPolicyDocument(parseJson(res.values.policy), tfResolve, region, 'inline', canonicalisePolicyResource).map(
           (grant) => ({ ...grant, ref: `${grant.ref}:${ref}` }),
         ),
       )

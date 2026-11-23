@@ -1,6 +1,7 @@
 import * as path from 'path'
 import * as cdk from 'aws-cdk-lib'
 import { buildPublishedStack as buildGatewayRoleStack } from '@apiable/cdk-gateway-role'
+import { buildPublishedStack as buildCognitoPoolRoleStack } from '@apiable/cdk-cognito-pool-role'
 import { buildPublishedStack as buildLogsBucketStack } from '@apiable/cdk-logs-bucket'
 import { buildPublishedStack as buildCognitoPoolStack } from '@apiable/cdk-cognito-pool'
 import { buildPublishedStack as buildLambdaAuthorizerStack } from '@apiable/cdk-lambda-authorizer'
@@ -28,6 +29,14 @@ export const GATEWAY_ROLE: ParityChannelRow = {
   buildCdk: (app) => buildGatewayRoleStack(app),
   publishedCfn: publishedTemplatePath('apiable-gateway-role'),
   tfFixture: path.join(FIXTURES, 'terraform-gateway-role-show.json'),
+  tfRegion: 'eu-central-1',
+}
+
+export const COGNITO_POOL_ROLE: ParityChannelRow = {
+  construct: 'apiable-cognito-pool-role',
+  buildCdk: (app) => buildCognitoPoolRoleStack(app),
+  publishedCfn: publishedTemplatePath('apiable-cognito-pool-role'),
+  tfFixture: path.join(FIXTURES, 'terraform-cognito-pool-role-show.json'),
   tfRegion: 'eu-central-1',
 }
 
@@ -89,6 +98,7 @@ export const USAGE_EVENTS: ParityChannelRow = {
 
 export const PARITY_CHANNELS: readonly ParityChannelRow[] = [
   GATEWAY_ROLE,
+  COGNITO_POOL_ROLE,
   LOGS_BUCKET,
   COGNITO_POOL,
   LAMBDA_AUTHORIZER,

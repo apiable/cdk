@@ -217,6 +217,27 @@ export const EXTERNAL_ID_VAR_KEY = 'external_id'
  */
 export const EXTERNAL_ID_TOKEN = '{external-id}'
 
+/** Logical id of the user pool role template's pool-id parameter. The construct re-exports it. */
+export const USER_POOL_ID_PARAMETER = 'UserPoolId'
+
+/** The Terraform reference to the same deploy-time input. */
+export const USER_POOL_ID_VAR_REFERENCE = 'var.user_pool_id'
+
+/** The plan-level variable key {@link USER_POOL_ID_VAR_REFERENCE} resolves against. */
+export const USER_POOL_ID_VAR_KEY = 'user_pool_id'
+
+/**
+ * The token the declared user pool id reduces to in every channel, and the placeholder the published
+ * console instruction set leaves for the serving portal to fill. A real pool id carries no brace.
+ */
+export const USER_POOL_ID_TOKEN = '{user-pool-id}'
+
+/**
+ * The IAM policy variable for the account of the principal making a request. In a role's own permission
+ * policy that is the account the role is in, so the hand-build set names the pool's account with it.
+ */
+export const PRINCIPAL_ACCOUNT_VARIABLE = '${aws:PrincipalAccount}'
+
 /**
  * The Terraform reference to the deploy-time tenant-name variable — the channel-twin of the published
  * CloudFormation `TenantName` parameter. The published cognito module names the variable `name`, so a

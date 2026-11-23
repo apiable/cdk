@@ -508,6 +508,48 @@ asks_the_generator_with_no_credential() {
 check "the generator is asked in an environment of its own, with none of the credentials the verifier runs with" 0 asks_the_generator_with_no_credential
 clear_records
 
+echo "=== the rule is the construct's own: the user pool role takes the external ID from its first version ==="
+# 1.0.0 of the gateway role takes no external ID; 1.0.0 of the user pool role does, and its set also
+# leaves the user pool id for the portal. The set is the 2.0.0 gateway set renamed, with the user pool
+# role's tokens added as each case asks, which is enough for the shape the verifier checks.
+POOL_SRC="${SCRATCH}/pool-role/dist/launchstack"
+POOL_DIST="${POOL_SRC}/apiable-cognito-pool-role/1.0.0"
+POOL_SERVED="${SCRATCH}/served/apiable-cognito-pool-role/1.0.0"
+mkdir -p "${POOL_DIST}" "${POOL_SERVED}"
+pool_set() {
+  python3 -c "
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc['construct'] = 'apiable-cognito-pool-role'
+doc['version'] = '1.0.0'
+if 'with-token' in sys.argv[3:]:
+    doc['trustDocument']['Statement'][0]['Condition'] = {'StringEquals': {'sts:ExternalId': '{external-id}'}}
+if 'no-pool' not in sys.argv[3:]:
+    doc['userPoolId'] = '{user-pool-id}'
+json.dump(doc, open(sys.argv[2], 'w'))
+" "${V2_SET}" "$@"
+}
+publish_pool() {
+  cp "$1" "${POOL_DIST}/console-instructions.json"
+  cp "$1" "${POOL_SERVED}/console-instructions.json"
+}
+verify_pool() {
+  env SRC_DIR="${POOL_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+pool_set "${SCRATCH}/pool-with-token.json" with-token
+publish_pool "${SCRATCH}/pool-with-token.json"
+check "a user pool role 1.0.0 set that carries the external-ID token verifies clean" 0 verify_pool
+pool_set "${SCRATCH}/pool-without-token.json"
+publish_pool "${SCRATCH}/pool-without-token.json"
+check_message "a user pool role 1.0.0 set without the external-ID token fails closed" 1 \
+  "apiable-cognito-pool-role/1.0.0/console-instructions.json — local artifact is not a well-formed console instruction set: carries no {external-id} token for the portal to fill" \
+  verify_pool
+pool_set "${SCRATCH}/pool-without-pool.json" with-token no-pool
+publish_pool "${SCRATCH}/pool-without-pool.json"
+check_message "a user pool role 1.0.0 set without the user-pool-id token fails closed" 1 \
+  "apiable-cognito-pool-role/1.0.0/console-instructions.json — local artifact is not a well-formed console instruction set: carries no {user-pool-id} token for the portal to fill" \
+  verify_pool
+
 echo "=== a CloudFormation template the gate must refuse, each with the reason named ==="
 printf "AWSTemplateFormatVersion: '2010-09-09'\nDescription: a template with nothing to create\n" > "${SCRATCH}/template-no-resources.yaml"
 # contract: 024-3-3 S5
@@ -971,6 +1013,64 @@ check "guard refuses different-size changed content" 1 \
   env SRC_DIR="${SCRATCH}/dist/launchstack" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
 cp "${SCRATCH}/template.yaml.bak" "${ARTIFACT_DIR}/template.yaml"
 rm -f "${SCRATCH}/template.yaml.bak"
+
+echo "=== the user pool role as synthesized: each artifact fetched without credentials, and a published version never replaced ==="
+# The three artifacts synth-all-launchstack.sh wrote for the user pool role at its current version, in a
+# tree of their own and served by the stand-in store.
+REAL_POOL_VERSION="$(node -p "require('./lib/cognito-pool-role/package.json').version")"
+REAL_POOL_SYNTH="dist/launchstack/apiable-cognito-pool-role/${REAL_POOL_VERSION}"
+REAL_POOL_SRC="${SCRATCH}/real-pool/dist/launchstack"
+REAL_POOL_DIST="${REAL_POOL_SRC}/apiable-cognito-pool-role/${REAL_POOL_VERSION}"
+REAL_POOL_SERVED="${SCRATCH}/served/apiable-cognito-pool-role/${REAL_POOL_VERSION}"
+REAL_POOL_ARTIFACTS=(template.yaml terraform.zip console-instructions.json)
+mkdir -p "${REAL_POOL_DIST}" "${REAL_POOL_SERVED}"
+for artifact in "${REAL_POOL_ARTIFACTS[@]}"; do
+  if [[ ! -s "${REAL_POOL_SYNTH}/${artifact}" ]]; then
+    echo "  FAIL: ${REAL_POOL_SYNTH}/${artifact} is missing: run synth-all-launchstack.sh first"
+    fail_count=$((fail_count + 1))
+  fi
+  cp "${REAL_POOL_SYNTH}/${artifact}" "${REAL_POOL_DIST}/" 2>/dev/null
+done
+serve_real_pool() {
+  for artifact in "${REAL_POOL_ARTIFACTS[@]}"; do cp "${REAL_POOL_DIST}/${artifact}" "${REAL_POOL_SERVED}/"; done
+}
+verify_real_pool() {
+  env SRC_DIR="${REAL_POOL_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash verify-launchstack-published.sh
+}
+guard_real_pool() {
+  env SRC_DIR="${REAL_POOL_SRC}" TEMPLATE_STORE_HOST="127.0.0.1:${PORT}" TEMPLATE_STORE_SCHEME="http" bash launchstack-overwrite-guard.sh
+}
+# The guard's stdout is the upload list; $1 is what it must be, one key per line.
+guard_real_pool_lists() {
+  local listed
+  listed="$(guard_real_pool 2>/dev/null)" || return 1
+  [[ "${listed}" == "$1" ]] || { echo "the guard listed for upload: '${listed}', expected: '$1'"; return 1; }
+}
+
+rm -f "${REAL_POOL_SERVED}"/*
+check "a version nothing has published yet lists each of its three artifacts for upload" 0 guard_real_pool_lists \
+  "$(printf 'apiable-cognito-pool-role/%s/console-instructions.json\napiable-cognito-pool-role/%s/template.yaml\napiable-cognito-pool-role/%s/terraform.zip' "${REAL_POOL_VERSION}" "${REAL_POOL_VERSION}" "${REAL_POOL_VERSION}")"
+
+serve_real_pool
+check "the template, the module and the hand-build set each fetch without credentials and match what was synthesized" 0 verify_real_pool
+# The passing run recorded its check beside the artifacts; publishing puts that record in the store too.
+cp "${REAL_POOL_DIST}/publish-check.json" "${REAL_POOL_SERVED}/"
+check "a version published with the same bytes lists nothing for upload" 0 guard_real_pool_lists ""
+
+rm -f "${REAL_POOL_SERVED}/terraform.zip"
+check_message "a release whose module archive cannot be fetched is stopped" 1 \
+  "apiable-cognito-pool-role/${REAL_POOL_VERSION}/terraform.zip — anonymous fetch returned 404" \
+  verify_real_pool
+serve_real_pool
+
+for artifact in "${REAL_POOL_ARTIFACTS[@]}"; do
+  cp "${REAL_POOL_DIST}/${artifact}" "${SCRATCH}/real-pool-${artifact}.good"
+  printf '\n' >> "${REAL_POOL_DIST}/${artifact}"
+  check_message "a published ${artifact} is never replaced by different bytes at the same version" 1 \
+    "apiable-cognito-pool-role/${REAL_POOL_VERSION}/${artifact} — already published with DIFFERENT content" \
+    guard_real_pool
+  cp "${SCRATCH}/real-pool-${artifact}.good" "${REAL_POOL_DIST}/${artifact}"
+done
 
 if [[ "${fail_count}" -gt 0 ]]; then
   echo "${fail_count} check(s) failed"

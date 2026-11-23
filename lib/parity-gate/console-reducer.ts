@@ -10,11 +10,43 @@
  * cdk/cfn channels — both of which already share this same reducer over their own two artifacts — so
  * a hand-rolled keying here could never drift from cfn-reducer.ts's parent-anchoring independently.
  */
-import { ChannelModel } from './model'
+import { ACCOUNT_TOKEN, ChannelModel } from './model'
 import { reduceCloudFormation } from './cfn-reducer'
-import { DECLARED_ID_TAG } from './canonical'
-import { ConsoleInstructionSet } from '../gateway-role/console-instructions'
+import { DECLARED_ID_TAG, PRINCIPAL_ACCOUNT_VARIABLE } from './canonical'
+import { ConsoleConstructName, ConsoleInstructionSet, ResolvedPolicyDocument, ResolvedStatement } from '../gateway-role/console-instructions'
 import { GATEWAY_ROLE_LOGICAL_ID } from '../gateway-role/gateway-role'
+import { COGNITO_POOL_ROLE_LOGICAL_ID } from '../cognito-pool-role/cognito-pool-role'
+
+/** The declared identity of each construct's role, which its other channels tag the role with. */
+const LOGICAL_ID_BY_CONSTRUCT: Readonly<Record<ConsoleConstructName, string>> = {
+  'apiable-gateway-role': GATEWAY_ROLE_LOGICAL_ID,
+  'apiable-cognito-pool-role': COGNITO_POOL_ROLE_LOGICAL_ID,
+}
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** A user pool ARN whose account part is the policy variable; the pool ARN is the one place the set may use it. */
+const POOL_ARN_NAMING_THE_PRINCIPAL_ACCOUNT = new RegExp(
+  `^(arn:aws:cognito-idp:[^:]+:)${escapeRegExp(PRINCIPAL_ACCOUNT_VARIABLE)}(:userpool/[^:]+)$`,
+)
+
+/**
+ * The set's permission document with the policy variable in a pool ARN's account part read as the account
+ * the role is deployed in, which is what the other channels' `AWS::AccountId` reduces to. Anywhere else the
+ * variable is left as it is written, so it diverges from the other channels' value.
+ */
+const withDeployingAccount = (document: ResolvedPolicyDocument): ResolvedPolicyDocument => {
+  const read = (resource: unknown): unknown =>
+    typeof resource === 'string' ? resource.replace(POOL_ARN_NAMING_THE_PRINCIPAL_ACCOUNT, `$1${ACCOUNT_TOKEN}$2`) : resource
+  return {
+    ...document,
+    Statement: document.Statement.map((statement) =>
+      statement.Resource === undefined
+        ? statement
+        : { ...statement, Resource: (Array.isArray(statement.Resource) ? statement.Resource.map(read) : read(statement.Resource)) as ResolvedStatement['Resource'] },
+    ),
+  }
+}
 
 export const reduceConsoleInstructions = (instructions: ConsoleInstructionSet, region: string): ChannelModel => {
   const syntheticArtifact = {
@@ -23,7 +55,7 @@ export const reduceConsoleInstructions = (instructions: ConsoleInstructionSet, r
         Type: 'AWS::IAM::Role',
         Properties: {
           RoleName: instructions.roleName,
-          Tags: [{ Key: DECLARED_ID_TAG, Value: GATEWAY_ROLE_LOGICAL_ID }],
+          Tags: [{ Key: DECLARED_ID_TAG, Value: LOGICAL_ID_BY_CONSTRUCT[instructions.construct] }],
           AssumeRolePolicyDocument: instructions.trustDocument,
         },
       },
@@ -32,7 +64,7 @@ export const reduceConsoleInstructions = (instructions: ConsoleInstructionSet, r
         Properties: {
           PolicyName: 'console-instructions',
           Roles: [{ Ref: 'Role' }],
-          PolicyDocument: instructions.permissionDocument,
+          PolicyDocument: withDeployingAccount(instructions.permissionDocument),
         },
       },
     },
